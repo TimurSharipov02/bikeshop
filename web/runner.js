@@ -81,7 +81,7 @@ export async function runProcedure(cat, proc, io, opts) {
           }
           const auto = autoResolve(b.when);
           const take =
-            auto !== null ? auto : (await io.branch(`Условие: ${b.when}?`, ["да", "нет"])) === "да";
+            auto !== null ? auto : (await io.branch(`${b.when}?`, ["да", "нет"])) === "да";
           if (take) {
             await runNodes(b.nodes);
             return;

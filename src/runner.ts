@@ -132,7 +132,7 @@ export async function runProcedure(
           }
           const auto = autoResolveCondition(b.when);
           const take =
-            auto !== null ? auto : (await io.branch(`Условие: ${b.when}?`, ["да", "нет"])) === "да";
+            auto !== null ? auto : (await io.branch(`${b.when}?`, ["да", "нет"])) === "да";
           if (take) {
             await runNodes(b.nodes, chapterPath);
             return;
