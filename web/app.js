@@ -140,8 +140,8 @@ const nextBikeKey = (d, phone) => `${phone}#${d.bikes.filter((b) => b.ownerPhone
 // ---------------------------- расчёт цен ------------------------------------
 
 function itemRange(it) {
-  const base = it.workPrice || 0;
-  let min = base, max = base;
+  const base = (it.workPrice || 0) + (it.materialPrice || 0) + (it.partsPrice || 0);
+  let min = base, max = base + (it.spread || 0);
   for (const d of it.difficulties || []) {
     if (d.state === "yes") { min += d.add; max += d.add; }
     else if (d.state === "unknown") max += d.add;
@@ -156,8 +156,9 @@ const rangeText = (r) => (r.min === r.max ? money(r.min) : `${money(r.min)} – 
 // Возможная вилка цены операции: от работы без надбавок до работы со всеми трудностями.
 function codeRange(code) {
   const p = priceOf(code);
-  const base = p.work || 0;
-  return { min: base, max: base + (p.difficulties || []).reduce((s, d) => s + (d.add || 0), 0) };
+  const base = (p.work || 0) + (p.material || 0);
+  const max = base + (p.spread || 0) + (p.difficulties || []).reduce((s, d) => s + (d.add || 0), 0);
+  return { min: base, max };
 }
 
 function makeItem(code, notes = "") {
@@ -166,6 +167,9 @@ function makeItem(code, notes = "") {
   return {
     code, name: proc ? proc.name : code, agreed: false, done: false, parts: [], notes,
     workPrice: price.work || 0,
+    materialPrice: price.material || 0,
+    spread: price.spread || 0,
+    partsPrice: 0,
     difficulties: (price.difficulties || []).map((d) => ({ label: d.label, add: d.add, state: "unknown" })),
   };
 }
@@ -271,7 +275,17 @@ function viewPrices() {
   const groups = groupBy(billableOps, (p) => p.code.split("-")[0]);
   const wrap = el("main", { class: "wrap" },
     el("p", { class: "small muted" },
-      "Цена работы без запчастей. Трудности — надбавки: на оценке по каждой ставится будет / не будет / неизвестно. Значения черновые."));
+      "Работа + материал (расходники в услуге) + разброс. Трудности — надбавки: на оценке по каждой ставится будет / не будет / неизвестно. Крупные запчасти — отдельной строкой в счёте. Значения черновые."));
+  const setField = (code, field, val) => {
+    const a = loadPrices();
+    a[code] = { ...(a[code] || {}), [field]: val };
+    if (!val) delete a[code][field];
+    savePrices(a);
+  };
+  const numRow = (label, val, on, pad) => el("div", { style: `display:flex;gap:8px;align-items:center;margin-top:6px${pad ? ";padding-left:64px" : ""}` },
+    el("span", { class: "small muted", style: "flex:1" }, label),
+    el("input", { type: "number", value: val || 0, style: "width:88px;text-align:right", onchange: (ev) => on(+ev.target.value || 0) }),
+    el("span", { class: "muted small" }, "₽"));
   for (const [g, list] of groups) {
     const card = el("div", { class: "card" }, el("h2", {}, GROUP_TITLE[g] || g));
     for (const p of list) {
@@ -284,7 +298,9 @@ function viewPrices() {
             type: "number", value: e.work, style: "width:88px;text-align:right",
             onchange: (ev) => { const a = loadPrices(); a[p.code] = { ...(a[p.code] || {}), work: +ev.target.value || 0 }; savePrices(a); },
           }),
-          el("span", { class: "muted small" }, "₽")));
+          el("span", { class: "muted small" }, "₽")),
+        numRow("материал", e.material, (v) => setField(p.code, "material", v)),
+        numRow("разброс (± в максимум)", e.spread, (v) => setField(p.code, "spread", v)));
       (e.difficulties || []).forEach((d, i) =>
         row.append(el("div", { style: "display:flex;gap:8px;align-items:center;margin-top:6px;padding-left:64px" },
           el("span", { class: "small muted", style: "flex:1" }, "+ " + d.label),
@@ -513,10 +529,15 @@ function viewOrder(number) {
   if (order.status === "оценка") {
     const body = el("div", {},
       el("p", { class: "small muted" }, "По каждой возможной трудности: будет / не будет / неизвестно."));
-    order.items.forEach((it) => body.append(assessItem(it, (di, st) => {
-      editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x?.difficulties?.[di]) x.difficulties[di].state = st; });
-      refresh();
-    })));
+    order.items.forEach((it) => body.append(assessItem(it,
+      (di, st) => {
+        editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x?.difficulties?.[di]) x.difficulties[di].state = st; });
+        refresh();
+      },
+      (val) => {
+        editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) x.partsPrice = val; });
+        refresh();
+      })));
     body.append(
       el("div", { class: "card", style: "background:var(--bg)" },
         el("span", { class: "muted small" }, "Итого клиенту"),
@@ -599,9 +620,16 @@ function itemList(order, showFacts) {
   return box;
 }
 
-function assessItem(it, onSet) {
+function assessItem(it, onSet, onParts) {
+  const cost = "работа " + money(it.workPrice || 0)
+    + (it.materialPrice ? " · материал " + money(it.materialPrice) : "");
   const box = el("div", { class: "assess" },
-    el("div", {}, el("b", {}, it.name), " ", el("span", { class: "small muted" }, "· работа " + money(it.workPrice || 0))));
+    el("div", {}, el("b", {}, it.name), " ", el("span", { class: "small muted" }, "· " + cost)));
+  box.append(el("div", { style: "display:flex;gap:8px;align-items:center;margin-top:6px" },
+    el("span", { class: "small muted", style: "flex:1" }, "Запчасти (детали) в счёт"),
+    el("input", { type: "number", value: it.partsPrice || 0, style: "width:96px;text-align:right",
+      onchange: (e) => onParts(+e.target.value || 0) }),
+    el("span", { class: "muted small" }, "₽")));
   if ((it.difficulties || []).length === 0) box.append(el("p", { class: "small muted" }, "Трудностей не ожидается."));
   (it.difficulties || []).forEach((d, di) => {
     box.append(el("div", { style: "margin-top:8px" },

@@ -203,7 +203,7 @@ RECORD
 SOURCE "Park Tool, HBT-1 Hydraulic Barb Tool" https://www.parktool.com/en-us/product/hydraulic-barb-tool-hbt-1
 
 
-PROC BRK-06 "Заменить тормозной трос (механика)"
+PROC BRK-06 "Заменить тормозной трос и рубашку (механика)"
   STATUS ready
   PARAM объём: трос | трос и рубашка
   ENTRY велосипед на стойке
