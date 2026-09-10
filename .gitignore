@@ -1,0 +1,8 @@
+node_modules/
+data/*.json
+*.log
+.DS_Store
+vella.html
+public/
+web/catalog.json
+.vercel
