@@ -322,11 +322,35 @@ function viewPrices() {
   ];
 }
 
+// Пресет для быстрой проверки: создаёт готовое обращение одним кликом.
+const DEMO_PRESET = {
+  phone: "+7 900 000-00-00", name: "Тест Тестов", kind: "шоссе",
+  brand: "Canyon", model: "Endurace",
+  request: "переключается плохо, щёлкает сзади; готовлю к сезону",
+};
+function createDemoOrder() {
+  const p = DEMO_PRESET.phone;
+  let number = "";
+  editDB((d) => {
+    if (!d.clients.some((c) => c.phone === p)) d.clients.push({ phone: p, name: DEMO_PRESET.name, consentToCall: true });
+    let bn = d.bikes.find((b) => b.ownerPhone === p && b.brand === DEMO_PRESET.brand && b.model === DEMO_PRESET.model)?.number;
+    if (!bn) {
+      bn = nextBikeKey(d, p);
+      d.bikes.push({ number: bn, kind: DEMO_PRESET.kind, brand: DEMO_PRESET.brand, model: DEMO_PRESET.model, ownerPhone: p });
+    }
+    number = nextOrderNumber(d);
+    d.orders.push({ number, clientPhone: p, bikeNumber: bn, request: DEMO_PRESET.request, diagnosticNotes: [], status: "приём", items: [], createdAt: new Date().toISOString() });
+  });
+  go("/orders/" + number);
+}
+
 function viewOrders() {
   const d = loadDB();
   const orders = [...d.orders].reverse();
   return [
-    bar("Обращения", "/", el("a", { class: "sub", href: "#/orders/new" }, "+ новое")),
+    bar("Обращения", "/", el("span", { class: "sub", style: "display:flex;gap:14px" },
+      el("button", { style: "border:0;background:none;color:inherit;font:inherit;cursor:pointer;padding:0", onclick: createDemoOrder }, "+ демо"),
+      el("a", { href: "#/orders/new", style: "color:inherit" }, "+ новое"))),
     el("main", { class: "wrap" },
       orders.length === 0 ? el("p", { class: "muted" }, "Пока нет обращений.") : null,
       el("div", { class: "list" },
@@ -465,6 +489,8 @@ function viewOrder(number) {
       onFaults,
       onDone: refresh,
       suspension: bike && bike.kind === "МТБ" ? "вилка" : "нет",
+      request: order.request || "",
+      onRequest: (v) => editOrder(number, (o) => (o.request = v)),
     });
   }
   function openRunner(code) {
@@ -515,10 +541,7 @@ function viewOrder(number) {
 
   if (order.status === "приём") {
     main.append(stage("Диагностика и список работ",
-      el("label", { class: "small muted" }, "Запрос клиента (со слов)"),
-      el("textarea", { rows: 2, value: order.request || "", placeholder: "с чем пришёл",
-        onchange: (e) => editOrder(number, (o) => (o.request = e.target.value.trim())) }),
-      el("div", { class: "btn-row", style: "margin-top:10px" },
+      el("div", { class: "btn-row" },
         el("button", { class: "btn-primary", onclick: () => openDiagnostics() }, "Пройти диагностику"),
         el("button", { onclick: () => openPicker((code) => { addItem(code); refresh(); }) }, "+ работа")),
       itemList(order), order.items.length
@@ -797,8 +820,9 @@ function runActive(host, proc, mode, opts, onDone) {
 //  Обучение: тот же список + место под справку по каждой неисправности.
 // ============================================================================
 
-function mountDiagnostics(host, { onFaults, onDone, suspension }) {
+function mountDiagnostics(host, { onFaults, onDone, suspension, request = "", onRequest }) {
   let sus = suspension || "нет"; // нет | вилка | полная
+  let req = request;
   let mode = "master"; // master | training
   const states = {}; // instId -> { state, faults:Set<number>, comment }
   const openRef = new Set();
@@ -832,7 +856,10 @@ function mountDiagnostics(host, { onFaults, onDone, suspension }) {
       el("label", { class: "small muted", style: "margin-top:10px" }, "Подвеска на велосипеде"),
       el("div", { class: "btn-row" },
         [["нет", "нет"], ["вилка", "вилка"], ["полная", "вилка + аморт"]].map(([v, lbl]) =>
-          el("button", { class: sus === v ? "btn-primary" : "", onclick: () => { sus = v; draw(); } }, lbl)))));
+          el("button", { class: sus === v ? "btn-primary" : "", onclick: () => { sus = v; draw(); } }, lbl))),
+      onRequest ? el("label", { class: "small muted", style: "margin-top:10px" }, "Запрос клиента (со слов)") : null,
+      onRequest ? el("textarea", { rows: 2, value: req, placeholder: "с чем пришёл",
+        onchange: (e) => { req = e.target.value.trim(); onRequest(req); } }) : null));
 
     for (const inst of list) {
       const s = st(inst.id);
