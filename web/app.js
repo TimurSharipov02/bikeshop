@@ -13,12 +13,19 @@
 //       весь ввод-вывод — через объект io, который рисует кнопки.
 // ============================================================================
 
-import { buildCatalog, runProcedure, flattenChecks } from "./runner.js";
+import { buildCatalog, runProcedure } from "./runner.js";
 
 const RAW = window.CATALOG;
 const cat = buildCatalog(RAW.procedures);
-const faultById = new Map(RAW.faultGroups.map((g) => [g.id, g]));
 const defaultPrices = RAW.prices;
+
+// Блоки диагностики (catalog/diagnostics.json) + учебный слой (catalog/training.json).
+const diagBlocks = RAW.diagnosticBlocks || [];
+const training = RAW.training || {};
+const BLOCK_TITLES = diagBlocks.map((b) => b.title);
+const blockByPrefix = {};
+for (const b of diagBlocks) for (const pre of b.codes || []) blockByPrefix[pre] = b.title;
+const blockOf = (code) => blockByPrefix[String(code || "").split("-")[0]] || "Прочее";
 
 const app = document.getElementById("app");
 const money = (n) => `${Number(n || 0).toLocaleString("ru-RU")} ₽`;
@@ -126,7 +133,9 @@ const priceOf = (code) => loadPrices()[code] || { work: 0 };
 
 const yy = () => String(new Date().getFullYear()).slice(2);
 const nextOrderNumber = (d) => (d.counters.order++, `V${yy()}-${String(d.counters.order).padStart(6, "0")}`);
-const nextBikeNumber = (d) => (d.counters.bike++, `B-${String(d.counters.bike).padStart(6, "0")}`);
+// Велосипед привязан к телефону владельца (уникальный ключ клиента); у телефона
+// может быть несколько велосипедов. Номер не показываем — только бренд/модель.
+const nextBikeKey = (d, phone) => `${phone}#${d.bikes.filter((b) => b.ownerPhone === phone).length + 1}`;
 
 // ---------------------------- расчёт цен ------------------------------------
 
@@ -144,6 +153,12 @@ const orderRange = (o) =>
     (a, it) => { const r = itemRange(it); return { min: a.min + r.min, max: a.max + r.max }; },
     { min: 0, max: 0 });
 const rangeText = (r) => (r.min === r.max ? money(r.min) : `${money(r.min)} – ${money(r.max)}`);
+// Возможная вилка цены операции: от работы без надбавок до работы со всеми трудностями.
+function codeRange(code) {
+  const p = priceOf(code);
+  const base = p.work || 0;
+  return { min: base, max: base + (p.difficulties || []).reduce((s, d) => s + (d.add || 0), 0) };
+}
 
 function makeItem(code, notes = "") {
   const proc = cat.byCode.get(code);
@@ -222,7 +237,9 @@ function groupBy(list, keyFn) {
 }
 
 function viewProcedures() {
-  const groups = groupBy(cat.procedures.filter((p) => p.code && p.kind === "operation"), (p) => p.code.split("-")[0]);
+  const groups = groupBy(
+    cat.procedures.filter((p) => p.code && p.kind === "operation" && !p.code.startsWith("DIA")),
+    (p) => p.code.split("-")[0]);
   return [
     bar("Техпроцедуры", "/"),
     el("main", { class: "wrap" },
@@ -244,7 +261,7 @@ function viewProcedure(code) {
   const proc = cat.byCode.get(code);
   if (!proc) return [bar(code, "/procedures"), el("main", { class: "wrap" }, el("p", { class: "muted" }, "Не найдено"))];
   const host = el("div", {});
-  if (code === "DIA-01" || code === "DIA-01R") mountChecklist(host, proc, { onDone: () => go("/procedures") });
+  if (code.startsWith("DIA")) mountDiagnostics(host, { onDone: () => go("/procedures") });
   else mountRunner(host, proc, { onDone: () => go("/procedures") });
   return [bar(proc.code, "/procedures", el("span", { class: "sub" }, proc.name)), host];
 }
@@ -310,40 +327,63 @@ function viewOrders() {
 }
 
 function viewNewOrder() {
-  const f = { phone: "", name: "", consent: true, knownBike: "", kind: "шоссе", brand: "", model: "", request: "" };
-  const wrap = el("main", { class: "wrap" });
-  function build() {
-    const d = loadDB();
-    const ec = d.clients.find((c) => c.phone === f.phone.trim());
-    const eb = d.bikes.find((b) => b.number.toLowerCase() === f.knownBike.trim().toLowerCase());
-    const cc = el("div", { class: "card" }, el("h2", {}, "Клиент"),
-      el("label", {}, "Телефон"),
-      el("input", { type: "tel", value: f.phone, placeholder: "+7…", oninput: (e) => { f.phone = e.target.value; redraw(); } }));
-    if (ec) cc.append(el("p", { class: "small muted" }, "Найден: " + ec.name));
-    else cc.append(
-      el("label", {}, "Имя"),
-      el("input", { type: "text", value: f.name, oninput: (e) => (f.name = e.target.value) }),
-      el("label", { class: "opt", style: "margin-top:10px" },
-        el("input", { type: "checkbox", checked: f.consent, onchange: (e) => (f.consent = e.target.checked) }),
-        el("span", {}, "Согласие на обзвон")));
-    const bc = el("div", { class: "card" }, el("h2", {}, "Велосипед"),
-      el("label", {}, "Номер велосипеда (если был у нас)"),
-      el("input", { type: "text", value: f.knownBike, placeholder: "B-000042", oninput: (e) => { f.knownBike = e.target.value; redraw(); } }));
-    if (eb) bc.append(el("p", { class: "small muted" }, `${eb.brand} ${eb.model} · ${eb.kind}`));
-    else bc.append(
-      el("label", {}, "Тип"),
-      el("select", { onchange: (e) => (f.kind = e.target.value) },
-        ["шоссе", "гревел", "МТБ"].map((k) => el("option", { value: k, selected: f.kind === k }, k))),
-      el("label", {}, "Бренд"),
-      el("input", { type: "text", value: f.brand, oninput: (e) => (f.brand = e.target.value) }),
-      el("label", {}, "Модель"),
-      el("input", { type: "text", value: f.model, oninput: (e) => (f.model = e.target.value) }));
-    wrap.append(cc, bc,
-      el("div", { class: "card" }, el("h2", {}, "Запрос клиента"),
-        el("textarea", { rows: 3, value: f.request, placeholder: "с чем пришёл", oninput: (e) => (f.request = e.target.value) })));
+  // Запрос клиента и диагностика — уже внутри обращения, здесь только клиент и велосипед.
+  const f = { phone: "", name: "", consent: true, bike: "new", kind: "шоссе", brand: "", model: "" };
+
+  const clientSlot = el("div", {});
+  const bikeSlot = el("div", { class: "card" }, el("h2", {}, "Велосипед"));
+  const bikeFields = el("div", {});
+
+  function drawClient() {
+    const ec = loadDB().clients.find((c) => c.phone === f.phone.trim());
+    clientSlot.replaceChildren(
+      ec
+        ? el("p", { class: "small muted" }, "Найден: " + (ec.name || ec.phone))
+        : el("div", {},
+            el("label", {}, "Имя"),
+            el("input", { type: "text", value: f.name, oninput: (e) => (f.name = e.target.value) }),
+            el("label", { class: "opt", style: "margin-top:10px" },
+              el("input", { type: "checkbox", checked: f.consent, onchange: (e) => (f.consent = e.target.checked) }),
+              el("span", {}, "Согласие на обзвон"))),
+    );
+    drawBike();
   }
-  function redraw() { wrap.replaceChildren(); build(); }
-  build();
+
+  function drawBike() {
+    const ec = loadDB().clients.find((c) => c.phone === f.phone.trim());
+    const owned = ec ? loadDB().bikes.filter((b) => b.ownerPhone === ec.phone) : [];
+    if (!owned.some((b) => b.number === f.bike)) f.bike = "new";
+    bikeSlot.replaceChildren(el("h2", {}, "Велосипед"));
+    for (const b of owned) {
+      bikeSlot.append(el("label", { class: "opt" },
+        el("input", { type: "radio", name: "bike", checked: f.bike === b.number, onchange: () => { f.bike = b.number; drawBike(); } }),
+        el("span", {}, `${b.brand} ${b.model}`.trim() || "велосипед", el("span", { class: "small muted" }, " · " + b.kind))));
+    }
+    if (owned.length)
+      bikeSlot.append(el("label", { class: "opt" },
+        el("input", { type: "radio", name: "bike", checked: f.bike === "new", onchange: () => { f.bike = "new"; drawBike(); } }),
+        el("span", {}, "Новый велосипед")));
+    bikeFields.replaceChildren();
+    if (f.bike === "new")
+      bikeFields.append(
+        el("label", {}, "Тип"),
+        el("select", { onchange: (e) => (f.kind = e.target.value) },
+          ["шоссе", "гревел", "МТБ"].map((k) => el("option", { value: k, selected: f.kind === k }, k))),
+        el("label", {}, "Бренд"),
+        el("input", { type: "text", value: f.brand, oninput: (e) => (f.brand = e.target.value) }),
+        el("label", {}, "Модель"),
+        el("input", { type: "text", value: f.model, oninput: (e) => (f.model = e.target.value) }));
+    bikeSlot.append(bikeFields);
+  }
+
+  const wrap = el("main", { class: "wrap" },
+    el("div", { class: "card" }, el("h2", {}, "Клиент"),
+      el("label", {}, "Телефон"),
+      el("input", { type: "tel", value: f.phone, placeholder: "+7…", oninput: (e) => { f.phone = e.target.value; drawClient(); } }),
+      clientSlot),
+    bikeSlot);
+  drawClient();
+
   return [
     bar("Новое обращение", "/"),
     wrap,
@@ -354,10 +394,13 @@ function viewNewOrder() {
         let number = "";
         editDB((d) => {
           if (!d.clients.some((c) => c.phone === p)) d.clients.push({ phone: p, name: f.name.trim(), consentToCall: f.consent });
-          let bn = d.bikes.find((b) => b.number.toLowerCase() === f.knownBike.trim().toLowerCase())?.number;
-          if (!bn) { bn = nextBikeNumber(d); d.bikes.push({ number: bn, kind: f.kind, brand: f.brand.trim(), model: f.model.trim(), ownerPhone: p }); }
+          let bn = f.bike;
+          if (bn === "new" || !d.bikes.some((b) => b.number === bn)) {
+            bn = nextBikeKey(d, p);
+            d.bikes.push({ number: bn, kind: f.kind, brand: f.brand.trim(), model: f.model.trim(), ownerPhone: p });
+          }
           number = nextOrderNumber(d);
-          d.orders.push({ number, clientPhone: p, bikeNumber: bn, request: f.request.trim(), diagnosticNotes: [], status: "приём", items: [], createdAt: new Date().toISOString() });
+          d.orders.push({ number, clientPhone: p, bikeNumber: bn, request: "", diagnosticNotes: [], status: "приём", items: [], createdAt: new Date().toISOString() });
         });
         go("/orders/" + number);
       } }, "Оформить обращение"))),
@@ -399,10 +442,14 @@ function viewOrder(number) {
       el("button", { class: "back", style: "border:0;background:none", onclick: refresh }, "‹"),
       el("h1", {}, order.number), el("span", { class: "sub" }, code));
   }
-  function openDiag(code) {
+  function openDiagnostics() {
     const host = el("div", {});
-    render([subBar(code), host]);
-    mountChecklist(host, cat.byCode.get(code), { onFaults, onDone: refresh });
+    render([subBar("Диагностика"), host]);
+    mountDiagnostics(host, {
+      onFaults,
+      onDone: refresh,
+      suspension: bike && bike.kind === "МТБ" ? "вилка" : "нет",
+    });
   }
   function openRunner(code) {
     const host = el("div", {});
@@ -436,9 +483,9 @@ function viewOrder(number) {
 
   const range = orderRange(order);
   const head = el("div", { class: "card" },
-    el("h2", {}, bike ? `${bike.brand} ${bike.model} · ${bike.kind}` : order.bikeNumber),
-    el("p", { class: "small muted" }, `${order.bikeNumber} · ${client?.name || order.clientPhone} · ${order.clientPhone}`),
-    el("p", { class: "small" }, "Запрос клиента: " + (order.request || "—")));
+    el("h2", {}, bike ? `${bike.brand} ${bike.model} · ${bike.kind}`.trim() : "велосипед"),
+    el("p", { class: "small muted" }, `${client?.name || "—"} · ${order.clientPhone}`),
+    order.request ? el("p", { class: "small" }, "Запрос клиента: " + order.request) : null);
   if ((order.diagnosticNotes || []).length) {
     const ul = el("ul", { style: "margin:4px 0 0;padding-left:18px" });
     order.diagnosticNotes.forEach((n, i) =>
@@ -452,8 +499,11 @@ function viewOrder(number) {
 
   if (order.status === "приём") {
     main.append(stage("Диагностика и список работ",
-      el("div", { class: "btn-row" },
-        el("button", { class: "btn-primary", onclick: () => openDiag("DIA-01") }, "Пройти диагностику"),
+      el("label", { class: "small muted" }, "Запрос клиента (со слов)"),
+      el("textarea", { rows: 2, value: order.request || "", placeholder: "с чем пришёл",
+        onchange: (e) => editOrder(number, (o) => (o.request = e.target.value.trim())) }),
+      el("div", { class: "btn-row", style: "margin-top:10px" },
+        el("button", { class: "btn-primary", onclick: () => openDiagnostics() }, "Пройти диагностику"),
         el("button", { onclick: () => openPicker((code) => { addItem(code); refresh(); }) }, "+ работа")),
       itemList(order), order.items.length
         ? el("button", { class: "btn-primary", style: "width:100%;margin-top:12px", onclick: () => setStatus("оценка") }, "К оценке стоимости")
@@ -507,7 +557,7 @@ function viewOrder(number) {
 
   if (order.status === "проверка") {
     main.append(stage("Повторная диагностика",
-      el("button", { class: "btn-primary", style: "width:100%", onclick: () => openDiag("DIA-01R") }, "Пройти повторную диагностику"),
+      el("button", { class: "btn-primary", style: "width:100%", onclick: () => openDiagnostics() }, "Пройти повторную диагностику"),
       el("button", { class: "btn-ok", style: "width:100%;margin-top:10px", onclick: () => setStatus("выдан", (o) => (o.handedOverAt = new Date().toISOString())) }, "Выдать клиенту")));
   }
 
@@ -523,19 +573,30 @@ function viewOrder(number) {
 
 function stage(title, ...body) { return el("div", { class: "card" }, el("h2", {}, title), ...body); }
 
+function itemRow(it, showFacts) {
+  const r = itemRange(it);
+  return el("div", { class: "row", style: "cursor:default;align-items:flex-start" },
+    el("span", { class: "code" }, it.code),
+    el("span", { style: "flex:1" }, it.name,
+      it.notes ? el("span", { class: "small muted" }, el("br"), it.notes) : null,
+      showFacts && it.done ? el("span", { class: "small muted" }, el("br"),
+        `${it.actualMinutes ?? "?"} мин${it.parts.length ? " · " + it.parts.join(", ") : ""}${it.doneBy ? " · " + it.doneBy : ""}`) : null),
+    el("span", { class: "small muted" }, rangeText(r)));
+}
+
+// Наряд сгруппирован по узлам велосипеда (блоки диагностики), порядок — как в diagnostics.json.
 function itemList(order, showFacts) {
   if (order.items.length === 0) return el("p", { class: "muted small" }, "Работ пока нет.");
-  return el("div", { class: "list", style: "margin-top:8px" },
-    order.items.map((it) => {
-      const r = itemRange(it);
-      return el("div", { class: "row", style: "cursor:default;align-items:flex-start" },
-        el("span", { class: "code" }, it.code),
-        el("span", { style: "flex:1" }, it.name,
-          it.notes ? el("span", { class: "small muted" }, el("br"), it.notes) : null,
-          showFacts && it.done ? el("span", { class: "small muted" }, el("br"),
-            `${it.actualMinutes ?? "?"} мин${it.parts.length ? " · " + it.parts.join(", ") : ""}${it.doneBy ? " · " + it.doneBy : ""}`) : null),
-        el("span", { class: "small muted" }, rangeText(r)));
-    }));
+  const groups = groupBy(order.items, (it) => blockOf(it.code));
+  const box = el("div", { style: "margin-top:8px" });
+  for (const title of [...BLOCK_TITLES, "Прочее"]) {
+    const list = groups.get(title);
+    if (!list || !list.length) continue;
+    box.append(
+      el("p", { class: "small muted", style: "margin:14px 0 4px;letter-spacing:.05em" }, title.toUpperCase()),
+      el("div", { class: "list" }, list.map((it) => itemRow(it, showFacts))));
+  }
+  return box;
 }
 
 function assessItem(it, onSet) {
@@ -703,73 +764,107 @@ function runActive(host, proc, mode, opts, onDone) {
 }
 
 // ============================================================================
-//  ЧЕК-ЛИСТ ДИАГНОСТИКИ (листаемый список)
+//  ДИАГНОСТИКА ПО БЛОКАМ
+//  Мастер: все узлы по умолчанию «Норма», мастер отмечает только проблемные.
+//  Обучение: тот же список + место под справку по каждой неисправности.
 // ============================================================================
 
-function mountChecklist(host, proc, { onFaults, onDone }) {
-  const hasFork = proc.params.some((p) => p.name === "вилка");
-  let fork = "жёсткая";
-  const states = {}; // id -> {state, faults:Set, comment}
-  const openHints = new Set();
-  const st = (id) => (states[id] ||= { state: "unchecked", faults: new Set(), comment: "" });
+function mountDiagnostics(host, { onFaults, onDone, suspension }) {
+  let sus = suspension || "нет"; // нет | вилка | полная
+  let mode = "master"; // master | training
+  const states = {}; // instId -> { state, faults:Set<number>, comment }
+  const openRef = new Set();
+  const st = (id) => (states[id] ||= { state: "ok", faults: new Set(), comment: "" });
+
+  const instances = () => {
+    const out = [];
+    for (const b of diagBlocks) {
+      if (b.showIf === "подвеска" && sus === "нет") continue;
+      if (b.perSide) {
+        out.push({ b, id: b.id + ".F", label: `${b.title} · перед` });
+        out.push({ b, id: b.id + ".R", label: `${b.title} · зад` });
+      } else out.push({ b, id: b.id, label: b.title });
+    }
+    return out;
+  };
+  const blockFaults = (b) => b.sections.flatMap((s) => s.faults.map((f) => ({ ...f, section: s.title })));
 
   function draw() {
-    const items = flattenChecks(cat, proc, { вилка: fork });
-    const groups = groupBy(items, (it) => (it.scope ? `${it.chapter} · ${it.scope}` : it.chapter));
+    const list = instances();
     const wrap = el("main", { class: "wrap" });
 
-    const top = el("div", { class: "card" }, el("h2", {}, proc.name),
-      el("p", { class: "small muted" }, "Листай список. Что в норме — «Норма». Где проблема — открой пункт и выбери неисправность."));
-    if (hasFork) top.append(el("label", {}, "Вилка"),
+    wrap.append(el("div", { class: "card" },
+      el("h2", {}, "Диагностика"),
+      el("p", { class: "small muted" }, mode === "master"
+        ? "Все узлы по умолчанию «Норма». Отметь только те, где есть проблема."
+        : "По каждому узлу — «Норма» или «Проблема»; в проблеме доступна справка по неисправностям."),
       el("div", { class: "btn-row" },
-        ["жёсткая", "амортизационная"].map((v) => el("button", { class: fork === v ? "btn-primary" : "", onclick: () => { fork = v; draw(); } }, v))));
-    wrap.append(top);
+        [["master", "Мастер"], ["training", "Обучение"]].map(([m, lbl]) =>
+          el("button", { class: mode === m ? "btn-primary" : "", onclick: () => { mode = m; draw(); } }, lbl))),
+      el("label", { class: "small muted", style: "margin-top:10px" }, "Подвеска на велосипеде"),
+      el("div", { class: "btn-row" },
+        [["нет", "нет"], ["вилка", "вилка"], ["полная", "вилка + аморт"]].map(([v, lbl]) =>
+          el("button", { class: sus === v ? "btn-primary" : "", onclick: () => { sus = v; draw(); } }, lbl)))));
 
-    for (const [label, list] of groups) {
-      const card = el("div", { class: "card" }, el("h2", {}, label));
-      for (const it of list) {
-        const s = st(it.id);
-        const g = it.group ? faultById.get(it.group) : null;
-        const row = el("div", { class: "check-item" });
-        row.append(el("div", { class: s.state === "ok" ? "muted" : "", style: s.state === "problem" ? "font-weight:600" : "" }, it.text));
-        if (it.hints.length) {
-          row.append(el("button", { class: "small hint-toggle", onclick: () => { openHints.has(it.id) ? openHints.delete(it.id) : openHints.add(it.id); draw(); } },
-            (openHints.has(it.id) ? "▾ " : "▸ ") + "как проверить"));
-          if (openHints.has(it.id)) it.hints.forEach((h) => row.append(el("div", { class: "note" }, h)));
-        }
-        row.append(el("div", { class: "tri", style: "margin-top:8px" },
-          el("button", { class: s.state === "ok" ? "sel-no" : "", onclick: () => { s.state = s.state === "ok" ? "unchecked" : "ok"; draw(); } }, "Норма"),
-          el("button", { class: s.state === "problem" ? "sel-yes" : "", onclick: () => { s.state = s.state === "problem" ? "unchecked" : "problem"; draw(); } }, "Проблема")));
-        if (s.state === "problem" && g) {
-          const fbox = el("div", { style: "margin-top:8px" });
-          g.faults.forEach((f, i) =>
-            fbox.append(el("label", { class: "opt" },
-              el("input", { type: "checkbox", checked: s.faults.has(i), onchange: () => { s.faults.has(i) ? s.faults.delete(i) : s.faults.add(i); } }),
-              el("span", {}, f.label, f.code ? el("span", { class: "pill" }, `${f.code}${priceOf(f.code).work ? " · " + money(priceOf(f.code).work) : ""}`) : null))));
-          fbox.append(el("input", { type: "text", placeholder: "комментарий", value: s.comment, style: "margin-top:6px", oninput: (e) => (s.comment = e.target.value) }));
-          row.append(fbox);
-        }
-        card.append(row);
+    for (const inst of list) {
+      const s = st(inst.id);
+      const card = el("div", { class: "card" },
+        el("h2", {}, inst.label),
+        el("p", { class: "small muted" }, inst.b.prompt),
+        el("div", { class: "tri" },
+          el("button", { class: s.state === "ok" ? "sel-no" : "", onclick: () => { s.state = "ok"; draw(); } }, "Норма"),
+          el("button", { class: s.state === "problem" ? "sel-yes" : "", onclick: () => { s.state = s.state === "problem" ? "ok" : "problem"; draw(); } }, "Проблема")));
+
+      if (s.state === "problem") {
+        const fb = el("div", { style: "margin-top:8px" });
+        const faults = blockFaults(inst.b);
+        let sec = null;
+        faults.forEach((f, i) => {
+          if (mode === "training" && f.section !== sec) {
+            sec = f.section;
+            fb.append(el("p", { class: "small muted", style: "margin:10px 0 2px" }, sec));
+          }
+          fb.append(el("label", { class: "opt" },
+            el("input", { type: "checkbox", checked: s.faults.has(i),
+              onchange: () => { s.faults.has(i) ? s.faults.delete(i) : s.faults.add(i); } }),
+            el("span", {}, f.label,
+              f.code ? el("span", { class: "pill" }, `${f.code} · ${rangeText(codeRange(f.code))}`) : null)));
+          if (mode === "training") {
+            const key = inst.id + "#" + i;
+            const t = training[f.label];
+            fb.append(el("button", { class: "small hint-toggle",
+              onclick: () => { openRef.has(key) ? openRef.delete(key) : openRef.add(key); draw(); } },
+              (openRef.has(key) ? "▾ " : "▸ ") + "справка"));
+            if (openRef.has(key)) {
+              const rows = t && (t.how || t.signs || t.means)
+                ? [t.how && "Как проверить: " + t.how, t.signs && "Признаки: " + t.signs, t.means && "Что значит: " + t.means].filter(Boolean)
+                : ["Материал появится позже."];
+              rows.forEach((r) => fb.append(el("div", { class: "note" }, r)));
+            }
+          }
+        });
+        fb.append(el("input", { type: "text", placeholder: "комментарий", value: s.comment,
+          style: "margin-top:6px", oninput: (e) => (s.comment = e.target.value) }));
+        card.append(fb);
       }
       wrap.append(card);
     }
 
-    const checked = items.filter((it) => st(it.id).state !== "unchecked").length;
-    const problems = items.filter((it) => st(it.id).state === "problem").length;
-
+    const problems = list.filter((i) => st(i.id).state === "problem").length;
     host.replaceChildren(wrap,
       el("div", { class: "actions" }, el("div", { class: "actions-inner" },
-        el("span", { class: "small muted", style: "flex:0 0 auto;align-self:center" }, `${checked}/${items.length} · проблем: ${problems}`),
-        el("button", { class: "btn-primary", onclick: () => finish(items) }, "Готово"))));
+        el("span", { class: "small muted", style: "flex:0 0 auto;align-self:center" }, `проблемных узлов: ${problems}`),
+        el("button", { class: "btn-primary", onclick: finish }, "Готово"))));
   }
 
-  function finish(items) {
-    for (const it of items) {
-      const s = st(it.id);
+  function finish() {
+    for (const inst of instances()) {
+      const s = st(inst.id);
       if (s.state !== "problem") continue;
-      const g = it.group ? faultById.get(it.group) : null;
-      const faults = g ? [...s.faults].map((i) => { const f = g.faults[i]; return { label: f.label, code: f.code, note: f.note }; }) : [];
-      onFaults?.(faults, (s.comment || "").trim(), it.text);
+      const faults = blockFaults(inst.b);
+      const picked = [...s.faults].map((i) => faults[i]).filter(Boolean)
+        .map((f) => ({ label: f.label, code: f.code, note: f.note }));
+      onFaults?.(picked, (s.comment || "").trim(), inst.label);
     }
     onDone();
   }

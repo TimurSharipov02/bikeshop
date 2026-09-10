@@ -13,14 +13,33 @@ const procDir = p("catalog");
 const procFiles = readdirSync(procDir).filter((f) => f.endsWith(".proc")).sort();
 const procedures = procFiles.flatMap((f) => parseProc(readFileSync(procDir + "/" + f, "utf8"), f));
 
-// 2. Неисправности и цены
+// 2. Неисправности, блоки диагностики, учебный слой, цены
 const faults = JSON.parse(readFileSync(p("catalog/faults.json"), "utf8"));
+const diagnostics = JSON.parse(readFileSync(p("catalog/diagnostics.json"), "utf8"));
+const training = JSON.parse(readFileSync(p("catalog/training.json"), "utf8"));
 const priceFile = JSON.parse(readFileSync(p("catalog/prices.json"), "utf8"));
+
+// Блок диагностики = один экран осмотра; неисправности берём из групп faults.json.
+const faultGroupById = new Map((faults.groups || []).map((g) => [g.id, g]));
+const diagnosticBlocks = (diagnostics.blocks || []).map((b) => ({
+  id: b.id,
+  title: b.title,
+  perSide: !!b.perSide,
+  showIf: b.showIf || null,
+  codes: b.codes || [],
+  prompt: b.prompt || "",
+  sections: (b.groups || []).map((gid) => {
+    const g = faultGroupById.get(gid);
+    if (!g) throw new Error(`diagnostics.json: блок ${b.id} → нет группы неисправностей «${gid}» в faults.json`);
+    return { id: g.id, title: g.title, faults: g.faults };
+  }),
+}));
 
 const catalog = {
   generatedAt: new Date().toISOString(),
   procedures,
-  faultGroups: faults.groups || [],
+  diagnosticBlocks,
+  training: training.items || {},
   currency: priceFile.currency || "RUB",
   prices: priceFile.operations || {},
 };
