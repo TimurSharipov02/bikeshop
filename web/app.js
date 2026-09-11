@@ -75,6 +75,36 @@ let DB = normalizeDB(safeParse(localStorage.getItem(DB_KEY)));
 let serverOK = false;
 let pushTimer = null;
 
+// ---------------------------- вход и сессия ---------------------------------
+//
+//  Куки (HttpOnly) ставит сервер (/api/auth), клиент их не читает — только
+//  спрашивает "кто я" через GET и шлёт действия через POST. Без сессии
+//  роутер ниже показывает только экран входа/первого запуска.
+
+let SESSION = null; // { login, name, role } | null
+let NEEDS_SETUP = false;
+
+async function authAction(body) {
+  const r = await fetch("/api/auth", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || "ошибка");
+  return j;
+}
+async function loadSession() {
+  try {
+    const r = await fetch("/api/auth", { cache: "no-store" });
+    const j = await r.json();
+    SESSION = j.authenticated ? j.user : null;
+    NEEDS_SETUP = !!j.needsSetup;
+  } catch { SESSION = null; }
+}
+async function logout() {
+  try { await authAction({ action: "logout" }); } catch {}
+  SESSION = null;
+  location.hash = "/";
+  router();
+}
+
 function safeParse(s) { try { return JSON.parse(s || "{}"); } catch { return {}; } }
 const loadDB = () => DB;
 function writeLocal() { localStorage.setItem(DB_KEY, JSON.stringify(DB)); }
@@ -189,6 +219,12 @@ const shortCheck = (t) => String(t).replace(/\s*[—-]\s*норма\?\s*$/i, "")
 //  РОУТЕР
 // ============================================================================
 
+function adminOnly(fn) {
+  return (m) => SESSION?.role === "admin" ? fn(m) : [
+    bar("Нет доступа", "/"),
+    el("main", { class: "wrap" }, el("p", { class: "muted" }, "Этот раздел только для администратора.")),
+  ];
+}
 const routes = [
   [/^\/?$/, viewHome],
   [/^\/orders\/new$/, viewNewOrder],
@@ -197,8 +233,13 @@ const routes = [
   [/^\/procedures\/([^/]+)$/, (m) => viewProcedure(m[1])],
   [/^\/procedures$/, viewProcedures],
   [/^\/prices$/, viewPrices],
+  [/^\/profile$/, viewProfile],
+  [/^\/admin$/, adminOnly(viewAdmin)],
+  [/^\/admin\/masters$/, adminOnly(viewMasters)],
+  [/^\/admin\/stock$/, adminOnly(viewStock)],
 ];
 function router() {
+  if (!SESSION) return render(NEEDS_SETUP ? viewSetup() : viewLogin());
   const path = location.hash.replace(/^#/, "") || "/";
   for (const [re, fn] of routes) {
     const m = path.match(re);
@@ -211,9 +252,12 @@ function render(nodes) {
   app.replaceChildren(...(Array.isArray(nodes) ? nodes.filter(Boolean) : [nodes]));
   window.scrollTo(0, 0);
 }
-window.addEventListener("hashchange", () => { router(); syncFromServer(); });
-router();
-syncFromServer();
+window.addEventListener("hashchange", () => { router(); if (SESSION) syncFromServer(); });
+(async () => {
+  await loadSession();
+  router();
+  if (SESSION) syncFromServer();
+})();
 
 // ============================================================================
 //  ЭКРАНЫ
@@ -225,13 +269,16 @@ function homeLink(text, hash) {
 
 function viewHome() {
   return [
-    el("header", { class: "bar" }, el("h1", {}, "Веломастерская Vella")),
+    el("header", { class: "bar" }, el("h1", {}, "Веломастерская Vella"),
+      el("span", { class: "sub" }, SESSION?.name || SESSION?.login || "")),
     el("main", { class: "wrap" },
       el("div", { class: "list" },
         homeLink("Новое обращение", "/orders/new"),
         homeLink("Обращения", "/orders"),
         homeLink("Техпроцедуры", "/procedures"),
-        homeLink("Прайс-лист", "/prices")),
+        homeLink("Прайс-лист", "/prices"),
+        SESSION?.role === "admin" ? homeLink("Админка", "/admin") : null,
+        homeLink("Профиль", "/profile")),
       el("p", { class: "muted small", style: "margin-top:16px" },
         serverOK ? "Данные общие для всех устройств." : "Данные хранятся только в этом браузере.")),
   ];
@@ -928,4 +975,262 @@ function mountDiagnostics(host, { onFaults, onDone, suspension, request = "", on
   }
 
   draw();
+}
+
+// ============================================================================
+//  ВХОД, ПЕРВЫЙ ЗАПУСК, ПРОФИЛЬ
+// ============================================================================
+
+function authCard(title, hint, fields, onSubmit, submitLabel) {
+  let error = "";
+  const submit = async (ev) => {
+    ev.preventDefault();
+    error = "";
+    try {
+      await onSubmit(ev.target);
+    } catch (e) {
+      error = e.message || "ошибка";
+      render(box());
+    }
+  };
+  const box = () => [
+    el("main", { class: "wrap", style: "padding-top:48px" },
+      el("form", { class: "card", style: "max-width:360px;margin:0 auto", onsubmit: submit },
+        el("h2", {}, title),
+        hint ? el("p", { class: "small muted" }, hint) : null,
+        error ? el("p", { class: "small", style: "color:var(--warn)" }, error) : null,
+        ...fields,
+        el("div", { class: "btn-row", style: "margin-top:16px" },
+          el("button", { class: "btn-primary", type: "submit" }, submitLabel)))),
+  ];
+  return box();
+}
+
+function field(label, name, type, autocomplete) {
+  return [el("label", {}, label), el("input", { name, type: type || "text", autocomplete: autocomplete || "off" })];
+}
+
+// Форма-карточка, встраиваемая внутрь другого экрана (в отличие от authCard,
+// который сам себе целая страница). При ошибке заменяет сама себя в DOM.
+function formCard(title, hint, fields, onSubmit, submitLabel, error) {
+  let formEl;
+  const submit = async (ev) => {
+    ev.preventDefault();
+    try {
+      await onSubmit(ev.target);
+    } catch (e) {
+      formEl.replaceWith(formCard(title, hint, fields, onSubmit, submitLabel, e.message || "ошибка"));
+    }
+  };
+  formEl = el("form", { class: "card", onsubmit: submit },
+    el("h2", {}, title),
+    hint ? el("p", { class: "small muted" }, hint) : null,
+    error ? el("p", { class: "small", style: "color:var(--warn)" }, error) : null,
+    ...fields,
+    el("div", { class: "btn-row", style: "margin-top:16px" },
+      el("button", { class: "btn-primary", type: "submit" }, submitLabel)));
+  return formEl;
+}
+
+function viewLogin() {
+  return authCard("Вход в Vella", null,
+    [...field("Логин", "login"), ...field("Пароль", "password", "password", "current-password")],
+    async (form) => {
+      await authAction({ action: "login", login: form.login.value.trim(), password: form.password.value });
+      await loadSession();
+      location.hash = "/";
+      router();
+    }, "Войти");
+}
+
+function viewSetup() {
+  return authCard("Первый запуск", "Учётных записей ещё нет. Создайте администратора — дальше он сам заведёт мастеров.",
+    [...field("Имя", "name"), ...field("Логин", "login"),
+     ...field("Пароль", "password", "password", "new-password"),
+     ...field("Повтор пароля", "password2", "password", "new-password")],
+    async (form) => {
+      if (form.password.value !== form.password2.value) throw new Error("Пароли не совпадают");
+      await authAction({ action: "bootstrap", name: form.name.value.trim(), login: form.login.value.trim(), password: form.password.value });
+      await loadSession();
+      location.hash = "/";
+      router();
+    }, "Создать");
+}
+
+function viewProfile() {
+  return [
+    bar("Профиль", "/"),
+    el("main", { class: "wrap" },
+      el("div", { class: "card" },
+        el("div", {}, SESSION?.name), el("div", { class: "small muted" }, SESSION?.login,
+          SESSION?.role === "admin" ? el("span", { class: "pill" }, "администратор") : el("span", { class: "pill" }, "мастер"))),
+      formCard("Сменить пароль", null,
+        [...field("Текущий пароль", "current", "password", "current-password"),
+         ...field("Новый пароль", "next", "password", "new-password")],
+        async (form) => {
+          await authAction({ action: "changePassword", currentPassword: form.current.value, newPassword: form.next.value });
+          alert("Пароль изменён");
+          location.hash = "/";
+          router();
+        }, "Сохранить"),
+      el("button", { style: "margin-top:16px;border:0;background:none;color:var(--muted);text-decoration:underline;padding:0", onclick: logout }, "Выйти")),
+  ];
+}
+
+// ============================================================================
+//  АДМИНКА
+// ============================================================================
+
+function viewAdmin() {
+  return [
+    bar("Админка", "/"),
+    el("main", { class: "wrap" },
+      el("div", { class: "list" },
+        homeLink("Мастера", "/admin/masters"),
+        homeLink("Остатки по запчастям", "/admin/stock"))),
+  ];
+}
+
+// ---------------------------- мастера ---------------------------------------
+
+async function loadMasters() {
+  try {
+    const r = await fetch("/api/users", { cache: "no-store" });
+    const j = await r.json();
+    if (location.hash !== "#/admin/masters") return;
+    render(mastersScreen(r.ok ? j.users : [], r.ok ? "" : j.error || "ошибка"));
+  } catch {
+    if (location.hash === "#/admin/masters") render(mastersScreen([], "нет соединения"));
+  }
+}
+function viewMasters() {
+  loadMasters();
+  return [bar("Мастера", "/admin"), el("main", { class: "wrap" }, el("p", { class: "muted" }, "Загрузка…"))];
+}
+
+async function usersApi(method, body) {
+  const r = await fetch("/api/users", { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { alert(j.error || "ошибка"); return null; }
+  return j;
+}
+
+function mastersScreen(list, error) {
+  const addForm = el("form", {
+    class: "card", onsubmit: async (ev) => {
+      ev.preventDefault();
+      const ok = await usersApi("POST", {
+        name: ev.target.name.value.trim(), login: ev.target.login.value.trim().toLowerCase(),
+        password: ev.target.password.value, role: ev.target.role.value,
+      });
+      if (ok) { ev.target.reset(); loadMasters(); }
+    },
+  },
+    el("h2", {}, "Добавить мастера"),
+    ...field("Имя", "name"), ...field("Логин", "login"), ...field("Пароль", "password", "password", "new-password"),
+    el("label", {}, "Роль"),
+    el("select", { name: "role" }, el("option", { value: "master" }, "мастер"), el("option", { value: "admin" }, "администратор")),
+    el("div", { class: "btn-row", style: "margin-top:12px" }, el("button", { class: "btn-primary", type: "submit" }, "Добавить")));
+
+  const rows = list.map((u) => {
+    const card = el("div", { class: "card" },
+      el("div", {}, u.name,
+        u.role === "admin" ? el("span", { class: "pill" }, "админ") : null,
+        !u.active ? el("span", { class: "pill" }, "отключён") : null),
+      el("div", { class: "small muted" }, u.login));
+
+    card.append(el("form", {
+      style: "display:flex;gap:8px;margin-top:10px", onsubmit: async (ev) => {
+        ev.preventDefault();
+        const password = ev.target.password.value;
+        if (!password) return;
+        if (await usersApi("PUT", { id: u.id, password })) { ev.target.reset(); alert("Пароль обновлён"); }
+      },
+    },
+      el("input", { name: "password", type: "password", placeholder: "новый пароль", style: "flex:1", autocomplete: "new-password" }),
+      el("button", { type: "submit" }, "Сменить")));
+
+    card.append(el("div", { class: "btn-row", style: "margin-top:10px" },
+      el("button", { onclick: async () => { if (await usersApi("PUT", { id: u.id, active: !u.active })) loadMasters(); } },
+        u.active ? "Отключить" : "Включить"),
+      el("button", {
+        class: "btn-warn", onclick: async () => {
+          if (!confirm(`Удалить мастера «${u.name}»?`)) return;
+          if (await usersApi("DELETE", { id: u.id })) loadMasters();
+        },
+      }, "Удалить")));
+    return card;
+  });
+
+  return [
+    bar("Мастера", "/admin"),
+    el("main", { class: "wrap" },
+      error ? el("p", { class: "small", style: "color:var(--warn)" }, error) : null,
+      addForm,
+      list.length === 0
+        ? el("p", { class: "muted", style: "margin-top:12px" }, "Мастеров пока нет.")
+        : el("div", { class: "list", style: "margin-top:12px;gap:12px" }, rows)),
+  ];
+}
+
+// ---------------------------- остатки по запчастям ---------------------------
+
+async function loadStock() {
+  try {
+    const r = await fetch("/api/stock", { cache: "no-store" });
+    const j = await r.json();
+    if (location.hash !== "#/admin/stock") return;
+    render(stockScreen(r.ok ? j : { items: [], updatedAt: null }, r.ok ? "" : j.error || "ошибка"));
+  } catch {
+    if (location.hash === "#/admin/stock") render(stockScreen({ items: [], updatedAt: null }, "нет соединения"));
+  }
+}
+function viewStock() {
+  loadStock();
+  return [bar("Остатки по запчастям", "/admin"), el("main", { class: "wrap" }, el("p", { class: "muted" }, "Загрузка…"))];
+}
+
+async function saveStockItems(items) {
+  const r = await fetch("/api/stock", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ items }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { alert(j.error || "ошибка"); return; }
+  render(stockScreen(j, ""));
+}
+
+function stockScreen(data, error) {
+  const items = (data.items || []).map((it) => ({ ...it }));
+  const updated = data.updatedAt ? new Date(data.updatedAt).toLocaleString("ru-RU") : null;
+
+  const rows = items.map((it, i) => el("div", { class: "price-row", style: "display:flex;gap:8px;align-items:center" },
+    el("input", { value: it.sku, style: "width:90px", placeholder: "артикул", onchange: (ev) => { items[i].sku = ev.target.value; } }),
+    el("input", { value: it.name, style: "flex:1", placeholder: "название", onchange: (ev) => { items[i].name = ev.target.value; } }),
+    el("input", { type: "number", value: it.qty, style: "width:70px;text-align:right", onchange: (ev) => { items[i].qty = +ev.target.value || 0; } }),
+    el("input", { value: it.unit, style: "width:60px", placeholder: "ед.", onchange: (ev) => { items[i].unit = ev.target.value; } }),
+    el("button", { onclick: () => saveStockItems(items.filter((_, j2) => j2 !== i)) }, "✕")));
+
+  const importArea = el("textarea", { rows: 4 });
+  return [
+    bar("Остатки по запчастям", "/admin"),
+    el("main", { class: "wrap" },
+      error ? el("p", { class: "small", style: "color:var(--warn)" }, error) : null,
+      updated ? el("p", { class: "small muted" }, "Обновлено: " + updated) : null,
+      el("div", { class: "card" },
+        rows.length ? el("div", { class: "list" }, rows) : el("p", { class: "muted small" }, "Пока пусто."),
+        el("button", { style: "margin-top:10px", onclick: () => { items.push({ sku: "", name: "", qty: 0, unit: "шт" }); render(stockScreen({ items, updatedAt: data.updatedAt }, "")); } }, "+ строка"),
+        el("div", { class: "btn-row", style: "margin-top:12px" },
+          el("button", { class: "btn-primary", onclick: () => saveStockItems(items) }, "Сохранить"))),
+      el("div", { class: "card" },
+        el("h2", {}, "Импорт списком"),
+        el("p", { class: "small muted" }, "Пока без прямой связи с 1С — вставьте выгрузку сюда, каждая позиция с новой строки: артикул;название;остаток;единица. Полностью заменит список выше."),
+        importArea,
+        el("div", { class: "btn-row", style: "margin-top:10px" },
+          el("button", {
+            onclick: () => {
+              const parsed = importArea.value.split("\n").map((line) => line.split(";").map((s) => s.trim()))
+                .filter((p) => p[0] || p[1])
+                .map(([sku, name, qty, unit]) => ({ sku: sku || "", name: name || "", qty: Number(qty) || 0, unit: unit || "шт" }));
+              if (parsed.length) saveStockItems(parsed);
+            },
+          }, "Импортировать (заменит список)")))),
+  ];
 }

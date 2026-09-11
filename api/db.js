@@ -7,6 +7,7 @@
 // через Vercel Marketplace (UPSTASH_REDIS_REST_URL / _TOKEN, либо KV_*).
 
 import { Redis } from "@upstash/redis";
+import { requireUser } from "./_lib.js";
 
 const KEY = "vella:db";
 const empty = () => ({ clients: [], bikes: [], orders: [], counters: { order: 0, bike: 0 } });
@@ -41,6 +42,7 @@ function mergeDB(a, b) {
 export default async function handler(req, res) {
   const r = redis();
   if (!r) return res.status(503).json({ error: "storage not configured" });
+  if (!requireUser(req, res)) return;
 
   try {
     if (req.method === "GET") {
