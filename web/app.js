@@ -105,6 +105,19 @@ async function logout() {
   router();
 }
 
+// Список мастеров — для назначения на обращение. Читает любой вошедший;
+// кэшируем на сессию, обновляем при заходе в админку или по кнопке.
+let mastersCache = null;
+async function ensureMasters() {
+  if (mastersCache) return mastersCache;
+  try {
+    const r = await fetch("/api/users", { cache: "no-store" });
+    const j = await r.json();
+    mastersCache = r.ok ? j.users.filter((u) => u.active) : [];
+  } catch { mastersCache = []; }
+  return mastersCache;
+}
+
 function safeParse(s) { try { return JSON.parse(s || "{}"); } catch { return {}; } }
 const loadDB = () => DB;
 function writeLocal() { localStorage.setItem(DB_KEY, JSON.stringify(DB)); }
@@ -416,7 +429,8 @@ function viewOrders() {
           return el("a", { class: "row", href: `#/orders/${o.number}` },
             el("span", { class: "code" }, o.number),
             el("span", {}, bike ? bikeLabel(bike) : o.bikeNumber,
-              el("br"), el("span", { class: "small muted" }, client?.name || o.clientPhone)),
+              el("br"), el("span", { class: "small muted" }, client?.name || o.clientPhone),
+              o.assignedToName ? el("span", { class: "small muted" }, " · " + o.assignedToName) : null),
             el("span", { class: "tag" }, o.status));
         }))),
   ];
@@ -585,6 +599,31 @@ function viewOrder(number) {
     el("h2", {}, bike ? `${bikeLabel(bike)} · ${bike.kind}`.trim() : "велосипед"),
     el("p", { class: "small muted" }, `${client?.name || "—"} · ${order.clientPhone}`),
     order.request ? el("p", { class: "small" }, "Запрос клиента: " + order.request) : null);
+
+  const assignSlot = el("div", { class: "small", style: "margin-top:8px" }, el("span", { class: "muted" }, "Мастер: загрузка…"));
+  head.append(assignSlot);
+  (async () => {
+    const masters = await ensureMasters();
+    const current = order.assignedTo || "";
+    const setAssignee = (id) => {
+      const m = masters.find((x) => x.id === id);
+      editOrder(number, (o) => { o.assignedTo = id || null; o.assignedToName = m ? m.name : ""; });
+      refresh();
+    };
+    const select = el("select", { style: "width:auto;display:inline-block", onchange: (e) => setAssignee(e.target.value) },
+      el("option", { value: "", selected: !current }, "не назначен"),
+      masters.map((m) => el("option", { value: m.id, selected: current === m.id }, m.name)));
+    assignSlot.replaceChildren(
+      el("span", { class: "muted" }, "Мастер: "), select,
+      SESSION?.id && current !== SESSION.id
+        ? el("button", {
+            style: "margin-left:8px;border:0;background:none;color:var(--accent);cursor:pointer;padding:0;min-height:auto;font:inherit",
+            onclick: () => setAssignee(SESSION.id),
+          }, "взять себе")
+        : null,
+    );
+  })();
+
   if ((order.diagnosticNotes || []).length) {
     const ul = el("ul", { style: "margin:4px 0 0;padding-left:18px" });
     order.diagnosticNotes.forEach((n, i) =>
@@ -1101,6 +1140,7 @@ function viewAdmin() {
 // ---------------------------- мастера ---------------------------------------
 
 async function loadMasters() {
+  mastersCache = null; // список мог измениться — сбросить кэш для назначения на обращения
   try {
     const r = await fetch("/api/users", { cache: "no-store" });
     const j = await r.json();

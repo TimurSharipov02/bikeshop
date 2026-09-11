@@ -6,7 +6,7 @@ import { redis, readBody, hashPassword, verifyPassword, getSession, setSessionCo
 
 const KEY = "vella:users";
 const loadUsers = async (r) => (await r.get(KEY)) || { users: [] };
-const publicUser = (u) => ({ login: u.login, name: u.name, role: u.role });
+const publicUser = (u) => ({ id: u.id, login: u.login, name: u.name, role: u.role });
 
 export default async function handler(req, res) {
   const r = redis();

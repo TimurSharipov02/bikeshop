@@ -1,7 +1,9 @@
-// Управление мастерами — только для администратора. Пароли наружу никогда
-// не отдаём, только логин/имя/роль/активность.
+// Управление мастерами. Список (GET) может прочитать любой вошедший — он
+// нужен, например, чтобы выбрать, на кого назначить обращение. Изменения
+// (добавить/поменять/удалить) — только для администратора. Пароли наружу
+// никогда не отдаём, только логин/имя/роль/активность.
 
-import { redis, readBody, requireAdmin, hashPassword } from "./_lib.js";
+import { redis, readBody, requireUser, requireAdmin, hashPassword } from "./_lib.js";
 
 const KEY = "vella:users";
 const loadUsers = async (r) => (await r.get(KEY)) || { users: [] };
@@ -13,7 +15,7 @@ export default async function handler(req, res) {
   if (!r) return res.status(503).json({ error: "storage not configured" });
 
   if (req.method === "GET") {
-    if (!requireAdmin(req, res)) return;
+    if (!requireUser(req, res)) return;
     const { users } = await loadUsers(r);
     return res.status(200).json({ users: users.map(publicUser) });
   }
