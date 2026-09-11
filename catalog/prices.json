@@ -115,6 +115,8 @@
     "FRM-05": { "work": 800, "difficulties": [
       { "label": "Нужна резьбовставка (Helicoil)", "add": 500 }
     ] },
+    "FRM-06": { "work": 6000 },
+    "FRM-07": { "work": 4000 },
 
     "EL-01": { "work": 500 },
     "EL-02": { "work": 600 },
