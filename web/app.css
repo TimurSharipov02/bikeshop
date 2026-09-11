@@ -50,16 +50,16 @@ header.bar .sub { font-size:13px; color:var(--muted); margin-left:auto; }
 .row-icon svg { width:19px; height:19px; }
 
 /* статус обращения — цвет для быстрого сканирования списка */
-.tag-new     { background:var(--accent-weak); color:var(--accent); border-color:transparent; }
-.tag-quote   { background:#fff4e5; color:#c2650a; border-color:transparent; }
-.tag-approve { background:#f4eeff; color:#7c3aed; border-color:transparent; }
-.tag-progress{ background:var(--accent-weak); color:var(--accent); border-color:transparent; }
-.tag-check   { background:#e6faf7; color:#0d9488; border-color:transparent; }
-.tag-done    { background:var(--ok-weak); color:var(--ok); border-color:transparent; }
+.tag.tag-new     { background:var(--accent-weak); color:var(--accent); border-color:transparent; }
+.tag.tag-quote   { background:#fff4e5; color:#c2650a; border-color:transparent; }
+.tag.tag-approve { background:#f4eeff; color:#7c3aed; border-color:transparent; }
+.tag.tag-progress{ background:var(--accent-weak); color:var(--accent); border-color:transparent; }
+.tag.tag-check   { background:#e6faf7; color:#0d9488; border-color:transparent; }
+.tag.tag-done    { background:var(--ok-weak); color:var(--ok); border-color:transparent; }
 @media (prefers-color-scheme: dark) {
-  .tag-quote   { background:#332507; color:#f0a84e; }
-  .tag-approve { background:#241a3a; color:#b794ff; }
-  .tag-check   { background:#0e2b28; color:#5ce0cf; }
+  .tag.tag-quote   { background:#332507; color:#f0a84e; }
+  .tag.tag-approve { background:#241a3a; color:#b794ff; }
+  .tag.tag-check   { background:#0e2b28; color:#5ce0cf; }
 }
 
 button { font:inherit; border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:var(--radius-sm);
