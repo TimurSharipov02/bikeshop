@@ -215,6 +215,12 @@ const billableOps = cat.procedures.filter(
   (p) => p.code && p.kind === "operation" && !["DIA-01", "DIA-01R"].includes(p.code));
 const shortCheck = (t) => String(t).replace(/\s*[—-]\s*норма\?\s*$/i, "").trim();
 
+const BIKE_KINDS = ["шоссе", "гревел", "хардтейл", "двухподвес", "детский", "любой другой"];
+// Тип амортизации задаётся явно при оформлении — это только подсказка по умолчанию для типа.
+const suspensionByKind = { "хардтейл": "вилка", "двухподвес": "полная" };
+// Марка и модель — одно поле в форме; model может быть пустым (старые записи хранят раздельно).
+const bikeLabel = (b) => (b ? [b.brand, b.model].filter(Boolean).join(" ") : "");
+
 // ============================================================================
 //  РОУТЕР
 // ============================================================================
@@ -409,7 +415,7 @@ function viewOrders() {
           const client = d.clients.find((c) => c.phone === o.clientPhone);
           return el("a", { class: "row", href: `#/orders/${o.number}` },
             el("span", { class: "code" }, o.number),
-            el("span", {}, bike ? `${bike.brand} ${bike.model}` : o.bikeNumber,
+            el("span", {}, bike ? bikeLabel(bike) : o.bikeNumber,
               el("br"), el("span", { class: "small muted" }, client?.name || o.clientPhone)),
             el("span", { class: "tag" }, o.status));
         }))),
@@ -418,7 +424,7 @@ function viewOrders() {
 
 function viewNewOrder() {
   // Запрос клиента и диагностика — уже внутри обращения, здесь только клиент и велосипед.
-  const f = { phone: "", name: "", consent: true, bike: "new", kind: "шоссе", brand: "", model: "" };
+  const f = { phone: "+7 ", name: "", consent: true, bike: "new", kind: "шоссе", suspension: "нет", brand: "" };
 
   const clientSlot = el("div", {});
   const bikeSlot = el("div", { class: "card" }, el("h2", {}, "Велосипед"));
@@ -447,7 +453,7 @@ function viewNewOrder() {
     for (const b of owned) {
       bikeSlot.append(el("label", { class: "opt" },
         el("input", { type: "radio", name: "bike", checked: f.bike === b.number, onchange: () => { f.bike = b.number; drawBike(); } }),
-        el("span", {}, `${b.brand} ${b.model}`.trim() || "велосипед", el("span", { class: "small muted" }, " · " + b.kind))));
+        el("span", {}, bikeLabel(b) || "велосипед", el("span", { class: "small muted" }, " · " + b.kind))));
     }
     if (owned.length)
       bikeSlot.append(el("label", { class: "opt" },
@@ -457,19 +463,20 @@ function viewNewOrder() {
     if (f.bike === "new")
       bikeFields.append(
         el("label", {}, "Тип"),
-        el("select", { onchange: (e) => (f.kind = e.target.value) },
-          ["шоссе", "гревел", "МТБ"].map((k) => el("option", { value: k, selected: f.kind === k }, k))),
-        el("label", {}, "Бренд"),
-        el("input", { type: "text", value: f.brand, oninput: (e) => (f.brand = e.target.value) }),
-        el("label", {}, "Модель"),
-        el("input", { type: "text", value: f.model, oninput: (e) => (f.model = e.target.value) }));
+        el("select", { onchange: (e) => { f.kind = e.target.value; f.suspension = suspensionByKind[f.kind] || "нет"; drawBike(); } },
+          BIKE_KINDS.map((k) => el("option", { value: k, selected: f.kind === k }, k))),
+        el("label", {}, "Тип амортизации"),
+        el("select", { onchange: (e) => (f.suspension = e.target.value) },
+          ["нет", "вилка", "полная"].map((s) => el("option", { value: s, selected: f.suspension === s }, s))),
+        el("label", {}, "Марка и модель"),
+        el("input", { type: "text", value: f.brand, oninput: (e) => (f.brand = e.target.value) }));
     bikeSlot.append(bikeFields);
   }
 
   const wrap = el("main", { class: "wrap" },
     el("div", { class: "card" }, el("h2", {}, "Клиент"),
       el("label", {}, "Телефон"),
-      el("input", { type: "tel", value: f.phone, placeholder: "+7…", oninput: (e) => { f.phone = e.target.value; drawClient(); } }),
+      el("input", { type: "tel", value: f.phone, placeholder: "900 000-00-00", oninput: (e) => { f.phone = e.target.value; drawClient(); } }),
       clientSlot),
     bikeSlot);
   drawClient();
@@ -487,7 +494,7 @@ function viewNewOrder() {
           let bn = f.bike;
           if (bn === "new" || !d.bikes.some((b) => b.number === bn)) {
             bn = nextBikeKey(d, p);
-            d.bikes.push({ number: bn, kind: f.kind, brand: f.brand.trim(), model: f.model.trim(), ownerPhone: p });
+            d.bikes.push({ number: bn, kind: f.kind, suspension: f.suspension, brand: f.brand.trim(), model: "", ownerPhone: p });
           }
           number = nextOrderNumber(d);
           d.orders.push({ number, clientPhone: p, bikeNumber: bn, request: "", diagnosticNotes: [], status: "приём", items: [], createdAt: new Date().toISOString() });
@@ -538,7 +545,7 @@ function viewOrder(number) {
     mountDiagnostics(host, {
       onFaults,
       onDone: refresh,
-      suspension: bike && bike.kind === "МТБ" ? "вилка" : "нет",
+      suspension: bike?.suspension || (bike?.kind === "МТБ" ? "вилка" : "нет"),
       request: order.request || "",
       onRequest: (v) => editOrder(number, (o) => (o.request = v)),
     });
@@ -575,7 +582,7 @@ function viewOrder(number) {
 
   const range = orderRange(order);
   const head = el("div", { class: "card" },
-    el("h2", {}, bike ? `${bike.brand} ${bike.model} · ${bike.kind}`.trim() : "велосипед"),
+    el("h2", {}, bike ? `${bikeLabel(bike)} · ${bike.kind}`.trim() : "велосипед"),
     el("p", { class: "small muted" }, `${client?.name || "—"} · ${order.clientPhone}`),
     order.request ? el("p", { class: "small" }, "Запрос клиента: " + order.request) : null);
   if ((order.diagnosticNotes || []).length) {
