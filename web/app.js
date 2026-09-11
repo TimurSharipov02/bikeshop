@@ -684,14 +684,19 @@ function viewOrder(number) {
   }
 
   if (order.status === "в работе") {
-    const body = el("div", {});
-    order.items.filter((i) => i.agreed).forEach((it) => body.append(repairItem(it, {
-      onRun: () => openRunner(it.code),
-      onSave: (patch) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) Object.assign(x, patch, { done: true }); }); refresh(); },
-    })));
-    body.append(el("button", { onclick: () => openPicker((code) => { addItem(code); editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x) x.agreed = true; }); refresh(); }) }, "+ доп. работа"));
-    const allDone = order.items.filter((i) => i.agreed).length > 0 && order.items.filter((i) => i.agreed).every((i) => i.done);
-    if (allDone) body.append(el("button", { class: "btn-primary", style: "width:100%;margin-top:12px", onclick: () => setStatus("проверка", (o) => (o.finishedAt = new Date().toISOString())) }, "На проверку"));
+    const body = el("div", {}, el("p", { class: "small muted" }, "Загрузка…"));
+    (async () => {
+      const masters = await ensureMasters();
+      body.replaceChildren();
+      order.items.filter((i) => i.agreed).forEach((it) => body.append(repairItem(it, masters, {
+        onRun: () => openRunner(it.code),
+        onSave: (patch) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) Object.assign(x, patch, { done: true }); }); refresh(); },
+        onAssign: (id, name) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) { x.assignedTo = id || null; x.assignedToName = name || ""; } }); refresh(); },
+      })));
+      body.append(el("button", { onclick: () => openPicker((code) => { addItem(code); editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x) x.agreed = true; }); refresh(); }) }, "+ доп. работа"));
+      const allDone = order.items.filter((i) => i.agreed).length > 0 && order.items.filter((i) => i.agreed).every((i) => i.done);
+      if (allDone) body.append(el("button", { class: "btn-primary", style: "width:100%;margin-top:12px", onclick: () => setStatus("проверка", (o) => (o.finishedAt = new Date().toISOString())) }, "На проверку"));
+    })();
     main.append(stage("Ремонт", body));
   }
 
@@ -763,7 +768,7 @@ function assessItem(it, onSet, onParts) {
   return box;
 }
 
-function repairItem(it, { onRun, onSave }) {
+function repairItem(it, masters, { onRun, onSave, onAssign }) {
   const box = el("div", { class: "assess" });
   const top = el("div", { style: "display:flex;gap:8px;align-items:center" },
     el("span", { style: "flex:1" }, el("b", {}, it.name), " ", el("span", { class: "small muted" }, it.code),
@@ -778,11 +783,28 @@ function repairItem(it, { onRun, onSave }) {
   box.append(top);
   if (it.notes) box.append(el("p", { class: "small muted" }, it.notes));
   if (!it.done) {
+    const current = it.assignedTo || "";
+    const select = el("select", {
+      style: "width:auto;display:inline-block",
+      onchange: (e) => { const m = masters.find((x) => x.id === e.target.value); onAssign(e.target.value, m ? m.name : ""); },
+    },
+      el("option", { value: "", selected: !current }, "не назначен"),
+      masters.map((m) => el("option", { value: m.id, selected: current === m.id }, m.name)));
+    box.append(el("div", { class: "small", style: "margin-top:6px;display:flex;gap:8px;align-items:center" },
+      el("span", { class: "muted" }, "Мастер:"), select,
+      SESSION?.id && current !== SESSION.id
+        ? el("button", {
+            style: "border:0;background:none;color:var(--accent);cursor:pointer;padding:0;min-height:auto;font:inherit",
+            onclick: () => onAssign(SESSION.id, SESSION.name),
+          }, "взять себе")
+        : null));
+  }
+  if (!it.done) {
     form.style.display = "none";
     const mins = el("input", { type: "number", value: it.actualMinutes ?? "" });
     const parts = el("input", { type: "text", value: (it.parts || []).join(", ") });
     const dev = el("input", { type: "text" });
-    const by = el("input", { type: "text", value: it.doneBy ?? "" });
+    const by = el("input", { type: "text", value: it.doneBy ?? it.assignedToName ?? "" });
     form.append(
       el("label", {}, "Фактическое время, мин"), mins,
       el("label", {}, "Запчасти (через запятую)"), parts,
