@@ -232,6 +232,12 @@ const suspensionByKind = { "хардтейл": "вилка", "двухподве
 // Марка и модель — одно поле в форме; model может быть пустым (старые записи хранят раздельно).
 const bikeLabel = (b) => (b ? [b.brand, b.model].filter(Boolean).join(" ") : "");
 
+const STATUS_TAG_CLASS = {
+  "приём": "tag-new", "оценка": "tag-quote", "согласование": "tag-approve",
+  "в работе": "tag-progress", "проверка": "tag-check", "выдан": "tag-done",
+};
+const statusTag = (status) => el("span", { class: "tag " + (STATUS_TAG_CLASS[status] || "") }, status);
+
 // ============================================================================
 //  РОУТЕР
 // ============================================================================
@@ -280,8 +286,23 @@ window.addEventListener("hashchange", () => { router(); if (SESSION) syncFromSer
 //  ЭКРАНЫ
 // ============================================================================
 
-function homeLink(text, hash) {
-  return el("a", { class: "row", href: "#" + hash }, el("span", {}, text), el("span", { class: "chev" }, "›"));
+const ICON_SVG = (inner) =>
+  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+const ICONS = {
+  newOrder: ICON_SVG('<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1"/><path d="M12 11v6M9 14h6"/>'),
+  orders: ICON_SVG('<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1"/><path d="M9 11h6M9 15h6"/>'),
+  procedures: ICON_SVG('<path d="M14.7 6.3a4 4 0 0 0-5.4 4.6L3 17l2 2 6.1-6.3a4 4 0 0 0 4.6-5.4l-2.6 2.6-2-2 2.6-2.6Z"/>'),
+  prices: ICON_SVG('<path d="M12.6 3H6a2 2 0 0 0-2 2v6.6a2 2 0 0 0 .6 1.4l8.4 8.4a2 2 0 0 0 2.8 0l5.6-5.6a2 2 0 0 0 0-2.8L13 3.6a2 2 0 0 0-1.4-.6Z"/><circle cx="8.5" cy="8.5" r="1.3"/>'),
+  admin: ICON_SVG('<path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6l7-3Z"/>'),
+  profile: ICON_SVG('<circle cx="12" cy="9" r="3"/><path d="M6 19c1.2-3 3.6-4.5 6-4.5s4.8 1.5 6 4.5"/>'),
+  masters: ICON_SVG('<circle cx="9" cy="8" r="2.5"/><path d="M4 19c.8-2.6 2.6-4 5-4s4.2 1.4 5 4"/><circle cx="17" cy="9" r="2"/><path d="M15.5 12c1.9.4 3 1.6 3.5 3.2"/>'),
+  stock: ICON_SVG('<path d="M3.5 7.5 12 3l8.5 4.5V16L12 20.5 3.5 16V7.5Z"/><path d="M3.5 7.5 12 12l8.5-4.5M12 12v8.5"/>'),
+};
+
+function homeLink(text, hash, icon) {
+  return el("a", { class: "row", href: "#" + hash },
+    icon ? el("span", { class: "row-icon", html: icon }) : null,
+    el("span", { style: "flex:1" }, text), el("span", { class: "chev" }, "›"));
 }
 
 function viewHome() {
@@ -290,12 +311,12 @@ function viewHome() {
       el("span", { class: "sub" }, SESSION?.name || SESSION?.login || "")),
     el("main", { class: "wrap" },
       el("div", { class: "list" },
-        homeLink("Новое обращение", "/orders/new"),
-        homeLink("Обращения", "/orders"),
-        homeLink("Техпроцедуры", "/procedures"),
-        homeLink("Прайс-лист", "/prices"),
-        SESSION?.role === "admin" ? homeLink("Админка", "/admin") : null,
-        homeLink("Профиль", "/profile")),
+        homeLink("Новое обращение", "/orders/new", ICONS.newOrder),
+        homeLink("Обращения", "/orders", ICONS.orders),
+        homeLink("Техпроцедуры", "/procedures", ICONS.procedures),
+        homeLink("Прайс-лист", "/prices", ICONS.prices),
+        SESSION?.role === "admin" ? homeLink("Админка", "/admin", ICONS.admin) : null,
+        homeLink("Профиль", "/profile", ICONS.profile)),
       el("p", { class: "muted small", style: "margin-top:16px" },
         serverOK ? "Данные общие для всех устройств." : "Данные хранятся только в этом браузере.")),
   ];
@@ -426,7 +447,7 @@ function viewOrders() {
               o.status === "в работе"
                 ? el("span", { class: "small muted" }, " · " + (o.occupiedByName ? "занята: " + o.occupiedByName : "свободна"))
                 : null),
-            el("span", { class: "tag" }, o.status));
+            statusTag(o.status));
         }))),
   ];
 }
@@ -1146,8 +1167,8 @@ function viewAdmin() {
     bar("Админка", "/"),
     el("main", { class: "wrap" },
       el("div", { class: "list" },
-        homeLink("Мастера", "/admin/masters"),
-        homeLink("Остатки по запчастям", "/admin/stock"))),
+        homeLink("Мастера", "/admin/masters", ICONS.masters),
+        homeLink("Остатки по запчастям", "/admin/stock", ICONS.stock))),
   ];
 }
 
