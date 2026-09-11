@@ -91,8 +91,10 @@ async function syncFromServer() {
   try {
     const r = await fetch("/api/db", { cache: "no-store" });
     if (!r.ok) return;
+    const wasServerOK = serverOK;
     serverOK = true;
     adopt(await r.json());
+    if (!wasServerOK && !location.hash.startsWith("#/orders/new")) router();
   } catch { /* оффлайн — остаёмся на локальных данных */ }
 }
 
@@ -230,7 +232,8 @@ function viewHome() {
         homeLink("Обращения", "/orders"),
         homeLink("Техпроцедуры", "/procedures"),
         homeLink("Прайс-лист", "/prices")),
-      el("p", { class: "muted small", style: "margin-top:16px" }, "Данные хранятся в этом браузере.")),
+      el("p", { class: "muted small", style: "margin-top:16px" },
+        serverOK ? "Данные общие для всех устройств." : "Данные хранятся только в этом браузере.")),
   ];
 }
 
