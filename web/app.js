@@ -796,7 +796,6 @@ function repairItem(it, stock, { onRun, onSave }) {
       el("option", { value: "" }, stock.length ? "— выбрать деталь —" : "остатки пусты"),
       stock.map((s) => el("option", { value: s.sku || s.name },
         `${s.name}${s.sku ? " · " + s.sku : ""}${s.qty != null ? ` (${s.qty} ${s.unit || "шт"})` : ""}`)));
-    const by = el("input", { type: "text", value: it.doneBy ?? SESSION?.name ?? "" });
     form.append(
       el("label", {}, "Запчасти"),
       el("div", { style: "display:flex;gap:8px" },
@@ -812,10 +811,9 @@ function repairItem(it, stock, { onRun, onSave }) {
           },
         }, "+ добавить")),
       partsChips,
-      el("label", {}, "Кто выполнял"), by,
       el("button", { class: "btn-ok", style: "width:100%;margin-top:10px", onclick: () => onSave({
         parts: pickedParts,
-        doneBy: by.value.trim() || undefined,
+        doneBy: it.doneBy ?? SESSION?.name ?? undefined,
       }) }, "Готово"));
     box.append(form);
   }
