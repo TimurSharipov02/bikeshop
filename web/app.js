@@ -118,6 +118,18 @@ async function ensureMasters() {
   return mastersCache;
 }
 
+// Остатки по запчастям — для выбора детали при отметке работы готовой.
+let stockCache = null;
+async function ensureStock() {
+  if (stockCache) return stockCache;
+  try {
+    const r = await fetch("/api/stock", { cache: "no-store" });
+    const j = await r.json();
+    stockCache = r.ok ? j.items || [] : [];
+  } catch { stockCache = []; }
+  return stockCache;
+}
+
 function safeParse(s) { try { return JSON.parse(s || "{}"); } catch { return {}; } }
 const loadDB = () => DB;
 function writeLocal() { localStorage.setItem(DB_KEY, JSON.stringify(DB)); }
@@ -686,9 +698,9 @@ function viewOrder(number) {
   if (order.status === "в работе") {
     const body = el("div", {}, el("p", { class: "small muted" }, "Загрузка…"));
     (async () => {
-      const masters = await ensureMasters();
+      const [masters, stock] = await Promise.all([ensureMasters(), ensureStock()]);
       body.replaceChildren();
-      order.items.filter((i) => i.agreed).forEach((it) => body.append(repairItem(it, masters, {
+      order.items.filter((i) => i.agreed).forEach((it) => body.append(repairItem(it, masters, stock, {
         onRun: () => openRunner(it.code),
         onSave: (patch) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) Object.assign(x, patch, { done: true }); }); refresh(); },
         onAssign: (id, name) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) { x.assignedTo = id || null; x.assignedToName = name || ""; } }); refresh(); },
@@ -768,7 +780,7 @@ function assessItem(it, onSet, onParts) {
   return box;
 }
 
-function repairItem(it, masters, { onRun, onSave, onAssign }) {
+function repairItem(it, masters, stock, { onRun, onSave, onAssign }) {
   const box = el("div", { class: "assess" });
   const top = el("div", { style: "display:flex;gap:8px;align-items:center" },
     el("span", { style: "flex:1" }, el("b", {}, it.name), " ", el("span", { class: "small muted" }, it.code),
@@ -801,16 +813,42 @@ function repairItem(it, masters, { onRun, onSave, onAssign }) {
   }
   if (!it.done) {
     form.style.display = "none";
-    const parts = el("input", { type: "text", value: (it.parts || []).join(", ") });
-    const dev = el("input", { type: "text" });
+    const pickedParts = [...(it.parts || [])];
+    const partsChips = el("div", {});
+    const drawParts = () => {
+      partsChips.replaceChildren(...(pickedParts.length
+        ? [el("div", { style: "display:flex;flex-wrap:wrap;gap:6px;margin-top:6px" },
+            pickedParts.map((p, i) => el("span", { class: "pill" }, p, " ",
+              el("button", {
+                style: "border:0;background:none;color:inherit;cursor:pointer;padding:0;min-height:auto;font:inherit",
+                onclick: () => { pickedParts.splice(i, 1); drawParts(); },
+              }, "✕"))))]
+        : []));
+    };
+    drawParts();
+    const stockSelect = el("select", { style: "width:auto;flex:1" },
+      el("option", { value: "" }, stock.length ? "— выбрать деталь —" : "остатки пусты"),
+      stock.map((s) => el("option", { value: s.sku || s.name },
+        `${s.name}${s.sku ? " · " + s.sku : ""}${s.qty != null ? ` (${s.qty} ${s.unit || "шт"})` : ""}`)));
     const by = el("input", { type: "text", value: it.doneBy ?? it.assignedToName ?? "" });
     form.append(
-      el("label", {}, "Запчасти (через запятую)"), parts,
-      el("label", {}, "Отклонения от карты"), dev,
+      el("label", {}, "Запчасти"),
+      el("div", { style: "display:flex;gap:8px" },
+        stockSelect,
+        el("button", {
+          style: "flex:0 0 auto",
+          onclick: () => {
+            const v = stockSelect.value;
+            if (!v) return;
+            const found = stock.find((s) => (s.sku || s.name) === v);
+            const label = found ? found.name : v;
+            if (!pickedParts.includes(label)) { pickedParts.push(label); drawParts(); }
+          },
+        }, "+ добавить")),
+      partsChips,
       el("label", {}, "Кто выполнял"), by,
       el("button", { class: "btn-ok", style: "width:100%;margin-top:10px", onclick: () => onSave({
-        parts: parts.value.split(",").map((s) => s.trim()).filter(Boolean),
-        notes: dev.value ? (it.notes ? `${it.notes}; ${dev.value}` : dev.value) : it.notes,
+        parts: pickedParts,
         doneBy: by.value.trim() || undefined,
       }) }, "Готово"));
     box.append(form);
@@ -1260,6 +1298,7 @@ async function saveStockItems(items) {
   const r = await fetch("/api/stock", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ items }) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) { alert(j.error || "ошибка"); return; }
+  stockCache = null; // список мог измениться — сбросить кэш для выбора деталей в ремонте
   render(stockScreen(j, ""));
 }
 
