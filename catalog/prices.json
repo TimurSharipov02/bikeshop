@@ -43,7 +43,7 @@
     "BRK-05": { "work": 1200, "difficulties": [
       { "label": "Стальная оплётка линии — особый инструмент", "add": 400 }
     ] },
-    "BRK-06": { "work": 500, "material": 350 },
+    "BRK-06": { "work": 500 },
     "BRK-07": { "work": 400, "spread": 200 },
     "BRK-08": { "work": 1500, "difficulties": [
       { "label": "Поршни под замену", "add": 600 }

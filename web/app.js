@@ -184,7 +184,7 @@ const nextBikeKey = (d, phone) => `${phone}#${d.bikes.filter((b) => b.ownerPhone
 // ---------------------------- расчёт цен ------------------------------------
 
 function itemRange(it) {
-  const base = (it.workPrice || 0) + (it.materialPrice || 0) + (it.partsPrice || 0);
+  const base = (it.workPrice || 0) + (it.partsPrice || 0);
   let min = base, max = base + (it.spread || 0);
   for (const d of it.difficulties || []) {
     if (d.state === "yes") { min += d.add; max += d.add; }
@@ -200,7 +200,7 @@ const rangeText = (r) => (r.min === r.max ? money(r.min) : `${money(r.min)} – 
 // Возможная вилка цены операции: от работы без надбавок до работы со всеми трудностями.
 function codeRange(code) {
   const p = priceOf(code);
-  const base = (p.work || 0) + (p.material || 0);
+  const base = p.work || 0;
   const max = base + (p.spread || 0) + (p.difficulties || []).reduce((s, d) => s + (d.add || 0), 0);
   return { min: base, max };
 }
@@ -211,7 +211,6 @@ function makeItem(code, notes = "") {
   return {
     code, name: proc ? proc.name : code, agreed: false, done: false, parts: [], notes,
     workPrice: price.work || 0,
-    materialPrice: price.material || 0,
     spread: price.spread || 0,
     partsPrice: 0,
     difficulties: (price.difficulties || []).map((d) => ({ label: d.label, add: d.add, state: "unknown" })),
@@ -340,22 +339,18 @@ function viewProcedure(code) {
 
 function viewPrices() {
   const prices = loadPrices();
-  const groups = groupBy(billableOps, (p) => p.code.split("-")[0]);
+  const groups = groupBy(billableOps, (p) => blockOf(p.code));
   const wrap = el("main", { class: "wrap" },
     el("p", { class: "small muted" },
-      "Работа + материал (расходники в услуге) + разброс. Трудности — надбавки: на оценке по каждой ставится будет / не будет / неизвестно. Крупные запчасти — отдельной строкой в счёте. Значения черновые."));
-  const setField = (code, field, val) => {
-    const a = loadPrices();
-    a[code] = { ...(a[code] || {}), [field]: val };
-    if (!val) delete a[code][field];
-    savePrices(a);
-  };
+      "Работа + разброс. Трудности — надбавки: на оценке по каждой ставится будет / не будет / неизвестно. Запчасти — отдельной строкой в счёте, по остаткам. Значения черновые."));
   const numRow = (label, val, on, pad) => el("div", { style: `display:flex;gap:8px;align-items:center;margin-top:6px${pad ? ";padding-left:64px" : ""}` },
     el("span", { class: "small muted", style: "flex:1" }, label),
     el("input", { type: "number", value: val || 0, style: "width:88px;text-align:right", onchange: (ev) => on(+ev.target.value || 0) }),
     el("span", { class: "muted small" }, "₽"));
-  for (const [g, list] of groups) {
-    const card = el("div", { class: "card" }, el("h2", {}, GROUP_TITLE[g] || g));
+  for (const title of [...BLOCK_TITLES, "Прочее"]) {
+    const list = groups.get(title);
+    if (!list || !list.length) continue;
+    const card = el("div", { class: "card" }, el("h2", {}, title));
     for (const p of list) {
       const e = prices[p.code] || { work: 0 };
       const row = el("div", { class: "price-row" },
@@ -367,8 +362,7 @@ function viewPrices() {
             onchange: (ev) => { const a = loadPrices(); a[p.code] = { ...(a[p.code] || {}), work: +ev.target.value || 0 }; savePrices(a); },
           }),
           el("span", { class: "muted small" }, "₽")),
-        numRow("материал", e.material, (v) => setField(p.code, "material", v)),
-        numRow("разброс (± в максимум)", e.spread, (v) => setField(p.code, "spread", v)));
+        numRow("разброс (± в максимум)", e.spread, (v) => { const a = loadPrices(); a[p.code] = { ...(a[p.code] || {}), spread: v }; if (!v) delete a[p.code].spread; savePrices(a); }));
       (e.difficulties || []).forEach((d, i) =>
         row.append(el("div", { style: "display:flex;gap:8px;align-items:center;margin-top:6px;padding-left:64px" },
           el("span", { class: "small muted", style: "flex:1" }, "+ " + d.label),
@@ -740,8 +734,7 @@ function itemList(order, showFacts) {
 }
 
 function assessItem(it, onSet, onParts) {
-  const cost = "работа " + money(it.workPrice || 0)
-    + (it.materialPrice ? " · материал " + money(it.materialPrice) : "");
+  const cost = "работа " + money(it.workPrice || 0);
   const box = el("div", { class: "assess" },
     el("div", {}, el("b", {}, it.name), " ", el("span", { class: "small muted" }, "· " + cost)));
   box.append(el("div", { style: "display:flex;gap:8px;align-items:center;margin-top:6px" },
