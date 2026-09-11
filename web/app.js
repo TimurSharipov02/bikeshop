@@ -427,7 +427,7 @@ function createDemoOrder() {
 
 function viewOrders() {
   const d = loadDB();
-  const orders = [...d.orders].reverse();
+  const orders = [...d.orders]; // от старых к новым — работы по порядку поступления
   return [
     bar("Обращения", "/", el("span", { class: "sub", style: "display:flex;gap:14px" },
       el("button", { style: "border:0;background:none;color:inherit;font:inherit;cursor:pointer;padding:0", onclick: createDemoOrder }, "+ демо"),
@@ -442,7 +442,9 @@ function viewOrders() {
             el("span", { class: "code" }, o.number),
             el("span", {}, bike ? bikeLabel(bike) : o.bikeNumber,
               el("br"), el("span", { class: "small muted" }, client?.name || o.clientPhone),
-              o.assignedToName ? el("span", { class: "small muted" }, " · " + o.assignedToName) : null),
+              o.status === "в работе"
+                ? el("span", { class: "small muted" }, " · " + (o.occupiedByName ? "занята: " + o.occupiedByName : "свободна"))
+                : null),
             el("span", { class: "tag" }, o.status));
         }))),
   ];
@@ -612,30 +614,6 @@ function viewOrder(number) {
     el("p", { class: "small muted" }, `${client?.name || "—"} · ${order.clientPhone}`),
     order.request ? el("p", { class: "small" }, "Запрос клиента: " + order.request) : null);
 
-  const assignSlot = el("div", { class: "small", style: "margin-top:8px" }, el("span", { class: "muted" }, "Мастер: загрузка…"));
-  head.append(assignSlot);
-  (async () => {
-    const masters = await ensureMasters();
-    const current = order.assignedTo || "";
-    const setAssignee = (id) => {
-      const m = masters.find((x) => x.id === id);
-      editOrder(number, (o) => { o.assignedTo = id || null; o.assignedToName = m ? m.name : ""; });
-      refresh();
-    };
-    const select = el("select", { style: "width:auto;display:inline-block", onchange: (e) => setAssignee(e.target.value) },
-      el("option", { value: "", selected: !current }, "не назначен"),
-      masters.map((m) => el("option", { value: m.id, selected: current === m.id }, m.name)));
-    assignSlot.replaceChildren(...[
-      el("span", { class: "muted" }, "Мастер: "), select,
-      SESSION?.id && current !== SESSION.id
-        ? el("button", {
-            style: "margin-left:8px;border:0;background:none;color:var(--accent);cursor:pointer;padding:0;min-height:auto;font:inherit",
-            onclick: () => setAssignee(SESSION.id),
-          }, "взять себе")
-        : null,
-    ].filter(Boolean));
-  })();
-
   if ((order.diagnosticNotes || []).length) {
     const ul = el("ul", { style: "margin:4px 0 0;padding-left:18px" });
     order.diagnosticNotes.forEach((n, i) =>
@@ -696,20 +674,39 @@ function viewOrder(number) {
   }
 
   if (order.status === "в работе") {
-    const body = el("div", {}, el("p", { class: "small muted" }, "Загрузка…"));
-    (async () => {
-      const [masters, stock] = await Promise.all([ensureMasters(), ensureStock()]);
-      body.replaceChildren();
-      order.items.filter((i) => i.agreed).forEach((it) => body.append(repairItem(it, masters, stock, {
-        onRun: () => openRunner(it.code),
-        onSave: (patch) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) Object.assign(x, patch, { done: true }); }); refresh(); },
-        onAssign: (id, name) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) { x.assignedTo = id || null; x.assignedToName = name || ""; } }); refresh(); },
-      })));
-      body.append(el("button", { onclick: () => openPicker((code) => { addItem(code); editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x) x.agreed = true; }); refresh(); }) }, "+ доп. работа"));
-      const allDone = order.items.filter((i) => i.agreed).length > 0 && order.items.filter((i) => i.agreed).every((i) => i.done);
-      if (allDone) body.append(el("button", { class: "btn-primary", style: "width:100%;margin-top:12px", onclick: () => setStatus("проверка", (o) => (o.finishedAt = new Date().toISOString())) }, "На проверку"));
-    })();
-    main.append(stage("Ремонт", body));
+    const takeIntoWork = () => {
+      editOrder(number, (o) => { o.occupiedBy = SESSION?.id || null; o.occupiedByName = SESSION?.name || ""; });
+      refresh();
+    };
+    const leaveOrder = () => {
+      editOrder(number, (o) => { o.occupiedBy = null; o.occupiedByName = ""; });
+      go("/orders");
+    };
+
+    if (!order.occupiedBy) {
+      main.append(stage("Ремонт",
+        el("p", { class: "small muted" }, "Заявка свободна — заберите в работу, чтобы увидеть список работ."),
+        el("button", { class: "btn-primary", style: "width:100%", onclick: takeIntoWork }, "Взять в работу")));
+    } else if (order.occupiedBy !== SESSION?.id) {
+      main.append(stage("Ремонт",
+        el("p", { class: "small muted" }, `Заявку сейчас ведёт: ${order.occupiedByName || "другой мастер"}.`)));
+    } else {
+      const body = el("div", {}, el("p", { class: "small muted" }, "Загрузка…"));
+      (async () => {
+        const [masters, stock] = await Promise.all([ensureMasters(), ensureStock()]);
+        body.replaceChildren();
+        order.items.filter((i) => i.agreed).forEach((it) => body.append(repairItem(it, masters, stock, {
+          onRun: () => openRunner(it.code),
+          onSave: (patch) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) Object.assign(x, patch, { done: true }); }); refresh(); },
+          onAssign: (id, name) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) { x.assignedTo = id || null; x.assignedToName = name || ""; } }); refresh(); },
+        })));
+        body.append(el("button", { onclick: () => openPicker((code) => { addItem(code); editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x) x.agreed = true; }); refresh(); }) }, "+ доп. работа"));
+        body.append(el("button", { style: "margin-top:10px", onclick: leaveOrder }, "Завершить и выйти — освободить заявку"));
+        const allDone = order.items.filter((i) => i.agreed).length > 0 && order.items.filter((i) => i.agreed).every((i) => i.done);
+        if (allDone) body.append(el("button", { class: "btn-primary", style: "width:100%;margin-top:12px", onclick: () => setStatus("проверка", (o) => { o.finishedAt = new Date().toISOString(); o.occupiedBy = null; o.occupiedByName = ""; }) }, "На проверку"));
+      })();
+      main.append(stage("Ремонт", body));
+    }
   }
 
   if (order.status === "проверка") {
