@@ -724,8 +724,8 @@ function itemRow(it, showFacts) {
     el("span", { class: "code" }, it.code),
     el("span", { style: "flex:1" }, it.name,
       it.notes ? el("span", { class: "small muted" }, el("br"), it.notes) : null,
-      showFacts && it.done ? el("span", { class: "small muted" }, el("br"),
-        `${it.actualMinutes ?? "?"} мин${it.parts.length ? " · " + it.parts.join(", ") : ""}${it.doneBy ? " · " + it.doneBy : ""}`) : null),
+      showFacts && it.done && (it.parts.length || it.doneBy) ? el("span", { class: "small muted" }, el("br"),
+        [it.parts.length ? it.parts.join(", ") : null, it.doneBy].filter(Boolean).join(" · ")) : null),
     el("span", { class: "small muted" }, rangeText(r)));
 }
 
@@ -801,17 +801,14 @@ function repairItem(it, masters, { onRun, onSave, onAssign }) {
   }
   if (!it.done) {
     form.style.display = "none";
-    const mins = el("input", { type: "number", value: it.actualMinutes ?? "" });
     const parts = el("input", { type: "text", value: (it.parts || []).join(", ") });
     const dev = el("input", { type: "text" });
     const by = el("input", { type: "text", value: it.doneBy ?? it.assignedToName ?? "" });
     form.append(
-      el("label", {}, "Фактическое время, мин"), mins,
       el("label", {}, "Запчасти (через запятую)"), parts,
       el("label", {}, "Отклонения от карты"), dev,
       el("label", {}, "Кто выполнял"), by,
       el("button", { class: "btn-ok", style: "width:100%;margin-top:10px", onclick: () => onSave({
-        actualMinutes: +mins.value || undefined,
         parts: parts.value.split(",").map((s) => s.trim()).filter(Boolean),
         notes: dev.value ? (it.notes ? `${it.notes}; ${dev.value}` : dev.value) : it.notes,
         doneBy: by.value.trim() || undefined,
