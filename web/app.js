@@ -105,19 +105,6 @@ async function logout() {
   router();
 }
 
-// Список мастеров — для назначения на обращение. Читает любой вошедший;
-// кэшируем на сессию, обновляем при заходе в админку или по кнопке.
-let mastersCache = null;
-async function ensureMasters() {
-  if (mastersCache) return mastersCache;
-  try {
-    const r = await fetch("/api/users", { cache: "no-store" });
-    const j = await r.json();
-    mastersCache = r.ok ? j.users.filter((u) => u.active) : [];
-  } catch { mastersCache = []; }
-  return mastersCache;
-}
-
 // Остатки по запчастям — для выбора детали при отметке работы готовой.
 let stockCache = null;
 async function ensureStock() {
@@ -693,12 +680,11 @@ function viewOrder(number) {
     } else {
       const body = el("div", {}, el("p", { class: "small muted" }, "Загрузка…"));
       (async () => {
-        const [masters, stock] = await Promise.all([ensureMasters(), ensureStock()]);
+        const stock = await ensureStock();
         body.replaceChildren();
-        order.items.filter((i) => i.agreed).forEach((it) => body.append(repairItem(it, masters, stock, {
+        order.items.filter((i) => i.agreed).forEach((it) => body.append(repairItem(it, stock, {
           onRun: () => openRunner(it.code),
           onSave: (patch) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) Object.assign(x, patch, { done: true }); }); refresh(); },
-          onAssign: (id, name) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) { x.assignedTo = id || null; x.assignedToName = name || ""; } }); refresh(); },
         })));
         body.append(el("button", { onclick: () => openPicker((code) => { addItem(code); editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x) x.agreed = true; }); refresh(); }) }, "+ доп. работа"));
         body.append(el("button", { style: "margin-top:10px", onclick: leaveOrder }, "Завершить и выйти — освободить заявку"));
@@ -777,7 +763,7 @@ function assessItem(it, onSet, onParts) {
   return box;
 }
 
-function repairItem(it, masters, stock, { onRun, onSave, onAssign }) {
+function repairItem(it, stock, { onRun, onSave }) {
   const box = el("div", { class: "assess" });
   const top = el("div", { style: "display:flex;gap:8px;align-items:center" },
     el("span", { style: "flex:1" }, el("b", {}, it.name), " ", el("span", { class: "small muted" }, it.code),
@@ -791,23 +777,6 @@ function repairItem(it, masters, stock, { onRun, onSave, onAssign }) {
   }
   box.append(top);
   if (it.notes) box.append(el("p", { class: "small muted" }, it.notes));
-  if (!it.done) {
-    const current = it.assignedTo || "";
-    const select = el("select", {
-      style: "width:auto;display:inline-block",
-      onchange: (e) => { const m = masters.find((x) => x.id === e.target.value); onAssign(e.target.value, m ? m.name : ""); },
-    },
-      el("option", { value: "", selected: !current }, "не назначен"),
-      masters.map((m) => el("option", { value: m.id, selected: current === m.id }, m.name)));
-    box.append(el("div", { class: "small", style: "margin-top:6px;display:flex;gap:8px;align-items:center" },
-      el("span", { class: "muted" }, "Мастер:"), select,
-      SESSION?.id && current !== SESSION.id
-        ? el("button", {
-            style: "border:0;background:none;color:var(--accent);cursor:pointer;padding:0;min-height:auto;font:inherit",
-            onclick: () => onAssign(SESSION.id, SESSION.name),
-          }, "взять себе")
-        : null));
-  }
   if (!it.done) {
     form.style.display = "none";
     const pickedParts = [...(it.parts || [])];
@@ -827,7 +796,7 @@ function repairItem(it, masters, stock, { onRun, onSave, onAssign }) {
       el("option", { value: "" }, stock.length ? "— выбрать деталь —" : "остатки пусты"),
       stock.map((s) => el("option", { value: s.sku || s.name },
         `${s.name}${s.sku ? " · " + s.sku : ""}${s.qty != null ? ` (${s.qty} ${s.unit || "шт"})` : ""}`)));
-    const by = el("input", { type: "text", value: it.doneBy ?? it.assignedToName ?? "" });
+    const by = el("input", { type: "text", value: it.doneBy ?? SESSION?.name ?? "" });
     form.append(
       el("label", {}, "Запчасти"),
       el("div", { style: "display:flex;gap:8px" },
@@ -1194,7 +1163,6 @@ function viewAdmin() {
 // ---------------------------- мастера ---------------------------------------
 
 async function loadMasters() {
-  mastersCache = null; // список мог измениться — сбросить кэш для назначения на обращения
   try {
     const r = await fetch("/api/users", { cache: "no-store" });
     const j = await r.json();
