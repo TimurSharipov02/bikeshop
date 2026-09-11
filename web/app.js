@@ -613,7 +613,7 @@ function viewOrder(number) {
     const select = el("select", { style: "width:auto;display:inline-block", onchange: (e) => setAssignee(e.target.value) },
       el("option", { value: "", selected: !current }, "не назначен"),
       masters.map((m) => el("option", { value: m.id, selected: current === m.id }, m.name)));
-    assignSlot.replaceChildren(
+    assignSlot.replaceChildren(...[
       el("span", { class: "muted" }, "Мастер: "), select,
       SESSION?.id && current !== SESSION.id
         ? el("button", {
@@ -621,7 +621,7 @@ function viewOrder(number) {
             onclick: () => setAssignee(SESSION.id),
           }, "взять себе")
         : null,
-    );
+    ].filter(Boolean));
   })();
 
   if ((order.diagnosticNotes || []).length) {
