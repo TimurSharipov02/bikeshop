@@ -49,27 +49,31 @@
       { "label": "Поршни под замену", "add": 600 }
     ] },
 
-    "WHL-01": { "work": 400, "minutes": 15, "difficulties": [
-      { "label": "Тугая посадка борта / bead", "add": 200 }
+    "WHL-01": { "work": 600, "minutes": 20, "difficulties": [
+      { "label": "Тугая посадка борта / bead", "add": 200 },
+      { "label": "Колесо на гайках (не быстросъём)", "add": 300 }
     ] },
     "WHL-02": { "work": 1000, "minutes": 30 },
-    "WHL-03": { "work": 500, "minutes": 20 },
-    "WHL-04": { "work": 400, "minutes": 25 },
-    "WHL-05": { "work": 700, "minutes": 30, "difficulties": [
-      { "label": "Радиальное биение (яйцо)", "add": 500 },
-      { "label": "Нарушен зонт (центровка)", "add": 300 },
+    "WHL-03": { "work": 600, "minutes": 20 },
+    "WHL-04": { "work": 1000, "spread": 1500, "minutes": 25 },
+    "WHL-05": { "work": 600, "minutes": 20, "difficulties": [
       { "label": "Спицы закисли, ниппели не крутятся", "add": 400 },
-      { "label": "Обод «в пропеллере» — сложная рихтовка", "add": 600 },
-      { "label": "Порвалась спица при правке — замена (WHL-06)", "add": 800 }
+      { "label": "Обод «в пропеллере» — сложная рихтовка", "add": 600 }
     ] },
-    "WHL-06": { "work": 800, "minutes": 30, "difficulties": [
+    "WHL-06": { "work": 200, "minutes": 15, "difficulties": [
       { "label": "Спица со стороны кассеты — снимать кассету", "add": 200 }
     ] },
     "WHL-07": { "work": 400, "minutes": 15 },
     "WHL-08": { "work": 2500, "minutes": 90 },
+    "WHL-09": { "work": 800, "minutes": 25 },
+    "WHL-10": { "work": 600, "minutes": 15 },
+    "WHL-11": { "work": 800, "minutes": 20 },
+    "WHL-12": { "work": 1000, "minutes": 25, "difficulties": [
+      { "label": "Колесо на гайках (не быстросъём)", "add": 300 }
+    ] },
 
-    "HUB-01": { "work": 1200, "minutes": 40 },
-    "HUB-02": { "work": 1000, "minutes": 45 },
+    "HUB-01": { "work": 800, "minutes": 40 },
+    "HUB-02": { "work": 800, "minutes": 45 },
     "HUB-03": { "work": 800, "minutes": 30, "difficulties": [
       { "label": "Болт барабана прикипел", "add": 300 }
     ] },
