@@ -196,7 +196,18 @@ const orderRange = (o) =>
   o.items.filter((i) => i.agreed).reduce(
     (a, it) => { const r = itemRange(it); return { min: a.min + r.min, max: a.max + r.max }; },
     { min: 0, max: 0 });
+// До согласования ничего ещё не отмечено agreed — считаем по всему списку целиком.
+const orderRangeAll = (o) =>
+  o.items.reduce((a, it) => { const r = itemRange(it); return { min: a.min + r.min, max: a.max + r.max }; }, { min: 0, max: 0 });
 const rangeText = (r) => (r.min === r.max ? money(r.min) : `${money(r.min)} – ${money(r.max)}`);
+// Ориентировочное время — не для мастера в интерфейсе наравне с ценой, а тихой строкой для клиента.
+const orderMinutes = (o, onlyAgreed) =>
+  o.items.filter((i) => !onlyAgreed || i.agreed).reduce((s, it) => s + (it.estimateMinutes || 0), 0);
+function minutesText(m) {
+  if (!m) return null;
+  const h = Math.floor(m / 60), mm = m % 60;
+  return "ориентировочно " + (h ? `${h} ч${mm ? " " + mm + " мин" : ""}` : `${mm} мин`);
+}
 // Возможная вилка цены операции: от работы без надбавок до работы со всеми трудностями.
 function codeRange(code) {
   const p = priceOf(code);
@@ -211,6 +222,7 @@ function makeItem(code, notes = "") {
   return {
     code, name: proc ? proc.name : code, agreed: false, done: false, parts: [], notes,
     workPrice: price.work || 0,
+    estimateMinutes: price.minutes || 0,
     spread: price.spread || 0,
     partsPrice: 0,
     difficulties: (price.difficulties || []).map((d) => ({ label: d.label, add: d.add, state: "unknown" })),
@@ -361,10 +373,10 @@ function viewPrices() {
   const wrap = el("main", { class: "wrap" },
     el("p", { class: "small muted" },
       "Работа + разброс. Трудности — надбавки: на оценке по каждой ставится будет / не будет / неизвестно. Запчасти — отдельной строкой в счёте, по остаткам. Значения черновые."));
-  const numRow = (label, val, on, pad) => el("div", { style: `display:flex;gap:8px;align-items:center;margin-top:6px${pad ? ";padding-left:64px" : ""}` },
+  const numRow = (label, val, on, pad, unit) => el("div", { style: `display:flex;gap:8px;align-items:center;margin-top:6px${pad ? ";padding-left:64px" : ""}` },
     el("span", { class: "small muted", style: "flex:1" }, label),
     el("input", { type: "number", value: val || 0, style: "width:88px;text-align:right", onchange: (ev) => on(+ev.target.value || 0) }),
-    el("span", { class: "muted small" }, "₽"));
+    el("span", { class: "muted small" }, unit || "₽"));
   for (const title of [...BLOCK_TITLES, "Прочее"]) {
     const list = groups.get(title);
     if (!list || !list.length) continue;
@@ -379,7 +391,8 @@ function viewPrices() {
             onchange: (ev) => { const a = loadPrices(); a[p.code] = { ...(a[p.code] || {}), work: +ev.target.value || 0 }; savePrices(a); },
           }),
           el("span", { class: "muted small" }, "₽")),
-        numRow("разброс (± в максимум)", e.spread, (v) => { const a = loadPrices(); a[p.code] = { ...(a[p.code] || {}), spread: v }; if (!v) delete a[p.code].spread; savePrices(a); }));
+        numRow("разброс (± в максимум)", e.spread, (v) => { const a = loadPrices(); a[p.code] = { ...(a[p.code] || {}), spread: v }; if (!v) delete a[p.code].spread; savePrices(a); }),
+        numRow("время, мин", e.minutes, (v) => { const a = loadPrices(); a[p.code] = { ...(a[p.code] || {}), minutes: v }; if (!v) delete a[p.code].minutes; savePrices(a); }, false, "мин"));
       (e.difficulties || []).forEach((d, i) =>
         row.append(el("div", { style: "display:flex;gap:8px;align-items:center;margin-top:6px;padding-left:64px" },
           el("span", { class: "small muted", style: "flex:1" }, "+ " + d.label),
@@ -648,7 +661,8 @@ function viewOrder(number) {
     body.append(
       el("div", { class: "card", style: "background:var(--bg)" },
         el("span", { class: "muted small" }, "Итого клиенту"),
-        el("div", { class: "price-range" }, rangeText(range))),
+        el("div", { class: "price-range" }, rangeText(orderRangeAll(order))),
+        minutesText(orderMinutes(order, false)) ? el("div", { class: "small muted", style: "margin-top:4px" }, minutesText(orderMinutes(order, false))) : null),
       el("button", { onclick: () => openPicker((code) => { addItem(code); refresh(); }) }, "+ работа"),
       el("button", { class: "btn-primary", style: "width:100%;margin-top:12px", onclick: () => setStatus("согласование") }, "К согласованию"));
     main.append(stage("Оценка трудностей и стоимости", body));
@@ -666,7 +680,8 @@ function viewOrder(number) {
     body.append(
       el("div", { class: "card", style: "background:var(--bg)" },
         el("span", { class: "muted small" }, "Согласовано на"),
-        el("div", { class: "price-range" }, rangeText(range))),
+        el("div", { class: "price-range" }, rangeText(range)),
+        minutesText(orderMinutes(order, true)) ? el("div", { class: "small muted", style: "margin-top:4px" }, minutesText(orderMinutes(order, true))) : null),
       el("button", { class: "btn-primary", style: "width:100%", onclick: () => setStatus("в работе") }, "В работу"));
     main.append(stage("Согласование с клиентом", body));
   }
@@ -707,6 +722,10 @@ function viewOrder(number) {
   }
 
   if (order.status === "проверка") {
+    main.append(stage("Смета для звонка клиенту", itemList(order, true),
+      el("div", { class: "card", style: "background:var(--bg);margin-top:12px" },
+        el("span", { class: "muted small" }, "Итого"),
+        el("div", { class: "total" }, rangeText(range)))));
     main.append(stage("Повторная диагностика",
       el("button", { class: "btn-primary", style: "width:100%", onclick: () => openDiagnostics() }, "Пройти повторную диагностику"),
       el("button", { class: "btn-ok", style: "width:100%;margin-top:10px", onclick: () => setStatus("выдан", (o) => (o.handedOverAt = new Date().toISOString())) }, "Выдать клиенту")));
@@ -728,6 +747,7 @@ function itemRow(it, showFacts) {
   const r = itemRange(it);
   return el("div", { class: "row", style: "cursor:default;align-items:flex-start" },
     el("span", { style: "flex:1" }, it.name,
+      showFacts && !it.agreed ? el("span", { class: "pill", style: "background:var(--fill);color:var(--muted)" }, "не согласовано") : null,
       it.notes ? el("span", { class: "small muted" }, el("br"), it.notes) : null,
       showFacts && it.done && (it.parts.length || it.doneBy) ? el("span", { class: "small muted" }, el("br"),
         [it.parts.length ? it.parts.join(", ") : null, it.doneBy].filter(Boolean).join(" · ")) : null),
@@ -749,6 +769,21 @@ function itemList(order, showFacts) {
   return box;
 }
 
+// Список усложнений с выбором будет/не будет/неизвестно — используется и на
+// «Оценке» (прикидка для клиента), и при отметке работы готовой (по факту).
+function difficultyList(difficulties, onSet) {
+  const box = el("div", {});
+  (difficulties || []).forEach((d, di) => {
+    box.append(el("div", { style: "margin-top:8px" },
+      el("div", { class: "small" }, d.label, " ", el("span", { class: "muted" }, `(+${money(d.add)})`)),
+      el("div", { class: "tri", style: "margin-top:4px" },
+        el("button", { class: d.state === "yes" ? "sel-yes" : "", onclick: () => onSet(di, "yes") }, "будет"),
+        el("button", { class: d.state === "no" ? "sel-no" : "", onclick: () => onSet(di, "no") }, "не будет"),
+        el("button", { class: d.state === "unknown" ? "sel-unk" : "", onclick: () => onSet(di, "unknown") }, "неизвестно"))));
+  });
+  return box;
+}
+
 function assessItem(it, onSet, onParts) {
   const cost = "работа " + money(it.workPrice || 0);
   const box = el("div", { class: "assess" },
@@ -759,14 +794,7 @@ function assessItem(it, onSet, onParts) {
       onchange: (e) => onParts(+e.target.value || 0) }),
     el("span", { class: "muted small" }, "₽")));
   if ((it.difficulties || []).length === 0) box.append(el("p", { class: "small muted" }, "Трудностей не ожидается."));
-  (it.difficulties || []).forEach((d, di) => {
-    box.append(el("div", { style: "margin-top:8px" },
-      el("div", { class: "small" }, d.label, " ", el("span", { class: "muted" }, `(+${money(d.add)})`)),
-      el("div", { class: "tri", style: "margin-top:4px" },
-        el("button", { class: d.state === "yes" ? "sel-yes" : "", onclick: () => onSet(di, "yes") }, "будет"),
-        el("button", { class: d.state === "no" ? "sel-no" : "", onclick: () => onSet(di, "no") }, "не будет"),
-        el("button", { class: d.state === "unknown" ? "sel-unk" : "", onclick: () => onSet(di, "unknown") }, "неизвестно"))));
-  });
+  else box.append(difficultyList(it.difficulties, onSet));
   const r = itemRange(it);
   box.append(el("div", { class: "small", style: "margin-top:8px" }, "Вилка: ", el("b", {}, rangeText(r))));
   return box;
@@ -777,17 +805,23 @@ function repairItem(it, stock, { onRun, onSave }) {
   const top = el("div", { style: "display:flex;gap:8px;align-items:center" },
     el("span", { style: "flex:1" }, el("b", {}, it.name),
       it.done ? el("span", { class: "pill", style: "margin-left:6px" }, "готово") : null));
-  const form = el("div", { style: "margin-top:8px" });
+  const form = el("div", { style: "margin-top:8px;display:none" });
   let open = false;
+  const toggle = () => { open = !open; form.style.display = open ? "block" : "none"; };
   if (!it.done) {
     top.append(
       el("button", { onclick: onRun }, "по шагам"),
-      el("button", { class: "btn-primary", onclick: () => { open = !open; form.style.display = open ? "block" : "none"; } }, "отметить"));
+      el("button", { class: "btn-primary", onclick: toggle }, "отметить"));
+  } else {
+    top.append(el("button", { onclick: toggle }, "изменить"));
   }
   box.append(top);
   if (it.notes) box.append(el("p", { class: "small muted" }, it.notes));
-  if (!it.done) {
-    form.style.display = "none";
+  {
+    const diffs = JSON.parse(JSON.stringify(it.difficulties || []));
+    const diffBox = el("div", {});
+    const drawDiffs = () => diffBox.replaceChildren(difficultyList(diffs, (di, st) => { diffs[di].state = st; drawDiffs(); }));
+    drawDiffs();
     const pickedParts = [...(it.parts || [])];
     const partsChips = el("div", {});
     const drawParts = () => {
@@ -806,6 +840,8 @@ function repairItem(it, stock, { onRun, onSave }) {
       stock.map((s) => el("option", { value: s.sku || s.name },
         `${s.name}${s.sku ? " · " + s.sku : ""}${s.qty != null ? ` (${s.qty} ${s.unit || "шт"})` : ""}`)));
     form.append(
+      diffs.length ? el("label", {}, "Усложнения по факту") : null,
+      diffBox,
       el("label", {}, "Запчасти"),
       el("div", { style: "display:flex;gap:8px" },
         stockSelect,
@@ -822,8 +858,9 @@ function repairItem(it, stock, { onRun, onSave }) {
       partsChips,
       el("button", { class: "btn-ok", style: "width:100%;margin-top:10px", onclick: () => onSave({
         parts: pickedParts,
+        difficulties: diffs,
         doneBy: it.doneBy ?? SESSION?.name ?? undefined,
-      }) }, "Готово"));
+      }) }, it.done ? "Сохранить" : "Готово"));
     box.append(form);
   }
   return box;

@@ -1,130 +1,130 @@
 {
-  "_comment": "Прайс-лист. У операции: work — цена РАБОТЫ (₽); material — стоимость расходников, входящих в услугу (трос, рубашка, герметик и т.п.), 0 или нет поля — материал не входит; spread — разброс цены без конкретной причины (всегда в максимум); difficulties — типовые ТРУДНОСТИ, каждая с надбавкой (add), на оценке по каждой ставится будет / не будет / неизвестно. Минимальная цена = work + material + надбавки «будет». Максимальная = min + spread + надбавки «неизвестно». Клиенту называется вилка «от … до …». Отдельные крупные запчасти (покрышка, кассета, ротор) в прайс не входят — считаются отдельно. Значения — ЧЕРНОВИК, правятся на странице «Прайс-лист» (сохраняется локально) и согласуются со старшим механиком.",
+  "_comment": "Прайс-лист. У операции: work — цена РАБОТЫ (₽); material — стоимость расходников, входящих в услугу (трос, рубашка, герметик и т.п.), 0 или нет поля — материал не входит; spread — разброс цены без конкретной причины (всегда в максимум); minutes — ориентировочное время работы в минутах (для оценки клиенту, когда ждать; не влияет на цену); difficulties — типовые ТРУДНОСТИ, каждая с надбавкой (add), на оценке по каждой ставится будет / не будет / неизвестно. Минимальная цена = work + material + надбавки «будет». Максимальная = min + spread + надбавки «неизвестно». Клиенту называется вилка «от … до …». Отдельные крупные запчасти (покрышка, кассета, ротор) в прайс не входят — считаются отдельно. Значения — ЧЕРНОВИК, правятся на странице «Прайс-лист» (сохраняется локально) и согласуются со старшим механиком.",
   "currency": "RUB",
   "operations": {
-    "DRV-01": { "work": 500, "difficulties": [
+    "DRV-01": { "work": 500, "minutes": 20, "difficulties": [
       { "label": "Погнут петух — нужна юстировка", "add": 400 },
       { "label": "Трос / рубашка под замену", "add": 400 }
     ] },
-    "DRV-02": { "work": 400 },
-    "DRV-03": { "work": 500, "difficulties": [
+    "DRV-02": { "work": 400, "minutes": 15 },
+    "DRV-03": { "work": 500, "minutes": 20, "difficulties": [
       { "label": "Изношена кассета — новая цепь проскакивает", "add": 400 }
     ] },
-    "DRV-04": { "work": 400, "difficulties": [
+    "DRV-04": { "work": 400, "minutes": 20, "difficulties": [
       { "label": "Стопорное кольцо прикипело", "add": 300 }
     ] },
-    "DRV-05": { "work": 700, "difficulties": [
+    "DRV-05": { "work": 700, "minutes": 40, "difficulties": [
       { "label": "Press-fit каретка, нужна выпрессовка", "add": 500 },
       { "label": "Прикипел шатун / съёмник", "add": 400 }
     ] },
-    "DRV-06": { "work": 500, "difficulties": [
+    "DRV-06": { "work": 500, "minutes": 30, "difficulties": [
       { "label": "Внутренняя проводка через раму", "add": 500 }
     ] },
-    "DRV-07": { "work": 500 },
-    "DRV-08": { "work": 800, "difficulties": [
+    "DRV-07": { "work": 500, "minutes": 15 },
+    "DRV-08": { "work": 800, "minutes": 30, "difficulties": [
       { "label": "Нужно обновление прошивки", "add": 300 }
     ] },
-    "DRV-09": { "work": 300 },
+    "DRV-09": { "work": 300, "minutes": 15 },
 
-    "BRK-01": { "work": 500, "difficulties": [
+    "BRK-01": { "work": 500, "minutes": 20, "difficulties": [
       { "label": "Трос закис / под замену", "add": 400 }
     ] },
-    "BRK-02": { "work": 400, "difficulties": [
+    "BRK-02": { "work": 400, "minutes": 20, "difficulties": [
       { "label": "Залипли поршни — нужна чистка", "add": 400 }
     ] },
-    "BRK-03": { "work": 500, "difficulties": [
+    "BRK-03": { "work": 500, "minutes": 20, "difficulties": [
       { "label": "Ротор под замену", "add": 300 },
       { "label": "Нужна прикатка на стенде", "add": 200 }
     ] },
-    "BRK-04": { "work": 800, "difficulties": [
+    "BRK-04": { "work": 800, "minutes": 40, "difficulties": [
       { "label": "Прикипел / сорван ниппель прокачки", "add": 400 },
       { "label": "Жидкость сильно загрязнена — полная замена", "add": 300 }
     ] },
-    "BRK-05": { "work": 1200, "difficulties": [
+    "BRK-05": { "work": 1200, "minutes": 60, "difficulties": [
       { "label": "Стальная оплётка линии — особый инструмент", "add": 400 }
     ] },
-    "BRK-06": { "work": 500 },
-    "BRK-07": { "work": 400, "spread": 200 },
-    "BRK-08": { "work": 1500, "difficulties": [
+    "BRK-06": { "work": 500, "minutes": 25 },
+    "BRK-07": { "work": 400, "spread": 200, "minutes": 15 },
+    "BRK-08": { "work": 1500, "minutes": 45, "difficulties": [
       { "label": "Поршни под замену", "add": 600 }
     ] },
 
-    "WHL-01": { "work": 400, "difficulties": [
+    "WHL-01": { "work": 400, "minutes": 15, "difficulties": [
       { "label": "Тугая посадка борта / bead", "add": 200 }
     ] },
-    "WHL-02": { "work": 1000 },
-    "WHL-03": { "work": 500 },
-    "WHL-04": { "work": 400 },
-    "WHL-05": { "work": 700, "difficulties": [
+    "WHL-02": { "work": 1000, "minutes": 30 },
+    "WHL-03": { "work": 500, "minutes": 20 },
+    "WHL-04": { "work": 400, "minutes": 25 },
+    "WHL-05": { "work": 700, "minutes": 30, "difficulties": [
       { "label": "Радиальное биение (яйцо)", "add": 500 },
       { "label": "Нарушен зонт (центровка)", "add": 300 },
       { "label": "Спицы закисли, ниппели не крутятся", "add": 400 },
       { "label": "Обод «в пропеллере» — сложная рихтовка", "add": 600 },
       { "label": "Порвалась спица при правке — замена (WHL-06)", "add": 800 }
     ] },
-    "WHL-06": { "work": 800, "difficulties": [
+    "WHL-06": { "work": 800, "minutes": 30, "difficulties": [
       { "label": "Спица со стороны кассеты — снимать кассету", "add": 200 }
     ] },
-    "WHL-07": { "work": 400 },
-    "WHL-08": { "work": 2500 },
+    "WHL-07": { "work": 400, "minutes": 15 },
+    "WHL-08": { "work": 2500, "minutes": 90 },
 
-    "HUB-01": { "work": 1200 },
-    "HUB-02": { "work": 1000 },
-    "HUB-03": { "work": 800, "difficulties": [
+    "HUB-01": { "work": 1200, "minutes": 40 },
+    "HUB-02": { "work": 1000, "minutes": 45 },
+    "HUB-03": { "work": 800, "minutes": 30, "difficulties": [
       { "label": "Болт барабана прикипел", "add": 300 }
     ] },
-    "HUB-04": { "work": 800 },
+    "HUB-04": { "work": 800, "minutes": 30 },
 
-    "STR-01": { "work": 300 },
-    "STR-02": { "work": 1000, "difficulties": [
+    "STR-01": { "work": 300, "minutes": 15 },
+    "STR-02": { "work": 1000, "minutes": 40, "difficulties": [
       { "label": "Нужна замена чашек с запрессовкой", "add": 600 },
       { "label": "Требуется фрезеровка головной трубы", "add": 500 }
     ] },
-    "STR-03": { "work": 1200, "difficulties": [
+    "STR-03": { "work": 1200, "minutes": 45, "difficulties": [
       { "label": "Требуется фрезеровка / торцевание", "add": 400 }
     ] },
-    "STR-04": { "work": 600 },
-    "STR-05": { "work": 2500, "difficulties": [
+    "STR-04": { "work": 600, "minutes": 30 },
+    "STR-05": { "work": 2500, "minutes": 90, "difficulties": [
       { "label": "Нужна прокачка тормозов после вскрытия линий", "add": 800 },
       { "label": "Нужна замена тросов переключения", "add": 500 }
     ] },
-    "STR-06": { "work": 1500 },
-    "STR-07": { "work": 500 },
-    "STR-08": { "work": 400 },
+    "STR-06": { "work": 1500, "minutes": 60 },
+    "STR-07": { "work": 500, "minutes": 20 },
+    "STR-08": { "work": 400, "minutes": 15 },
 
-    "BB-01": { "work": 600, "difficulties": [
+    "BB-01": { "work": 600, "minutes": 25, "difficulties": [
       { "label": "Каретка прикипела / закисла", "add": 400 }
     ] },
-    "BB-02": { "work": 1000, "difficulties": [
+    "BB-02": { "work": 1000, "minutes": 35, "difficulties": [
       { "label": "Мал натяг — установка на ретейнер", "add": 200 }
     ] },
-    "BB-03": { "work": 800 },
-    "BB-04": { "work": 600, "difficulties": [
+    "BB-03": { "work": 800, "minutes": 30 },
+    "BB-04": { "work": 600, "minutes": 20, "difficulties": [
       { "label": "Прикипел шатун (3-piece)", "add": 400 }
     ] },
-    "BB-05": { "work": 400, "difficulties": [
+    "BB-05": { "work": 400, "minutes": 15, "difficulties": [
       { "label": "Педаль прикипела к шатуну", "add": 300 },
       { "label": "Резьба шатуна повреждена — прогонка метчиком", "add": 300 }
     ] },
-    "BB-06": { "work": 1200 },
+    "BB-06": { "work": 1200, "minutes": 45 },
 
-    "FRM-01": { "work": 2000 },
-    "FRM-02": { "work": 1000 },
-    "FRM-03": { "work": 800 },
-    "FRM-04": { "work": 1500 },
-    "FRM-05": { "work": 800, "difficulties": [
+    "FRM-01": { "work": 2000, "minutes": 90 },
+    "FRM-02": { "work": 1000, "minutes": 40 },
+    "FRM-03": { "work": 800, "minutes": 45 },
+    "FRM-04": { "work": 1500, "minutes": 90 },
+    "FRM-05": { "work": 800, "minutes": 30, "difficulties": [
       { "label": "Нужна резьбовставка (Helicoil)", "add": 500 }
     ] },
-    "FRM-06": { "work": 6000 },
-    "FRM-07": { "work": 4000 },
+    "FRM-06": { "work": 6000, "minutes": 240 },
+    "FRM-07": { "work": 4000, "minutes": 180 },
 
-    "EL-01": { "work": 500 },
-    "EL-02": { "work": 600 },
-    "EL-03": { "work": 600 },
-    "EL-04": { "work": 700 },
+    "EL-01": { "work": 500, "minutes": 15 },
+    "EL-02": { "work": 600, "minutes": 20 },
+    "EL-03": { "work": 600, "minutes": 15 },
+    "EL-04": { "work": 700, "minutes": 15 },
 
-    "WSH-01": { "work": 500 },
-    "WSH-02": { "work": 1000 },
-    "WSH-03": { "work": 800 }
+    "WSH-01": { "work": 500, "minutes": 20 },
+    "WSH-02": { "work": 1000, "minutes": 30 },
+    "WSH-03": { "work": 800, "minutes": 30 }
   }
 }
