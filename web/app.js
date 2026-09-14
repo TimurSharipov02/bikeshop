@@ -20,10 +20,11 @@ const cat = buildCatalog(RAW.procedures);
 const defaultPrices = RAW.prices;
 
 // Блоки диагностики (catalog/diagnostics.json) + учебный слой (catalog/training.json).
+// Мойка не диагностируется, но пусть тоже группируется по-человечески, а не в «Прочее».
 const diagBlocks = RAW.diagnosticBlocks || [];
 const training = RAW.training || {};
-const BLOCK_TITLES = diagBlocks.map((b) => b.title);
-const blockByPrefix = {};
+const BLOCK_TITLES = [...diagBlocks.map((b) => b.title), "Мойка и консервация"];
+const blockByPrefix = { WSH: "Мойка и консервация" };
 for (const b of diagBlocks) for (const pre of b.codes || []) blockByPrefix[pre] = b.title;
 const blockOf = (code) => blockByPrefix[String(code || "").split("-")[0]] || "Прочее";
 
@@ -234,11 +235,6 @@ function makeItem(code, notes = "") {
   };
 }
 
-const GROUP_TITLE = {
-  DRV: "Трансмиссия", BRK: "Тормоза", WHL: "Колёса и покрышки", HUB: "Втулки и барабаны",
-  STR: "Рулевая и кокпит", BB: "Каретка, шатуны, педали", FRM: "Рама", EL: "Электроника",
-  WSH: "Мойка и консервация",
-};
 const billableOps = cat.procedures.filter(
   (p) => p.code && p.kind === "operation" && !["DIA-01", "DIA-01R"].includes(p.code));
 const shortCheck = (t) => String(t).replace(/\s*[—-]\s*норма\?\s*$/i, "").trim();
@@ -348,19 +344,22 @@ function groupBy(list, keyFn) {
 function viewProcedures() {
   const groups = groupBy(
     cat.procedures.filter((p) => p.code && p.kind === "operation" && !p.code.startsWith("DIA")),
-    (p) => p.code.split("-")[0]);
+    (p) => blockOf(p.code));
   return [
     bar("Техпроцедуры", "/"),
     el("main", { class: "wrap" },
-      [...groups].map(([g, list]) =>
-        el("div", { class: "card" },
-          el("h2", {}, GROUP_TITLE[g] || g),
+      [...BLOCK_TITLES, "Прочее"].map((title) => {
+        const list = groups.get(title);
+        if (!list || !list.length) return null;
+        return el("div", { class: "card" },
+          el("h2", {}, title),
           el("div", { class: "rows" },
             list.map((p) =>
               el("a", { class: "row", href: `#/procedures/${p.code}` },
                 el("span", { style: "flex:1" }, p.name),
                 p.status !== "ready" ? el("span", { class: "tag" }, p.status) : null,
-                el("span", { class: "chev" }, "›")))))),
+                el("span", { class: "chev" }, "›")))));
+      }),
     ),
   ];
 }
