@@ -483,7 +483,7 @@ function viewNewOrder() {
   const host = el("div", {});
   const nameCard = el("div", { class: "card" },
     el("label", {}, "Имя клиента"),
-    el("input", { type: "text", placeholder: "чтобы знать, как обращаться", oninput: (e) => (draft.name = e.target.value) }));
+    el("input", { type: "text", oninput: (e) => (draft.name = e.target.value) }));
 
   function draftAddFault(code, notes) {
     const ex = draft.items.find((i) => i.code === code);
@@ -1038,19 +1038,24 @@ function runActive(host, proc, mode, opts, onDone) {
 //  Обучение: тот же список + место под справку по каждой неисправности.
 // ============================================================================
 
+const DIAG_TOGGLES = [
+  { param: "подвеска", label: "Подвеска на велосипеде", options: [["нет", "нет"], ["вилка", "вилка"], ["полная", "вилка + аморт"]] },
+  { param: "тормоза", label: "Тормоза", options: [["гидравлика", "гидравлика"], ["механика", "механика"]] },
+  { param: "покрышки", label: "Покрышки", options: [["камера", "камера"], ["бескамерка", "бескамерка"]] },
+  { param: "трансмиссия", label: "Трансмиссия", options: [["механика", "механика"], ["электроника", "электроника"]] },
+];
+
 function mountDiagnostics(host, { onFaults, onDone, suspension, request = "", onRequest, onlyBlocks }) {
-  let sus = suspension || "нет"; // нет | вилка | полная
+  const toggles = { подвеска: suspension || "нет", тормоза: "гидравлика", покрышки: "камера", трансмиссия: "механика" };
   let req = request;
-  let mode = "master"; // master | training
   const states = {}; // instId -> { state, faults:Set<number>, comment }
-  const openRef = new Set();
   const st = (id) => (states[id] ||= { state: "ok", faults: new Set(), comment: "" });
 
   const instances = () => {
     const out = [];
     for (const b of diagBlocks) {
       if (onlyBlocks && !onlyBlocks.includes(b.id)) continue;
-      if (b.showIf === "подвеска" && sus === "нет") continue;
+      if (b.showIf === "подвеска" && toggles["подвеска"] === "нет") continue;
       if (b.perSide) {
         out.push({ b, id: b.id + ".F", label: `${b.title} · перед` });
         out.push({ b, id: b.id + ".R", label: `${b.title} · зад` });
@@ -1059,6 +1064,7 @@ function mountDiagnostics(host, { onFaults, onDone, suspension, request = "", on
     return out;
   };
   const blockFaults = (b) => b.sections.flatMap((s) => s.faults.map((f) => ({ ...f, section: s.title })));
+  const faultVisible = (f) => !f.if || toggles[f.if.param] === f.if.value;
 
   function draw() {
     const list = instances();
@@ -1066,16 +1072,13 @@ function mountDiagnostics(host, { onFaults, onDone, suspension, request = "", on
 
     wrap.append(el("div", { class: "card" },
       el("h2", {}, "Диагностика"),
-      el("p", { class: "small muted" }, mode === "master"
-        ? "Все узлы по умолчанию «Норма». Отметь только те, где есть проблема."
-        : "По каждому узлу — «Норма» или «Проблема»; в проблеме доступна справка по неисправностям."),
-      el("div", { class: "segmented" },
-        [["master", "Мастер"], ["training", "Обучение"]].map(([m, lbl]) =>
-          el("button", { class: mode === m ? "active" : "", onclick: () => { mode = m; draw(); } }, lbl))),
-      el("label", { class: "small muted", style: "margin-top:10px" }, "Подвеска на велосипеде"),
-      el("div", { class: "segmented" },
-        [["нет", "нет"], ["вилка", "вилка"], ["полная", "вилка + аморт"]].map(([v, lbl]) =>
-          el("button", { class: sus === v ? "active" : "", onclick: () => { sus = v; draw(); } }, lbl))),
+      el("p", { class: "small muted" }, "Все узлы по умолчанию «Норма». Отметь только те, где есть проблема."),
+      ...DIAG_TOGGLES.map((t) => el("div", {},
+        el("label", { class: "small muted", style: "margin-top:10px" }, t.label),
+        el("div", { class: "segmented" },
+          t.options.map(([v, lbl]) =>
+            el("button", { class: toggles[t.param] === v ? "active" : "",
+              onclick: () => { toggles[t.param] = v; draw(); } }, lbl))))),
       onRequest ? el("label", { class: "small muted", style: "margin-top:10px" }, "Запрос клиента (со слов)") : null,
       onRequest ? el("textarea", { rows: 2, value: req, placeholder: "с чем пришёл",
         onchange: (e) => { req = e.target.value.trim(); onRequest(req); } }) : null));
@@ -1092,30 +1095,13 @@ function mountDiagnostics(host, { onFaults, onDone, suspension, request = "", on
       if (s.state === "problem") {
         const fb = el("div", { style: "margin-top:8px" });
         const faults = blockFaults(inst.b);
-        let sec = null;
         faults.forEach((f, i) => {
-          if (mode === "training" && f.section !== sec) {
-            sec = f.section;
-            fb.append(el("p", { class: "small muted", style: "margin:10px 0 2px" }, sec));
-          }
+          if (!faultVisible(f)) return;
           fb.append(el("label", { class: "opt" },
             el("input", { type: "checkbox", checked: s.faults.has(i),
               onchange: () => { s.faults.has(i) ? s.faults.delete(i) : s.faults.add(i); } }),
             el("span", {}, f.label,
               f.code ? el("span", { class: "pill" }, rangeText(codeRange(f.code))) : null)));
-          if (mode === "training") {
-            const key = inst.id + "#" + i;
-            const t = training[f.label];
-            fb.append(el("button", { class: "small hint-toggle",
-              onclick: () => { openRef.has(key) ? openRef.delete(key) : openRef.add(key); draw(); } },
-              (openRef.has(key) ? "▾ " : "▸ ") + "справка"));
-            if (openRef.has(key)) {
-              const rows = t && (t.how || t.signs || t.means)
-                ? [t.how && "Как проверить: " + t.how, t.signs && "Признаки: " + t.signs, t.means && "Что значит: " + t.means].filter(Boolean)
-                : ["Материал появится позже."];
-              rows.forEach((r) => fb.append(el("div", { class: "note" }, r)));
-            }
-          }
         });
         fb.append(el("input", { type: "text", placeholder: "комментарий", value: s.comment,
           style: "margin-top:6px", oninput: (e) => (s.comment = e.target.value) }));
@@ -1136,7 +1122,7 @@ function mountDiagnostics(host, { onFaults, onDone, suspension, request = "", on
       const s = st(inst.id);
       if (s.state !== "problem") continue;
       const faults = blockFaults(inst.b);
-      const picked = [...s.faults].map((i) => faults[i]).filter(Boolean)
+      const picked = [...s.faults].map((i) => faults[i]).filter(Boolean).filter(faultVisible)
         .map((f) => ({ label: f.label, code: f.code, note: f.note }));
       onFaults?.(picked, (s.comment || "").trim(), inst.label);
     }
