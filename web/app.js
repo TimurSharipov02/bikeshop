@@ -308,15 +308,13 @@ function homeLink(text, hash, icon) {
 function viewHome() {
   return [
     el("header", { class: "bar" }, el("h1", {}, "Веломастерская Vella"),
-      el("span", { class: "sub" }, SESSION?.name || SESSION?.login || "")),
+      el("a", { class: "sub", href: "#/profile" }, SESSION?.name || SESSION?.login || "")),
     el("main", { class: "wrap" },
       el("div", { class: "list" },
         homeLink("Новое обращение", "/orders/new", ICONS.newOrder),
         homeLink("Обращения", "/orders", ICONS.orders),
         homeLink("Техпроцедуры", "/procedures", ICONS.procedures),
-        homeLink("Прайс-лист", "/prices", ICONS.prices),
-        SESSION?.role === "admin" ? homeLink("Админка", "/admin", ICONS.admin) : null,
-        homeLink("Профиль", "/profile", ICONS.profile)),
+        homeLink("Прайс-лист", "/prices", ICONS.prices)),
       el("p", { class: "muted small", style: "margin-top:16px" },
         serverOK ? "Данные общие для всех устройств." : "Данные хранятся только в этом браузере.")),
   ];
@@ -1145,6 +1143,7 @@ function viewProfile() {
       el("div", { class: "card" },
         el("div", {}, SESSION?.name), el("div", { class: "small muted" }, SESSION?.login,
           SESSION?.role === "admin" ? el("span", { class: "pill" }, "администратор") : el("span", { class: "pill" }, "мастер"))),
+      SESSION?.role === "admin" ? el("div", { class: "list", style: "margin-bottom:12px" }, homeLink("Админка", "/admin", ICONS.admin)) : null,
       formCard("Сменить пароль", null,
         [...field("Текущий пароль", "current", "password", "current-password"),
          ...field("Новый пароль", "next", "password", "new-password")],
