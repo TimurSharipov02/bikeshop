@@ -74,6 +74,7 @@ const normalizeDB = (d) => ({
 let DB = normalizeDB(safeParse(localStorage.getItem(DB_KEY)));
 let serverOK = false;
 let pushTimer = null;
+let dirty = false; // есть локальные правки, ещё не подтверждённые сервером
 
 // ---------------------------- вход и сессия ---------------------------------
 //
@@ -135,20 +136,23 @@ async function syncFromServer() {
     if (!r.ok) return;
     const wasServerOK = serverOK;
     serverOK = true;
-    adopt(await r.json());
+    // Если есть несохранённые локальные правки — не затирать их устаревшим
+    // ответом сервера; правки уедут своим пушем и вернутся уже слитыми.
+    if (!dirty) adopt(await r.json());
     if (!wasServerOK && !location.hash.startsWith("#/orders/new")) router();
   } catch { /* оффлайн — остаёмся на локальных данных */ }
 }
 
 function pushToServer() {
   if (typeof fetch !== "function") return;
+  dirty = true;
   clearTimeout(pushTimer);
   pushTimer = setTimeout(async () => {
     try {
       const r = await fetch("/api/db", {
         method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(DB),
       });
-      if (r.ok) { serverOK = true; adopt(await r.json()); }
+      if (r.ok) { serverOK = true; dirty = false; adopt(await r.json()); }
     } catch { /* оффлайн — данные сохранены локально, отправятся позже */ }
   }, 250);
 }
