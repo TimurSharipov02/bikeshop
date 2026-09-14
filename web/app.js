@@ -479,8 +479,11 @@ function viewOrders() {
 // собранные неисправности копятся в черновике и уходят в базу одним куском
 // вместе с клиентом и велосипедом на последнем шаге.
 function viewNewOrder() {
-  const draft = { items: [], diagnosticNotes: [], request: "" };
+  const draft = { items: [], diagnosticNotes: [], request: "", name: "" };
   const host = el("div", {});
+  const nameCard = el("div", { class: "card" },
+    el("label", {}, "Имя клиента"),
+    el("input", { type: "text", placeholder: "чтобы знать, как обращаться", oninput: (e) => (draft.name = e.target.value) }));
 
   function draftAddFault(code, notes) {
     const ex = draft.items.find((i) => i.code === code);
@@ -506,7 +509,7 @@ function viewNewOrder() {
   });
 
   function renderClientStep() {
-    const f = { phone: "+7 ", name: "", consent: true, bike: "new", kind: "любой другой", brand: "" };
+    const f = { phone: "+7 ", name: draft.name, consent: true, bike: "new", kind: "любой другой", brand: "" };
 
     const clientSlot = el("div", {});
     const bikeSlot = el("div", { class: "card" }, el("h2", {}, "Велосипед"));
@@ -586,7 +589,7 @@ function viewNewOrder() {
     ]);
   }
 
-  return [bar("Новое обращение", "/"), host];
+  return [bar("Новое обращение", "/"), el("main", { class: "wrap", style: "padding-bottom:0" }, nameCard), host];
 }
 
 // ============================================================================
