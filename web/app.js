@@ -18,6 +18,10 @@ import { buildCatalog, runProcedure } from "./runner.js";
 const RAW = window.CATALOG;
 const cat = buildCatalog(RAW.procedures);
 const defaultPrices = RAW.prices;
+// Версия — время сборки страницы (проставляется при npm run build / деплое).
+const BUILD_TIME = RAW.generatedAt
+  ? new Date(RAW.generatedAt).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })
+  : "";
 
 // Блоки диагностики (catalog/diagnostics.json) + учебный слой (catalog/training.json).
 // Мойка не диагностируется, но пусть тоже группируется по-человечески, а не в «Прочее».
@@ -331,7 +335,8 @@ function viewHome() {
         homeLink("Техпроцедуры", "/procedures", ICONS.procedures),
         homeLink("Прайс-лист", "/prices", ICONS.prices)),
       el("p", { class: "muted small", style: "margin-top:16px" },
-        serverOK ? "Данные общие для всех устройств." : "Данные хранятся только в этом браузере.")),
+        (serverOK ? "Данные общие для всех устройств." : "Данные хранятся только в этом браузере.")
+          + (BUILD_TIME ? ` · версия от ${BUILD_TIME}` : ""))),
   ];
 }
 
