@@ -468,84 +468,123 @@ function viewOrders() {
   ];
 }
 
+// Новое обращение начинается с диагностики (со слов и по факту осмотра),
+// а телефон/имя/велосипед записываются в конце — так с этого и начинается
+// реальный приём клиента. Пока диагностика идёт, обращение ещё не создано —
+// собранные неисправности копятся в черновике и уходят в базу одним куском
+// вместе с клиентом и велосипедом на последнем шаге.
 function viewNewOrder() {
-  // Запрос клиента и диагностика — уже внутри обращения, здесь только клиент и велосипед.
-  const f = { phone: "+7 ", name: "", consent: true, bike: "new", kind: "шоссе", brand: "" };
+  const draft = { items: [], diagnosticNotes: [], request: "" };
+  const host = el("div", {});
 
-  const clientSlot = el("div", {});
-  const bikeSlot = el("div", { class: "card" }, el("h2", {}, "Велосипед"));
-  const bikeFields = el("div", {});
-
-  function drawClient() {
-    const ec = loadDB().clients.find((c) => c.phone === f.phone.trim());
-    clientSlot.replaceChildren(
-      ec
-        ? el("p", { class: "small muted" }, "Найден: " + (ec.name || ec.phone))
-        : el("div", {},
-            el("label", {}, "Имя"),
-            el("input", { type: "text", value: f.name, oninput: (e) => (f.name = e.target.value) }),
-            el("label", { class: "opt", style: "margin-top:10px" },
-              el("input", { type: "checkbox", checked: f.consent, onchange: (e) => (f.consent = e.target.checked) }),
-              el("span", {}, "Согласие на обзвон"))),
-    );
-    drawBike();
+  function draftAddFault(code, notes) {
+    const ex = draft.items.find((i) => i.code === code);
+    if (ex) { if (notes) ex.notes = ex.notes ? `${ex.notes}; ${notes}` : notes; return; }
+    draft.items.push(makeItem(code, notes));
   }
-
-  function drawBike() {
-    const ec = loadDB().clients.find((c) => c.phone === f.phone.trim());
-    const owned = ec ? loadDB().bikes.filter((b) => b.ownerPhone === ec.phone) : [];
-    if (!owned.some((b) => b.number === f.bike)) f.bike = "new";
-    bikeSlot.replaceChildren(el("h2", {}, "Велосипед"));
-    for (const b of owned) {
-      bikeSlot.append(el("label", { class: "opt" },
-        el("input", { type: "radio", name: "bike", checked: f.bike === b.number, onchange: () => { f.bike = b.number; drawBike(); } }),
-        el("span", {}, bikeLabel(b) || "велосипед", el("span", { class: "small muted" }, " · " + b.kind))));
+  function draftOnFaults(faults, comment, checkText) {
+    const notes = [];
+    for (const fa of faults) {
+      if (fa.code) draftAddFault(fa.code, [fa.label, fa.note, comment].filter(Boolean).join("; "));
+      else notes.push([fa.label, comment].filter(Boolean).join(" — "));
     }
-    if (owned.length)
-      bikeSlot.append(el("label", { class: "opt" },
-        el("input", { type: "radio", name: "bike", checked: f.bike === "new", onchange: () => { f.bike = "new"; drawBike(); } }),
-        el("span", {}, "Новый велосипед")));
-    bikeFields.replaceChildren();
-    if (f.bike === "new")
-      bikeFields.append(
-        el("label", {}, "Тип"),
-        el("select", { onchange: (e) => { f.kind = e.target.value; drawBike(); } },
-          BIKE_KINDS.map((k) => el("option", { value: k, selected: f.kind === k }, k))),
-        el("label", {}, "Марка и модель"),
-        el("input", { type: "text", value: f.brand, oninput: (e) => (f.brand = e.target.value) }));
-    bikeSlot.append(bikeFields);
+    if (faults.length === 0 && comment) notes.push(`${shortCheck(checkText)}: ${comment}`);
+    if (notes.length) draft.diagnosticNotes.push(...notes);
   }
 
-  const wrap = el("main", { class: "wrap" },
-    el("div", { class: "card" }, el("h2", {}, "Клиент"),
-      el("label", {}, "Телефон"),
-      el("input", { type: "tel", value: f.phone, placeholder: "900 000-00-00", oninput: (e) => { f.phone = e.target.value; drawClient(); } }),
-      clientSlot),
-    bikeSlot);
-  drawClient();
+  mountDiagnostics(host, {
+    onFaults: draftOnFaults,
+    onDone: () => renderClientStep(),
+    suspension: "нет",
+    request: draft.request,
+    onRequest: (v) => (draft.request = v),
+  });
 
-  return [
-    bar("Новое обращение", "/"),
-    wrap,
-    el("div", { class: "actions" }, el("div", { class: "actions-inner" },
-      el("button", { class: "btn-primary", onclick: () => {
-        const p = f.phone.trim();
-        if (!p) return alert("Введите телефон");
-        let number = "";
-        editDB((d) => {
-          if (!d.clients.some((c) => c.phone === p)) d.clients.push({ phone: p, name: f.name.trim(), consentToCall: f.consent });
-          let bn = f.bike;
-          if (bn === "new" || !d.bikes.some((b) => b.number === bn)) {
-            bn = nextBikeKey(d, p);
-            d.bikes.push({ number: bn, kind: f.kind, suspension: suspensionByKind[f.kind] || "нет", brand: f.brand.trim(), model: "", ownerPhone: p });
-          }
-          number = nextOrderNumber(d);
-          d.orders.push({ number, clientPhone: p, bikeNumber: bn, request: "", diagnosticNotes: [], status: "приём", items: [], createdAt: new Date().toISOString() });
-        });
-        autoOpenDiagsFor = number;
-        go("/orders/" + number);
-      } }, "Оформить обращение"))),
-  ];
+  function renderClientStep() {
+    const f = { phone: "+7 ", name: "", consent: true, bike: "new", kind: "шоссе", brand: "" };
+
+    const clientSlot = el("div", {});
+    const bikeSlot = el("div", { class: "card" }, el("h2", {}, "Велосипед"));
+    const bikeFields = el("div", {});
+
+    function drawClient() {
+      const ec = loadDB().clients.find((c) => c.phone === f.phone.trim());
+      clientSlot.replaceChildren(
+        ec
+          ? el("p", { class: "small muted" }, "Найден: " + (ec.name || ec.phone))
+          : el("div", {},
+              el("label", {}, "Имя"),
+              el("input", { type: "text", value: f.name, oninput: (e) => (f.name = e.target.value) }),
+              el("label", { class: "opt", style: "margin-top:10px" },
+                el("input", { type: "checkbox", checked: f.consent, onchange: (e) => (f.consent = e.target.checked) }),
+                el("span", {}, "Согласие на обзвон"))),
+      );
+      drawBike();
+    }
+
+    function drawBike() {
+      const ec = loadDB().clients.find((c) => c.phone === f.phone.trim());
+      const owned = ec ? loadDB().bikes.filter((b) => b.ownerPhone === ec.phone) : [];
+      if (!owned.some((b) => b.number === f.bike)) f.bike = "new";
+      bikeSlot.replaceChildren(el("h2", {}, "Велосипед"));
+      for (const b of owned) {
+        bikeSlot.append(el("label", { class: "opt" },
+          el("input", { type: "radio", name: "bike", checked: f.bike === b.number, onchange: () => { f.bike = b.number; drawBike(); } }),
+          el("span", {}, bikeLabel(b) || "велосипед", el("span", { class: "small muted" }, " · " + b.kind))));
+      }
+      if (owned.length)
+        bikeSlot.append(el("label", { class: "opt" },
+          el("input", { type: "radio", name: "bike", checked: f.bike === "new", onchange: () => { f.bike = "new"; drawBike(); } }),
+          el("span", {}, "Новый велосипед")));
+      bikeFields.replaceChildren();
+      if (f.bike === "new")
+        bikeFields.append(
+          el("label", {}, "Тип"),
+          el("select", { onchange: (e) => { f.kind = e.target.value; drawBike(); } },
+            BIKE_KINDS.map((k) => el("option", { value: k, selected: f.kind === k }, k))),
+          el("label", {}, "Марка и модель"),
+          el("input", { type: "text", value: f.brand, oninput: (e) => (f.brand = e.target.value) }));
+      bikeSlot.append(bikeFields);
+    }
+
+    const wrap = el("main", { class: "wrap" },
+      draft.items.length || draft.diagnosticNotes.length
+        ? el("p", { class: "small muted" }, `С диагностики: работ — ${draft.items.length}, заметок — ${draft.diagnosticNotes.length}.`)
+        : null,
+      el("div", { class: "card" }, el("h2", {}, "Клиент"),
+        el("label", {}, "Телефон"),
+        el("input", { type: "tel", value: f.phone, placeholder: "900 000-00-00", oninput: (e) => { f.phone = e.target.value; drawClient(); } }),
+        clientSlot),
+      bikeSlot);
+    drawClient();
+
+    render([
+      bar("Новое обращение", "/"),
+      wrap,
+      el("div", { class: "actions" }, el("div", { class: "actions-inner" },
+        el("button", { class: "btn-primary", onclick: () => {
+          const p = f.phone.trim();
+          if (!p) return alert("Введите телефон");
+          let number = "";
+          editDB((d) => {
+            if (!d.clients.some((c) => c.phone === p)) d.clients.push({ phone: p, name: f.name.trim(), consentToCall: f.consent });
+            let bn = f.bike;
+            if (bn === "new" || !d.bikes.some((b) => b.number === bn)) {
+              bn = nextBikeKey(d, p);
+              d.bikes.push({ number: bn, kind: f.kind, suspension: suspensionByKind[f.kind] || "нет", brand: f.brand.trim(), model: "", ownerPhone: p });
+            }
+            number = nextOrderNumber(d);
+            d.orders.push({
+              number, clientPhone: p, bikeNumber: bn, request: draft.request, diagnosticNotes: draft.diagnosticNotes,
+              status: "приём", items: draft.items, createdAt: new Date().toISOString(),
+            });
+          });
+          go("/orders/" + number);
+        } }, "Оформить обращение"))),
+    ]);
+  }
+
+  return [bar("Новое обращение", "/"), host];
 }
 
 // ============================================================================
