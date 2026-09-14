@@ -506,7 +506,7 @@ function viewNewOrder() {
   });
 
   function renderClientStep() {
-    const f = { phone: "+7 ", name: "", consent: true, bike: "new", kind: "шоссе", brand: "" };
+    const f = { phone: "+7 ", name: "", consent: true, bike: "new", kind: "любой другой", brand: "" };
 
     const clientSlot = el("div", {});
     const bikeSlot = el("div", { class: "card" }, el("h2", {}, "Велосипед"));
@@ -544,9 +544,6 @@ function viewNewOrder() {
       bikeFields.replaceChildren();
       if (f.bike === "new")
         bikeFields.append(
-          el("label", {}, "Тип"),
-          el("select", { onchange: (e) => { f.kind = e.target.value; drawBike(); } },
-            BIKE_KINDS.map((k) => el("option", { value: k, selected: f.kind === k }, k))),
           el("label", {}, "Марка и модель"),
           el("input", { type: "text", value: f.brand, oninput: (e) => (f.brand = e.target.value) }));
       bikeSlot.append(bikeFields);
