@@ -242,9 +242,11 @@ const billableOps = cat.procedures.filter(
   (p) => p.code && p.kind === "operation" && !["DIA-01", "DIA-01R"].includes(p.code));
 const shortCheck = (t) => String(t).replace(/\s*[—-]\s*норма\?\s*$/i, "").trim();
 
-const BIKE_KINDS = ["шоссе", "гревел", "хардтейл", "двухподвес", "детский", "любой другой"];
-// Тип амортизации задаётся явно при оформлении — это только подсказка по умолчанию для типа.
+const BIKE_KINDS = ["шоссе", "гревел", "хардтейл", "двухподвес", "детский", "колесо", "любой другой"];
+// Тип амортизации выводится из типа велосипеда, отдельно не спрашиваем.
 const suspensionByKind = { "хардтейл": "вилка", "двухподвес": "полная" };
+// Для одного колеса (без остального велосипеда) имеют смысл только работы по колёсам/втулкам.
+const WHEEL_ONLY_BLOCKS = ["WHL", "HUB"];
 // Марка и модель — одно поле в форме; model может быть пустым (старые записи хранят раздельно).
 const bikeLabel = (b) => (b ? [b.brand, b.model].filter(Boolean).join(" ") : "");
 
@@ -467,7 +469,7 @@ function viewOrders() {
 
 function viewNewOrder() {
   // Запрос клиента и диагностика — уже внутри обращения, здесь только клиент и велосипед.
-  const f = { phone: "+7 ", name: "", consent: true, bike: "new", kind: "шоссе", suspension: "нет", brand: "" };
+  const f = { phone: "+7 ", name: "", consent: true, bike: "new", kind: "шоссе", brand: "" };
 
   const clientSlot = el("div", {});
   const bikeSlot = el("div", { class: "card" }, el("h2", {}, "Велосипед"));
@@ -506,11 +508,8 @@ function viewNewOrder() {
     if (f.bike === "new")
       bikeFields.append(
         el("label", {}, "Тип"),
-        el("select", { onchange: (e) => { f.kind = e.target.value; f.suspension = suspensionByKind[f.kind] || "нет"; drawBike(); } },
+        el("select", { onchange: (e) => { f.kind = e.target.value; drawBike(); } },
           BIKE_KINDS.map((k) => el("option", { value: k, selected: f.kind === k }, k))),
-        el("label", {}, "Тип амортизации"),
-        el("select", { onchange: (e) => (f.suspension = e.target.value) },
-          ["нет", "вилка", "полная"].map((s) => el("option", { value: s, selected: f.suspension === s }, s))),
         el("label", {}, "Марка и модель"),
         el("input", { type: "text", value: f.brand, oninput: (e) => (f.brand = e.target.value) }));
     bikeSlot.append(bikeFields);
@@ -537,7 +536,7 @@ function viewNewOrder() {
           let bn = f.bike;
           if (bn === "new" || !d.bikes.some((b) => b.number === bn)) {
             bn = nextBikeKey(d, p);
-            d.bikes.push({ number: bn, kind: f.kind, suspension: f.suspension, brand: f.brand.trim(), model: "", ownerPhone: p });
+            d.bikes.push({ number: bn, kind: f.kind, suspension: suspensionByKind[f.kind] || "нет", brand: f.brand.trim(), model: "", ownerPhone: p });
           }
           number = nextOrderNumber(d);
           d.orders.push({ number, clientPhone: p, bikeNumber: bn, request: "", diagnosticNotes: [], status: "приём", items: [], createdAt: new Date().toISOString() });
@@ -591,6 +590,7 @@ function viewOrder(number) {
       suspension: bike?.suspension || (bike?.kind === "МТБ" ? "вилка" : "нет"),
       request: order.request || "",
       onRequest: (v) => editOrder(number, (o) => (o.request = v)),
+      onlyBlocks: bike?.kind === "колесо" ? ["WHL"] : null,
     });
   }
   function openRunner(code) {
@@ -607,6 +607,7 @@ function viewOrder(number) {
       listBox.replaceChildren(
         ...billableOps
           .filter((p) => !order.items.some((i) => i.code === p.code))
+          .filter((p) => bike?.kind !== "колесо" || WHEEL_ONLY_BLOCKS.includes(p.code.split("-")[0]))
           .filter((p) => !ql || p.code.toLowerCase().includes(ql) || p.name.toLowerCase().includes(ql))
           .map((p) => el("button", { class: "row", onclick: () => { onPick(p.code); } },
             el("span", { style: "flex:1" }, p.name), el("span", { class: "chev" }, "+"))),
@@ -987,7 +988,7 @@ function runActive(host, proc, mode, opts, onDone) {
 //  Обучение: тот же список + место под справку по каждой неисправности.
 // ============================================================================
 
-function mountDiagnostics(host, { onFaults, onDone, suspension, request = "", onRequest }) {
+function mountDiagnostics(host, { onFaults, onDone, suspension, request = "", onRequest, onlyBlocks }) {
   let sus = suspension || "нет"; // нет | вилка | полная
   let req = request;
   let mode = "master"; // master | training
@@ -998,6 +999,7 @@ function mountDiagnostics(host, { onFaults, onDone, suspension, request = "", on
   const instances = () => {
     const out = [];
     for (const b of diagBlocks) {
+      if (onlyBlocks && !onlyBlocks.includes(b.id)) continue;
       if (b.showIf === "подвеска" && sus === "нет") continue;
       if (b.perSide) {
         out.push({ b, id: b.id + ".F", label: `${b.title} · перед` });
