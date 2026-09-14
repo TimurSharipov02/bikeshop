@@ -75,6 +75,7 @@ let DB = normalizeDB(safeParse(localStorage.getItem(DB_KEY)));
 let serverOK = false;
 let pushTimer = null;
 let dirty = false; // есть локальные правки, ещё не подтверждённые сервером
+let autoOpenDiagsFor = null; // номер только что созданного обращения — сразу открыть диагностику
 
 // ---------------------------- вход и сессия ---------------------------------
 //
@@ -439,6 +440,7 @@ function createDemoOrder() {
     number = nextOrderNumber(d);
     d.orders.push({ number, clientPhone: p, bikeNumber: bn, request: DEMO_PRESET.request, diagnosticNotes: [], status: "приём", items: [], createdAt: new Date().toISOString() });
   });
+  autoOpenDiagsFor = number;
   go("/orders/" + number);
 }
 
@@ -541,6 +543,7 @@ function viewNewOrder() {
           number = nextOrderNumber(d);
           d.orders.push({ number, clientPhone: p, bikeNumber: bn, request: "", diagnosticNotes: [], status: "приём", items: [], createdAt: new Date().toISOString() });
         });
+        autoOpenDiagsFor = number;
         go("/orders/" + number);
       } }, "Оформить обращение"))),
   ];
@@ -743,6 +746,10 @@ function viewOrder(number) {
         el("div", { class: "total" }, rangeText(range)))));
   }
 
+  if (autoOpenDiagsFor === number && order.status === "приём" && order.items.length === 0) {
+    autoOpenDiagsFor = null;
+    queueMicrotask(openDiagnostics);
+  }
   return [bar(order.number, "/orders", el("span", { class: "sub" }, order.status)), main];
 }
 
