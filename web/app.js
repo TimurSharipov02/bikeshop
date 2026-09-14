@@ -339,8 +339,7 @@ function viewProcedures() {
           el("div", { class: "rows" },
             list.map((p) =>
               el("a", { class: "row", href: `#/procedures/${p.code}` },
-                el("span", { class: "code" }, p.code),
-                el("span", {}, p.name),
+                el("span", { style: "flex:1" }, p.name),
                 p.status !== "ready" ? el("span", { class: "tag" }, p.status) : null,
                 el("span", { class: "chev" }, "›")))))),
     ),
@@ -374,7 +373,6 @@ function viewPrices() {
       const e = prices[p.code] || { work: 0 };
       const row = el("div", { class: "price-row" },
         el("div", { style: "display:flex;gap:8px;align-items:center" },
-          el("span", { class: "code" }, p.code),
           el("span", { style: "flex:1" }, p.name),
           el("input", {
             type: "number", value: e.work, style: "width:88px;text-align:right",
@@ -580,7 +578,7 @@ function viewOrder(number) {
   }
   function openRunner(code) {
     const host = el("div", {});
-    render([subBar(code), host]);
+    render([subBar(cat.byCode.get(code)?.name || code), host]);
     mountRunner(host, cat.byCode.get(code), { onDone: refresh });
   }
   function openPicker(onPick) {
@@ -594,7 +592,7 @@ function viewOrder(number) {
           .filter((p) => !order.items.some((i) => i.code === p.code))
           .filter((p) => !ql || p.code.toLowerCase().includes(ql) || p.name.toLowerCase().includes(ql))
           .map((p) => el("button", { class: "row", onclick: () => { onPick(p.code); } },
-            el("span", { class: "code" }, p.code), el("span", {}, p.name), el("span", { class: "chev" }, "+"))),
+            el("span", { style: "flex:1" }, p.name), el("span", { class: "chev" }, "+"))),
       );
     };
     q.addEventListener("input", draw);
@@ -663,7 +661,7 @@ function viewOrder(number) {
       body.append(el("label", { class: "opt" },
         el("input", { type: "checkbox", checked: it.agreed, onchange: (e) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) x.agreed = e.target.checked; }); refresh(); } }),
         el("span", { style: "flex:1" }, el("b", {}, it.name), el("br"),
-          el("span", { class: "small muted" }, `${it.code} · ${rangeText(r)}`))));
+          el("span", { class: "small muted" }, rangeText(r)))));
     });
     body.append(
       el("div", { class: "card", style: "background:var(--bg)" },
@@ -729,7 +727,6 @@ function stage(title, ...body) { return el("div", { class: "card" }, el("h2", {}
 function itemRow(it, showFacts) {
   const r = itemRange(it);
   return el("div", { class: "row", style: "cursor:default;align-items:flex-start" },
-    el("span", { class: "code" }, it.code),
     el("span", { style: "flex:1" }, it.name,
       it.notes ? el("span", { class: "small muted" }, el("br"), it.notes) : null,
       showFacts && it.done && (it.parts.length || it.doneBy) ? el("span", { class: "small muted" }, el("br"),
@@ -778,7 +775,7 @@ function assessItem(it, onSet, onParts) {
 function repairItem(it, stock, { onRun, onSave }) {
   const box = el("div", { class: "assess" });
   const top = el("div", { style: "display:flex;gap:8px;align-items:center" },
-    el("span", { style: "flex:1" }, el("b", {}, it.name), " ", el("span", { class: "small muted" }, it.code),
+    el("span", { style: "flex:1" }, el("b", {}, it.name),
       it.done ? el("span", { class: "pill", style: "margin-left:6px" }, "готово") : null));
   const form = el("div", { style: "margin-top:8px" });
   let open = false;
@@ -844,7 +841,7 @@ function mountRunner(host, proc, { onDone }) {
     host.replaceChildren(
       el("main", { class: "wrap" },
         el("div", { class: "card" },
-          el("h2", {}, `${proc.code} · ${proc.name}`),
+          el("h2", {}, proc.name),
           proc.entry ? el("p", { class: "small muted" }, "Вход: " + proc.entry) : null,
           proc.tools ? el("p", { class: "small muted" }, "Инструмент: " + proc.tools) : null,
           proc.consumables ? el("p", { class: "small muted" }, "Расходники: " + proc.consumables) : null),
@@ -919,7 +916,7 @@ function runActive(host, proc, mode, opts, onDone) {
       });
     },
     stop(reason) { log.push({ k: "stop", t: reason }); bodyEl().append(el("p", { class: "note" }, "СТОП: " + reason)); },
-    enterCall(t, note) { log.push({ k: "call", t: `${t.code} · ${t.name}${note ? " — " + note : ""}` }); },
+    enterCall(t, note) { log.push({ k: "call", t: `${t.name}${note ? " — " + note : ""}` }); },
     exitCall() {},
     missingCall(code) { log.push({ k: "stop", t: `[${code}] — не написана, пропуск` }); },
     skipRecursion(code) { log.push({ k: "call", t: `повторный [${code}] — пропуск` }); },
@@ -1012,7 +1009,7 @@ function mountDiagnostics(host, { onFaults, onDone, suspension, request = "", on
             el("input", { type: "checkbox", checked: s.faults.has(i),
               onchange: () => { s.faults.has(i) ? s.faults.delete(i) : s.faults.add(i); } }),
             el("span", {}, f.label,
-              f.code ? el("span", { class: "pill" }, `${f.code} · ${rangeText(codeRange(f.code))}`) : null)));
+              f.code ? el("span", { class: "pill" }, rangeText(codeRange(f.code))) : null)));
           if (mode === "training") {
             const key = inst.id + "#" + i;
             const t = training[f.label];
