@@ -310,7 +310,7 @@ function viewHome() {
     el("header", { class: "bar" }, el("h1", {}, "Веломастерская Vella"),
       el("a", { class: "sub", href: "#/profile" }, SESSION?.name || SESSION?.login || "")),
     el("main", { class: "wrap" },
-      el("div", { class: "list" },
+      el("div", { class: "rows" },
         homeLink("Новое обращение", "/orders/new", ICONS.newOrder),
         homeLink("Обращения", "/orders", ICONS.orders),
         homeLink("Техпроцедуры", "/procedures", ICONS.procedures),
@@ -336,7 +336,7 @@ function viewProcedures() {
       [...groups].map(([g, list]) =>
         el("div", { class: "card" },
           el("h2", {}, GROUP_TITLE[g] || g),
-          el("div", { class: "list" },
+          el("div", { class: "rows" },
             list.map((p) =>
               el("a", { class: "row", href: `#/procedures/${p.code}` },
                 el("span", { class: "code" }, p.code),
@@ -434,7 +434,7 @@ function viewOrders() {
       el("a", { href: "#/orders/new", style: "color:inherit" }, "+ новое"))),
     el("main", { class: "wrap" },
       orders.length === 0 ? el("p", { class: "muted" }, "Пока нет обращений.") : null,
-      el("div", { class: "list" },
+      el("div", { class: "rows" },
         orders.map((o) => {
           const bike = d.bikes.find((b) => b.number === o.bikeNumber);
           const client = d.clients.find((c) => c.phone === o.clientPhone);
@@ -586,7 +586,7 @@ function viewOrder(number) {
   function openPicker(onPick) {
     const host = el("main", { class: "wrap" });
     const q = el("input", { type: "text", placeholder: "поиск по коду или названию" });
-    const listBox = el("div", { class: "list", style: "margin-top:10px" });
+    const listBox = el("div", { class: "rows", style: "margin-top:10px" });
     const draw = () => {
       const ql = q.value.trim().toLowerCase();
       listBox.replaceChildren(
@@ -747,7 +747,7 @@ function itemList(order, showFacts) {
     if (!list || !list.length) continue;
     box.append(
       el("p", { class: "small muted", style: "margin:14px 0 4px;letter-spacing:.05em" }, title.toUpperCase()),
-      el("div", { class: "list" }, list.map((it) => itemRow(it, showFacts))));
+      el("div", { class: "rows" }, list.map((it) => itemRow(it, showFacts))));
   }
   return box;
 }
@@ -850,9 +850,9 @@ function mountRunner(host, proc, { onDone }) {
           proc.consumables ? el("p", { class: "small muted" }, "Расходники: " + proc.consumables) : null),
         el("div", { class: "card" },
           el("label", {}, "Режим показа"),
-          el("div", { class: "btn-row" },
+          el("div", { class: "segmented" },
             ["master", "standard", "training"].map((m) =>
-              el("button", { class: mode === m ? "btn-primary" : "", onclick: () => { mode = m; draw(); } }, MODE_LABEL[m]))),
+              el("button", { class: mode === m ? "active" : "", onclick: () => { mode = m; draw(); } }, MODE_LABEL[m]))),
           el("p", { class: "small muted", style: "margin-top:8px" },
             "Мастер — только главы и проверки. Стандарт — с шагами. Обучение — с пояснениями."))),
       el("div", { class: "actions" }, el("div", { class: "actions-inner" },
@@ -979,13 +979,13 @@ function mountDiagnostics(host, { onFaults, onDone, suspension, request = "", on
       el("p", { class: "small muted" }, mode === "master"
         ? "Все узлы по умолчанию «Норма». Отметь только те, где есть проблема."
         : "По каждому узлу — «Норма» или «Проблема»; в проблеме доступна справка по неисправностям."),
-      el("div", { class: "btn-row" },
+      el("div", { class: "segmented" },
         [["master", "Мастер"], ["training", "Обучение"]].map(([m, lbl]) =>
-          el("button", { class: mode === m ? "btn-primary" : "", onclick: () => { mode = m; draw(); } }, lbl))),
+          el("button", { class: mode === m ? "active" : "", onclick: () => { mode = m; draw(); } }, lbl))),
       el("label", { class: "small muted", style: "margin-top:10px" }, "Подвеска на велосипеде"),
-      el("div", { class: "btn-row" },
+      el("div", { class: "segmented" },
         [["нет", "нет"], ["вилка", "вилка"], ["полная", "вилка + аморт"]].map(([v, lbl]) =>
-          el("button", { class: sus === v ? "btn-primary" : "", onclick: () => { sus = v; draw(); } }, lbl))),
+          el("button", { class: sus === v ? "active" : "", onclick: () => { sus = v; draw(); } }, lbl))),
       onRequest ? el("label", { class: "small muted", style: "margin-top:10px" }, "Запрос клиента (со слов)") : null,
       onRequest ? el("textarea", { rows: 2, value: req, placeholder: "с чем пришёл",
         onchange: (e) => { req = e.target.value.trim(); onRequest(req); } }) : null));
@@ -1143,7 +1143,7 @@ function viewProfile() {
       el("div", { class: "card" },
         el("div", {}, SESSION?.name), el("div", { class: "small muted" }, SESSION?.login,
           SESSION?.role === "admin" ? el("span", { class: "pill" }, "администратор") : el("span", { class: "pill" }, "мастер"))),
-      SESSION?.role === "admin" ? el("div", { class: "list", style: "margin-bottom:12px" }, homeLink("Админка", "/admin", ICONS.admin)) : null,
+      SESSION?.role === "admin" ? el("div", { class: "rows", style: "margin-bottom:12px" }, homeLink("Админка", "/admin", ICONS.admin)) : null,
       formCard("Сменить пароль", null,
         [...field("Текущий пароль", "current", "password", "current-password"),
          ...field("Новый пароль", "next", "password", "new-password")],
@@ -1165,7 +1165,7 @@ function viewAdmin() {
   return [
     bar("Админка", "/"),
     el("main", { class: "wrap" },
-      el("div", { class: "list" },
+      el("div", { class: "rows" },
         homeLink("Мастера", "/admin/masters", ICONS.masters),
         homeLink("Остатки по запчастям", "/admin/stock", ICONS.stock))),
   ];
