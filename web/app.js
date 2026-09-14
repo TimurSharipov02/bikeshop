@@ -371,7 +371,7 @@ function viewProcedure(code) {
   const host = el("div", {});
   if (code.startsWith("DIA")) mountDiagnostics(host, { onDone: () => go("/procedures") });
   else mountRunner(host, proc, { onDone: () => go("/procedures") });
-  return [bar(proc.code, "/procedures", el("span", { class: "sub" }, proc.name)), host];
+  return [bar(proc.name, "/procedures"), host];
 }
 
 function viewPrices() {
@@ -629,7 +629,7 @@ function viewOrder(number) {
 
   const range = orderRange(order);
   const head = el("div", { class: "card" },
-    el("h2", {}, bike ? `${bikeLabel(bike)} · ${bike.kind}`.trim() : "велосипед"),
+    el("h2", {}, bike ? [bikeLabel(bike), bike.kind].filter(Boolean).join(" · ") : "велосипед"),
     el("p", { class: "small muted" }, `${client?.name || "—"} · ${order.clientPhone}`),
     order.request ? el("p", { class: "small" }, "Запрос клиента: " + order.request) : null);
 
