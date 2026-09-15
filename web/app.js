@@ -302,6 +302,11 @@ const BIKE_KINDS = ["шоссе", "гревел", "хардтейл", "двух�
 const WHEEL_ONLY_BLOCKS = ["WHL", "HUB"];
 // Марка и модель — одно поле в форме; model может быть пустым (старые записи хранят раздельно).
 const bikeLabel = (b) => (b ? [b.brand, b.model].filter(Boolean).join(" ") : "");
+// Российский номер: 10 цифр без кода страны, либо 11 с ведущей 7/8.
+function isValidPhone(s) {
+  const d = (s || "").replace(/\D/g, "");
+  return d.length === 10 || (d.length === 11 && (d[0] === "7" || d[0] === "8"));
+}
 
 // Список работ для «+ работа»: обычные операции из каталога + неисправности,
 // заведённые админом вручную (catalog/repairs). Общий и для наряда, и для
@@ -525,7 +530,7 @@ function viewNewOrder() {
   function stepAssess() {
     const redraw = () => render(build(), { keepScroll: true });
     function build() {
-      const body = el("div", {}, el("p", { class: "small muted" }, "По каждому возможному усложнению: будет / не будет / неизвестно."));
+      const body = el("div", {});
       if (draft.items.length === 0) body.append(el("p", { class: "muted small" }, "Работ пока нет."));
       draft.items.forEach((it) => body.append(assessItem(it,
         (di, st) => { if (it.difficulties?.[di]) it.difficulties[di].state = st; redraw(); },
@@ -572,7 +577,7 @@ function viewNewOrder() {
   }
 
   function stepClient() {
-    const f = { phone: "+7 ", name: "", consent: true, bike: "new", brand: "" };
+    const f = { phone: "+7 ", name: "", bike: "new", brand: "" };
 
     const clientSlot = el("div", {});
     const bikeSlot = el("div", { class: "card" }, el("h2", {}, "Велосипед"));
@@ -585,10 +590,7 @@ function viewNewOrder() {
           ? el("p", { class: "small muted" }, "Найден: " + (ec.name || ec.phone))
           : el("div", {},
               el("label", {}, "Имя"),
-              el("input", { type: "text", value: f.name, oninput: (e) => (f.name = e.target.value) }),
-              el("label", { class: "opt", style: "margin-top:10px" },
-                el("input", { type: "checkbox", checked: f.consent, onchange: (e) => (f.consent = e.target.checked) }),
-                el("span", {}, "Согласие на обзвон"))),
+              el("input", { type: "text", value: f.name, oninput: (e) => (f.name = e.target.value) })),
       );
       drawBike();
     }
@@ -630,22 +632,21 @@ function viewNewOrder() {
       el("div", { class: "actions" }, el("div", { class: "actions-inner" },
         el("button", { class: "btn-primary", onclick: () => {
           const p = f.phone.trim();
-          if (!p) return alert("Введите телефон");
-          let number = "";
+          if (!isValidPhone(p)) return alert("Проверьте номер телефона");
           editDB((d) => {
-            if (!d.clients.some((c) => c.phone === p)) d.clients.push({ phone: p, name: f.name.trim(), consentToCall: f.consent });
+            if (!d.clients.some((c) => c.phone === p)) d.clients.push({ phone: p, name: f.name.trim() });
             let bn = f.bike;
             if (bn === "new" || !d.bikes.some((b) => b.number === bn)) {
               bn = nextBikeKey(d, p);
               d.bikes.push({ number: bn, brand: f.brand.trim(), model: "", ownerPhone: p });
             }
-            number = nextOrderNumber(d);
+            const number = nextOrderNumber(d);
             d.orders.push({
               number, clientPhone: p, bikeNumber: bn, request: draft.request, diagnosticNotes: draft.diagnosticNotes,
               status: "в работе", items: draft.items, createdAt: new Date().toISOString(),
             });
           });
-          go("/orders/" + number);
+          go("/");
         } }, "Оформить обращение"))),
     ]);
   }
@@ -752,8 +753,7 @@ function viewOrder(number) {
   }
 
   if (order.status === "оценка") {
-    const body = el("div", {},
-      el("p", { class: "small muted" }, "По каждой возможной трудности: будет / не будет / неизвестно."));
+    const body = el("div", {});
     order.items.forEach((it) => body.append(assessItem(it,
       (di, st) => {
         editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x?.difficulties?.[di]) x.difficulties[di].state = st; });
@@ -968,8 +968,6 @@ function assessItem(it, onSet, onParts) {
     el("span", { class: "muted small" }, "₽")));
   if ((it.difficulties || []).length === 0) box.append(el("p", { class: "small muted" }, "Трудностей не ожидается."));
   else box.append(difficultyList(it.difficulties, onSet));
-  const r = itemRange(it);
-  box.append(el("div", { class: "small", style: "margin-top:8px" }, "Вилка: ", el("b", {}, rangeText(r))));
   return box;
 }
 
@@ -1428,10 +1426,8 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
       wrap.append(card);
     }
 
-    const problems = list.filter((i) => st(i.id).state === "problem").length;
     host.replaceChildren(wrap,
       el("div", { class: "actions" }, el("div", { class: "actions-inner" },
-        el("span", { class: "small muted", style: "flex:0 0 auto;align-self:center" }, `проблемных узлов: ${problems}`),
         el("button", { class: "btn-primary", onclick: finish }, "Готово"))));
   }
 
