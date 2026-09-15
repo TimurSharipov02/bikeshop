@@ -69,7 +69,6 @@ const bar = (title, backHash, rightNode) =>
 //  только локально.
 
 const DB_KEY = "vella.db.v1";
-const PRICE_KEY = "vella.prices.v1";
 
 const normalizeDB = (d) => ({
   clients: d?.clients || [], bikes: d?.bikes || [], orders: d?.orders || [],
@@ -184,21 +183,37 @@ function editOrder(number, fn) {
   editDB((d) => { const o = d.orders.find((x) => x.number === number); if (o) fn(o); });
 }
 
-function loadPrices() {
-  let over = {};
-  try { over = JSON.parse(localStorage.getItem(PRICE_KEY) || "{}"); } catch {}
-  const merged = JSON.parse(JSON.stringify(defaultPrices));
-  for (const [k, v] of Object.entries(over)) merged[k] = v;
-  return merged;
+// Переопределения работ каталога — правит администратор (общие для всех,
+// хранятся на сервере), см. /api/overrides. Собраны в объект один раз при
+// запуске и обновляются точечно после каждой правки/скрытия.
+let OVERRIDES = {};
+async function loadOverrides() {
+  try {
+    const r = await fetch("/api/overrides", { cache: "no-store" });
+    const j = await r.json();
+    OVERRIDES = r.ok ? j.byCode || {} : {};
+  } catch { OVERRIDES = {}; }
 }
-function savePrices(all) {
-  const over = {};
-  for (const [k, v] of Object.entries(all)) {
-    if (JSON.stringify(v) !== JSON.stringify(defaultPrices[k])) over[k] = v;
-  }
-  localStorage.setItem(PRICE_KEY, JSON.stringify(over));
+async function overridesApi(method, body) {
+  const r = await fetch("/api/overrides", { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { alert(j.error || "ошибка"); return null; }
+  OVERRIDES = j.byCode || {};
+  return j;
 }
-const priceOf = (code) => loadPrices()[code] || { work: 0 };
+// Цена работы с учётом переопределения администратора поверх дефолта из прайса.
+function effectivePrice(code) {
+  const base = defaultPrices[code] || { work: 0 };
+  const ov = OVERRIDES[code];
+  if (!ov) return base;
+  return {
+    work: ov.price ?? base.work,
+    spread: ov.spread ?? base.spread,
+    minutes: ov.minutes ?? base.minutes,
+    difficulties: ov.complications ?? base.difficulties,
+  };
+}
+const priceOf = effectivePrice;
 
 const yy = () => String(new Date().getFullYear()).slice(2);
 const nextOrderNumber = (d) => (d.counters.order++, `V${yy()}-${String(d.counters.order).padStart(6, "0")}`);
@@ -251,7 +266,7 @@ function makeItem(code, notes = "") {
   const proc = cat.byCode.get(code);
   const price = priceOf(code);
   return {
-    code, name: proc ? proc.name : code, agreed: false, done: false, parts: [], notes,
+    code, name: OVERRIDES[code]?.name || (proc ? proc.name : code), agreed: false, done: false, parts: [], notes,
     workPrice: price.work || 0,
     estimateMinutes: price.minutes || 0,
     spread: price.spread || 0,
@@ -289,8 +304,9 @@ async function loadWorkPool(bikeKind) {
   const repairs = await ensureRepairs();
   return [
     ...billableOps
+      .filter((p) => !OVERRIDES[p.code]?.hidden)
       .filter((p) => bikeKind !== "колесо" || WHEEL_ONLY_BLOCKS.includes(p.code.split("-")[0]))
-      .map((p) => ({ code: p.code, name: p.name, custom: false })),
+      .map((p) => ({ code: p.code, name: OVERRIDES[p.code]?.name || p.name, custom: false })),
     ...repairs.map((r) => ({
       code: `CF-${r.id}`, name: r.label, label: r.label, custom: true, id: r.id,
       price: r.price, minutes: r.minutes, complications: r.complications,
@@ -349,11 +365,11 @@ const routes = [
   [/^\/orders$/, viewOrders],
   [/^\/procedures\/([^/]+)$/, (m) => viewProcedure(m[1])],
   [/^\/procedures$/, viewProcedures],
-  [/^\/prices$/, viewPrices],
   [/^\/profile$/, viewProfile],
   [/^\/admin$/, adminOnly(viewAdmin)],
   [/^\/admin\/masters$/, adminOnly(viewMasters)],
   [/^\/admin\/stock$/, adminOnly(viewStock)],
+  [/^\/admin\/overrides$/, adminOnly(viewOverrides)],
 ];
 function router() {
   if (!SESSION) return render(NEEDS_SETUP ? viewSetup() : viewLogin());
@@ -376,6 +392,7 @@ function render(nodes, { keepScroll } = {}) {
 window.addEventListener("hashchange", () => { router(); if (SESSION) syncFromServer(); });
 (async () => {
   await loadSession();
+  if (SESSION) await loadOverrides();
   router();
   if (SESSION) syncFromServer();
 })();
@@ -411,8 +428,7 @@ function viewHome() {
       el("div", { class: "rows" },
         homeLink("Новое обращение", "/orders/new", ICONS.newOrder),
         homeLink("Обращения", "/orders", ICONS.orders),
-        homeLink("Техпроцедуры", "/procedures", ICONS.procedures),
-        homeLink("Прайс-лист", "/prices", ICONS.prices)),
+        homeLink("Техпроцедуры", "/procedures", ICONS.procedures)),
       el("p", { class: "muted small", style: "margin-top:16px" },
         (serverOK ? "Данные общие для всех устройств." : "Данные хранятся только в этом браузере.")
           + (BUILD_TIME ? ` · версия от ${BUILD_TIME}` : ""))),
@@ -465,53 +481,6 @@ function viewProcedure(code) {
     });
   } else mountRunner(host, proc, { onDone: () => go("/procedures") });
   return [bar(proc.name, "/procedures"), host];
-}
-
-function viewPrices() {
-  const prices = loadPrices();
-  const groups = groupBy(billableOps, (p) => blockOf(p.code));
-  const wrap = el("main", { class: "wrap" },
-    el("p", { class: "small muted" },
-      "Работа + разброс. Трудности — надбавки: на оценке по каждой ставится будет / не будет / неизвестно. Запчасти — отдельной строкой в счёте, по остаткам. Значения черновые."));
-  const numRow = (label, val, on, pad, unit) => el("div", { style: `display:flex;gap:8px;align-items:center;margin-top:6px${pad ? ";padding-left:64px" : ""}` },
-    el("span", { class: "small muted", style: "flex:1" }, label),
-    el("input", { type: "number", value: val || 0, style: "width:88px;text-align:right", onchange: (ev) => on(+ev.target.value || 0) }),
-    el("span", { class: "muted small" }, unit || "₽"));
-  for (const title of [...BLOCK_TITLES, "Прочее"]) {
-    const list = groups.get(title);
-    if (!list || !list.length) continue;
-    const card = el("div", { class: "card" }, el("h2", {}, title));
-    for (const p of list) {
-      const e = prices[p.code] || { work: 0 };
-      const row = el("div", { class: "price-row" },
-        el("div", { style: "display:flex;gap:8px;align-items:center" },
-          el("span", { style: "flex:1" }, p.name),
-          el("input", {
-            type: "number", value: e.work, style: "width:88px;text-align:right",
-            onchange: (ev) => { const a = loadPrices(); a[p.code] = { ...(a[p.code] || {}), work: +ev.target.value || 0 }; savePrices(a); },
-          }),
-          el("span", { class: "muted small" }, "₽")),
-        numRow("разброс (± в максимум)", e.spread, (v) => { const a = loadPrices(); a[p.code] = { ...(a[p.code] || {}), spread: v }; if (!v) delete a[p.code].spread; savePrices(a); }),
-        numRow("время, мин", e.minutes, (v) => { const a = loadPrices(); a[p.code] = { ...(a[p.code] || {}), minutes: v }; if (!v) delete a[p.code].minutes; savePrices(a); }, false, "мин"));
-      (e.difficulties || []).forEach((d, i) =>
-        row.append(el("div", { style: "display:flex;gap:8px;align-items:center;margin-top:6px;padding-left:64px" },
-          el("span", { class: "small muted", style: "flex:1" }, "+ " + d.label),
-          el("input", {
-            type: "number", value: d.add, style: "width:88px;text-align:right",
-            onchange: (ev) => {
-              const a = JSON.parse(JSON.stringify(loadPrices()));
-              if (a[p.code]?.difficulties?.[i]) { a[p.code].difficulties[i].add = +ev.target.value || 0; savePrices(a); }
-            },
-          }),
-          el("span", { class: "muted small" }, "₽"))));
-      card.append(row);
-    }
-    wrap.append(card);
-  }
-  return [
-    bar("Прайс-лист", "/", el("button", { class: "sub", style: "border:0;background:none", onclick: () => { localStorage.removeItem(PRICE_KEY); router(); } }, "сброс")),
-    wrap,
-  ];
 }
 
 // Пресет для быстрой проверки: создаёт готовое обращение одним кликом.
@@ -1228,6 +1197,7 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
   const st = (id) => (states[id] ||= { state: "ok", faults: new Set(), comment: "" });
   let repairs = []; // неисправности, заведённые админом вручную (общие для всех)
   const addFormOpenFor = new Set(); // id блоков, где сейчас открыта форма «+ своя неисправность»
+  const editOverrideFor = new Set(); // коды работ каталога, у которых сейчас открыта форма правки
 
   const instances = () => {
     const out = [];
@@ -1241,7 +1211,8 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
     return out;
   };
   const blockFaults = (b) => [
-    ...b.sections.flatMap((s) => s.faults.map((f) => ({ ...f, section: s.title }))),
+    ...b.sections.flatMap((s) => s.faults.map((f) => ({ ...f, section: s.title, label: (f.code && OVERRIDES[f.code]?.name) || f.label })))
+      .filter((f) => !(f.code && OVERRIDES[f.code]?.hidden)),
     ...repairs.filter((r) => r.group === b.id).map((r) => ({
       label: r.label, code: `CF-${r.id}`, custom: true, id: r.id,
       price: r.price, minutes: r.minutes, complications: r.complications,
@@ -1267,6 +1238,47 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
   async function reloadRepairs() {
     repairsCache = null;
     repairs = await ensureRepairs();
+  }
+
+  // Форма правки встроенной (из каталога) неисправности — переопределяет
+  // название/цену/время/усложнения поверх дефолта, хранится на сервере.
+  function overrideForm(f, onClose) {
+    const eff = priceOf(f.code);
+    const draftOv = {
+      name: OVERRIDES[f.code]?.name || f.label,
+      price: eff.work || 0, spread: eff.spread || 0, minutes: eff.minutes || 0,
+      complications: JSON.parse(JSON.stringify(eff.difficulties || [])),
+    };
+    const compsBox = el("div", {});
+    const drawComps = () => {
+      compsBox.replaceChildren(
+        ...draftOv.complications.map((c, ci) => el("div", { style: "display:flex;gap:6px;align-items:center;margin-top:4px" },
+          el("input", { placeholder: "усложнение", value: c.label, style: "flex:1", oninput: (e) => (c.label = e.target.value) }),
+          el("input", { type: "number", value: c.add, style: "width:70px;text-align:right", oninput: (e) => (c.add = +e.target.value || 0) }),
+          el("span", { class: "muted small" }, "₽"),
+          el("button", { onclick: () => { draftOv.complications.splice(ci, 1); drawComps(); } }, "✕"))),
+        el("button", { style: "margin-top:4px", onclick: () => { draftOv.complications.push({ label: "", add: 0 }); drawComps(); } }, "+ усложнение"),
+      );
+    };
+    drawComps();
+    return el("div", { class: "card", style: "background:var(--bg);margin-top:8px" },
+      el("label", {}, "Название"),
+      el("input", { value: draftOv.name, oninput: (e) => (draftOv.name = e.target.value) }),
+      el("div", { style: "display:flex;gap:8px;margin-top:8px" },
+        el("div", { style: "flex:1" }, el("label", {}, "Цена, ₽"), el("input", { type: "number", value: draftOv.price, oninput: (e) => (draftOv.price = +e.target.value || 0) })),
+        el("div", { style: "flex:1" }, el("label", {}, "Разброс (± в максимум)"), el("input", { type: "number", value: draftOv.spread, oninput: (e) => (draftOv.spread = +e.target.value || 0) })),
+        el("div", { style: "flex:1" }, el("label", {}, "Минуты"), el("input", { type: "number", value: draftOv.minutes, oninput: (e) => (draftOv.minutes = +e.target.value || 0) }))),
+      el("label", { style: "margin-top:8px" }, "Усложнения (надбавка к цене)"),
+      compsBox,
+      el("div", { class: "btn-row", style: "margin-top:10px" },
+        el("button", { class: "btn-primary", onclick: async () => {
+          const ok = await overridesApi("PUT", {
+            code: f.code, name: draftOv.name.trim() || null, price: draftOv.price, spread: draftOv.spread || null,
+            minutes: draftOv.minutes || null, complications: draftOv.complications,
+          });
+          if (ok) onClose();
+        } }, "Сохранить"),
+        el("button", { onclick: onClose }, "Отмена")));
   }
 
   // Форма добавления своей неисправности (только у администратора) — цена,
@@ -1351,35 +1363,53 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
         const faults = blockFaults(inst.b);
         faults.forEach((f, i) => {
           if (!faultVisible(f)) return;
-          fb.append(el("div", { style: "display:flex;align-items:center;gap:6px" },
-            el("label", { class: "opt", style: "flex:1" },
-              el("input", { type: "checkbox", checked: s.faults.has(i),
-                onchange: () => {
-                  // Без code — неисправность без привязанной операции (определяется
-                  // на разборке), в наряд не превращается, только в заметку.
-                  // Один и тот же код может быть отмечен и спереди, и сзади —
-                  // убираем работу из наряда, только когда код больше нигде не отмечен.
-                  if (s.faults.has(i)) { s.faults.delete(i); if (f.code && !codeCheckedElsewhere(f.code, inst.id)) onUncheck(f); }
-                  else { s.faults.add(i); if (f.code) onCheck(f); }
-                  draw();
-                } }),
-              el("span", {}, f.label,
-                f.code && !f.custom ? el("span", { class: "pill" }, rangeText(codeRange(f.code))) : null,
-                f.custom ? el("span", { class: "pill" }, rangeText(customFaultRange(f))) : null)),
-            f.custom && SESSION?.role === "admin"
-              ? el("button", {
-                  style: "border:0;background:none;color:var(--muted);cursor:pointer;padding:0;min-height:auto;font:inherit",
-                  onclick: async () => {
-                    if (!confirm(`Удалить неисправность «${f.label}»?`)) return;
-                    await fetch("/api/repairs", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: f.id }) });
-                    const wasChecked = s.faults.has(i);
-                    uncheckByCode(f.code);
-                    if (wasChecked) onUncheck(f);
-                    await reloadRepairs();
+          const isAdmin = SESSION?.role === "admin";
+          const editingThis = !f.custom && editOverrideFor.has(f.code);
+          fb.append(el("div", {},
+            el("div", { style: "display:flex;align-items:center;gap:6px" },
+              el("label", { class: "opt", style: "flex:1" },
+                el("input", { type: "checkbox", checked: s.faults.has(i),
+                  onchange: () => {
+                    // Без code — неисправность без привязанной операции (определяется
+                    // на разборке), в наряд не превращается, только в заметку.
+                    // Один и тот же код может быть отмечен и спереди, и сзади —
+                    // убираем работу из наряда, только когда код больше нигде не отмечен.
+                    if (s.faults.has(i)) { s.faults.delete(i); if (f.code && !codeCheckedElsewhere(f.code, inst.id)) onUncheck(f); }
+                    else { s.faults.add(i); if (f.code) onCheck(f); }
                     draw();
-                  },
-                }, "✕")
-              : null));
+                  } }),
+                el("span", {}, f.label,
+                  f.code && !f.custom ? el("span", { class: "pill" }, rangeText(codeRange(f.code))) : null,
+                  f.custom ? el("span", { class: "pill" }, rangeText(customFaultRange(f))) : null)),
+              f.code && !f.custom && isAdmin
+                ? el("button", {
+                    style: "border:0;background:none;color:var(--muted);cursor:pointer;padding:0;min-height:auto;font:inherit",
+                    onclick: () => { editingThis ? editOverrideFor.delete(f.code) : editOverrideFor.add(f.code); draw(); },
+                  }, "✎")
+                : null,
+              (f.custom || f.code) && isAdmin
+                ? el("button", {
+                    style: "border:0;background:none;color:var(--muted);cursor:pointer;padding:0;min-height:auto;font:inherit",
+                    onclick: async () => {
+                      if (!confirm(`Убрать «${f.label}» из списка совсем?`)) return;
+                      const wasChecked = s.faults.has(i);
+                      // Снимаем галочки везде, пока код ещё находится в blockFaults()
+                      // (до скрытия/удаления он там есть, после — уже не найти).
+                      uncheckByCode(f.code);
+                      if (f.custom) {
+                        await fetch("/api/repairs", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: f.id }) });
+                        if (wasChecked) onUncheck(f);
+                        await reloadRepairs();
+                      } else {
+                        const ok = await overridesApi("PUT", { code: f.code, hidden: true });
+                        if (!ok) return;
+                        if (wasChecked) onUncheck(f);
+                      }
+                      draw();
+                    },
+                  }, "✕")
+                : null),
+            editingThis ? overrideForm(f, () => { editOverrideFor.delete(f.code); draw(); }) : null));
         });
         if (SESSION?.role === "admin") {
           fb.append(addFormOpenFor.has(inst.b.id)
@@ -1486,6 +1516,7 @@ function viewLogin() {
     async (form) => {
       await authAction({ action: "login", login: form.login.value.trim(), password: form.password.value });
       await loadSession();
+      await loadOverrides();
       location.hash = "/";
       router();
     }, "Войти");
@@ -1500,6 +1531,7 @@ function viewSetup() {
       if (form.password.value !== form.password2.value) throw new Error("Пароли не совпадают");
       await authAction({ action: "bootstrap", name: form.name.value.trim(), login: form.login.value.trim(), password: form.password.value });
       await loadSession();
+      await loadOverrides();
       location.hash = "/";
       router();
     }, "Создать");
@@ -1536,7 +1568,60 @@ function viewAdmin() {
     el("main", { class: "wrap" },
       el("div", { class: "rows" },
         homeLink("Мастера", "/admin/masters", ICONS.masters),
-        homeLink("Остатки по запчастям", "/admin/stock", ICONS.stock))),
+        homeLink("Остатки по запчастям", "/admin/stock", ICONS.stock),
+        homeLink("Переопределения работ", "/admin/overrides", ICONS.prices))),
+  ];
+}
+
+// ---------------------------- переопределения работ каталога -----------------
+// Правки названия/цены/усложнений и скрытие встроенных работ делаются прямо
+// на экране диагностики (✎ / ✕ у неисправности). Здесь — только список того,
+// что уже переопределено или скрыто, и кнопка вернуть как было.
+
+async function loadOverridesScreen() {
+  try {
+    const r = await fetch("/api/overrides", { cache: "no-store" });
+    const j = await r.json();
+    if (location.hash !== "#/admin/overrides") return;
+    render(overridesScreen(r.ok ? j.byCode || {} : {}, r.ok ? "" : j.error || "ошибка"));
+  } catch {
+    if (location.hash === "#/admin/overrides") render(overridesScreen({}, "нет соединения"));
+  }
+}
+function viewOverrides() {
+  loadOverridesScreen();
+  return [bar("Переопределения работ", "/admin"), el("main", { class: "wrap" }, el("p", { class: "muted" }, "Загрузка…"))];
+}
+
+function overridesScreen(byCode, error) {
+  const codes = Object.keys(byCode);
+  const rows = codes.map((code) => {
+    const ov = byCode[code];
+    const proc = cat.byCode.get(code);
+    const bits = [];
+    if (ov.hidden) bits.push("скрыта");
+    if (ov.name) bits.push(`название: «${ov.name}»`);
+    if (ov.price != null) bits.push(`цена: ${money(ov.price)}`);
+    if (ov.spread != null) bits.push(`разброс: ${money(ov.spread)}`);
+    if (ov.minutes != null) bits.push(`время: ${ov.minutes} мин`);
+    if (ov.complications?.length) bits.push(`усложнений: ${ov.complications.length}`);
+    return el("div", { class: "card" },
+      el("div", {}, el("b", {}, ov.name || proc?.name || code), " ", el("span", { class: "small muted" }, code)),
+      el("p", { class: "small muted" }, bits.join(" · ") || "—"),
+      el("button", { onclick: async () => {
+        const r = await fetch("/api/overrides", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ code }) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { alert(j.error || "ошибка"); return; }
+        OVERRIDES = j.byCode || {};
+        render(overridesScreen(OVERRIDES, ""));
+      } }, "Вернуть как было"));
+  });
+  return [
+    bar("Переопределения работ", "/admin"),
+    el("main", { class: "wrap" },
+      error ? el("p", { class: "small", style: "color:var(--warn)" }, error) : null,
+      el("p", { class: "small muted" }, "Название/цену/усложнения работы или её скрытие правят прямо на экране диагностики (✎ / ✕ у неисправности). Здесь — только то, что уже изменено, с возможностью вернуть как было."),
+      codes.length === 0 ? el("p", { class: "muted small" }, "Пока ничего не переопределено.") : el("div", { class: "list", style: "gap:12px" }, rows)),
   ];
 }
 
