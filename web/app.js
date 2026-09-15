@@ -275,15 +275,56 @@ function makeCustomItem(fa, notes = "") {
 
 const billableOps = cat.procedures.filter(
   (p) => p.code && p.kind === "operation" && !["DIA-01", "DIA-01R"].includes(p.code));
-const shortCheck = (t) => String(t).replace(/\s*[—-]\s*норма\?\s*$/i, "").trim();
 
 const BIKE_KINDS = ["шоссе", "гревел", "хардтейл", "двухподвес", "детский", "колесо", "любой другой"];
-// Тип амортизации выводится из типа велосипеда, отдельно не спрашиваем.
-const suspensionByKind = { "хардтейл": "вилка", "двухподвес": "полная" };
 // Для одного колеса (без остального велосипеда) имеют смысл только работы по колёсам/втулкам.
 const WHEEL_ONLY_BLOCKS = ["WHL", "HUB"];
 // Марка и модель — одно поле в форме; model может быть пустым (старые записи хранят раздельно).
 const bikeLabel = (b) => (b ? [b.brand, b.model].filter(Boolean).join(" ") : "");
+
+// Список работ для «+ работа»: обычные операции из каталога + неисправности,
+// заведённые админом вручную (catalog/repairs). Общий и для наряда, и для
+// диагностики при оформлении нового обращения.
+async function loadWorkPool(bikeKind) {
+  const repairs = await ensureRepairs();
+  return [
+    ...billableOps
+      .filter((p) => bikeKind !== "колесо" || WHEEL_ONLY_BLOCKS.includes(p.code.split("-")[0]))
+      .map((p) => ({ code: p.code, name: p.name, custom: false })),
+    ...repairs.map((r) => ({
+      code: `CF-${r.id}`, name: r.label, label: r.label, custom: true, id: r.id,
+      price: r.price, minutes: r.minutes, complications: r.complications,
+    })),
+  ];
+}
+
+// onPick получает объект {code, name, custom, ...} — обычную операцию из
+// каталога или неисправность, заведённую админом вручную.
+function openWorkPicker({ existingItems, bikeKind, onBack, onPick }) {
+  const header = () => el("header", { class: "bar" },
+    el("button", { class: "back", style: "border:0;background:none", onclick: onBack }, "‹"),
+    el("h1", {}, "Добавить работу"));
+  render([header(), el("main", { class: "wrap" }, el("p", { class: "muted" }, "Загрузка…"))]);
+  loadWorkPool(bikeKind).then((pool) => {
+    const host = el("main", { class: "wrap" });
+    const q = el("input", { type: "text", placeholder: "поиск по коду или названию" });
+    const listBox = el("div", { class: "rows", style: "margin-top:10px" });
+    const draw = () => {
+      const ql = q.value.trim().toLowerCase();
+      listBox.replaceChildren(
+        ...pool
+          .filter((p) => !existingItems.some((i) => i.code === p.code))
+          .filter((p) => !ql || p.code.toLowerCase().includes(ql) || p.name.toLowerCase().includes(ql))
+          .map((p) => el("button", { class: "row", onclick: () => onPick(p) },
+            el("span", { style: "flex:1" }, p.name), el("span", { class: "chev" }, "+"))),
+      );
+    };
+    q.addEventListener("input", draw);
+    host.append(q, listBox);
+    draw();
+    render([header(), host]);
+  });
+}
 
 const STATUS_TAG_CLASS = {
   "приём": "tag-new", "оценка": "tag-quote", "согласование": "tag-approve",
@@ -411,8 +452,18 @@ function viewProcedure(code) {
   const proc = cat.byCode.get(code);
   if (!proc) return [bar(code, "/procedures"), el("main", { class: "wrap" }, el("p", { class: "muted" }, "Не найдено"))];
   const host = el("div", {});
-  if (code.startsWith("DIA")) mountDiagnostics(host, { onDone: () => go("/procedures") });
-  else mountRunner(host, proc, { onDone: () => go("/procedures") });
+  if (code.startsWith("DIA")) {
+    // Пробный прогон диагностики вне обращения — список работ временный,
+    // никуда не сохраняется.
+    const scratch = [];
+    mountDiagnostics(host, {
+      getItems: () => scratch,
+      onCheck: (fa) => { if (!scratch.some((i) => i.code === fa.code)) scratch.push(fa.custom ? makeCustomItem(fa) : makeItem(fa.code)); },
+      onUncheck: (fa) => { const idx = scratch.findIndex((i) => i.code === fa.code); if (idx !== -1) scratch.splice(idx, 1); },
+      onEditItem: (itemCode, patch) => { const x = scratch.find((i) => i.code === itemCode); if (x) Object.assign(x, patch); },
+      onDone: () => go("/procedures"),
+    });
+  } else mountRunner(host, proc, { onDone: () => go("/procedures") });
   return [bar(proc.name, "/procedures"), host];
 }
 
@@ -511,40 +562,84 @@ function viewOrders() {
   ];
 }
 
-// Новое обращение начинается с диагностики (со слов и по факту осмотра),
-// а телефон/имя/велосипед записываются в конце — так с этого и начинается
-// реальный приём клиента. Пока диагностика идёт, обращение ещё не создано —
-// собранные неисправности копятся в черновике и уходят в базу одним куском
-// вместе с клиентом и велосипедом на последнем шаге.
+// Новое обращение идёт по шагам: диагностика (отмечаем работы) → оценка
+// усложнений → согласование (что делаем, сумма по деньгам и времени) →
+// и только в конце — данные клиента, телефон, марка/модель велосипеда.
+// Пока идут первые три шага, обращения ещё нет в базе — всё копится в
+// черновике и уходит одним куском при оформлении на последнем шаге.
 function viewNewOrder() {
   const draft = { items: [], diagnosticNotes: [], request: "" };
   const host = el("div", {});
 
-  function draftAddFault(fa, notes) {
-    const ex = draft.items.find((i) => i.code === fa.code);
-    if (ex) { if (notes) ex.notes = ex.notes ? `${ex.notes}; ${notes}` : notes; return; }
-    draft.items.push(fa.custom ? makeCustomItem(fa, notes) : makeItem(fa.code, notes));
+  function stepDiagnostics() {
+    render([bar("Новое обращение", "/"), host]);
+    mountDiagnostics(host, {
+      getItems: () => draft.items,
+      onCheck: (fa) => {
+        if (!draft.items.some((i) => i.code === fa.code)) draft.items.push(fa.custom ? makeCustomItem(fa) : makeItem(fa.code));
+      },
+      onUncheck: (fa) => {
+        const idx = draft.items.findIndex((i) => i.code === fa.code);
+        if (idx !== -1) draft.items.splice(idx, 1);
+      },
+      onEditItem: (code, patch) => {
+        const x = draft.items.find((i) => i.code === code);
+        if (x) Object.assign(x, patch);
+      },
+      onDone: (notes) => { draft.diagnosticNotes.push(...notes); stepAssess(); },
+      request: draft.request,
+      onRequest: (v) => (draft.request = v),
+    });
   }
-  function draftOnFaults(faults, comment, checkText) {
-    const notes = [];
-    for (const fa of faults) {
-      if (fa.code) draftAddFault(fa, [fa.label, fa.note, comment].filter(Boolean).join("; "));
-      else notes.push([fa.label, comment].filter(Boolean).join(" — "));
+
+  function stepAssess() {
+    const redraw = () => render(build(), { keepScroll: true });
+    function build() {
+      const body = el("div", {}, el("p", { class: "small muted" }, "По каждому возможному усложнению: будет / не будет / неизвестно."));
+      if (draft.items.length === 0) body.append(el("p", { class: "muted small" }, "Работ пока нет."));
+      draft.items.forEach((it) => body.append(assessItem(it,
+        (di, st) => { if (it.difficulties?.[di]) it.difficulties[di].state = st; redraw(); },
+        (val) => { it.partsPrice = val; redraw(); })));
+      body.append(
+        el("div", { class: "card", style: "background:var(--bg)" },
+          el("span", { class: "muted small" }, "Итого клиенту"),
+          el("div", { class: "price-range" }, rangeText(orderRangeAll({ items: draft.items }))),
+          minutesText(orderMinutes({ items: draft.items }, false)) ? el("div", { class: "small muted", style: "margin-top:4px" }, minutesText(orderMinutes({ items: draft.items }, false))) : null),
+        el("button", { onclick: () => openWorkPicker({
+          existingItems: draft.items, bikeKind: null, onBack: redraw,
+          onPick: (pick) => { draft.items.push(pick.custom ? makeCustomItem(pick) : makeItem(pick.code)); redraw(); },
+        }) }, "+ работа"),
+        el("button", { class: "btn-primary", style: "width:100%;margin-top:12px", onclick: () => stepConfirm() }, "Дальше — согласование"));
+      return [bar("Новое обращение", "/"), el("main", { class: "wrap" }, stage("Оценка усложнений и стоимости", body))];
     }
-    if (faults.length === 0 && comment) notes.push(`${shortCheck(checkText)}: ${comment}`);
-    if (notes.length) draft.diagnosticNotes.push(...notes);
+    redraw();
   }
 
-  mountDiagnostics(host, {
-    onFaults: draftOnFaults,
-    onDone: () => renderClientStep(),
-    suspension: "нет",
-    request: draft.request,
-    onRequest: (v) => (draft.request = v),
-  });
+  function stepConfirm() {
+    const redraw = () => render(build(), { keepScroll: true });
+    function build() {
+      const body = el("div", {});
+      if (draft.items.length === 0) body.append(el("p", { class: "muted small" }, "Работ пока нет."));
+      draft.items.forEach((it) => {
+        const r = itemRange(it);
+        body.append(el("label", { class: "opt" },
+          el("input", { type: "checkbox", checked: it.agreed, onchange: (e) => { it.agreed = e.target.checked; redraw(); } }),
+          el("span", { style: "flex:1" }, el("b", {}, it.name), el("br"),
+            el("span", { class: "small muted" }, rangeText(r)))));
+      });
+      body.append(
+        el("div", { class: "card", style: "background:var(--bg)" },
+          el("span", { class: "muted small" }, "Согласовано на"),
+          el("div", { class: "price-range" }, rangeText(orderRange({ items: draft.items }))),
+          minutesText(orderMinutes({ items: draft.items }, true)) ? el("div", { class: "small muted", style: "margin-top:4px" }, minutesText(orderMinutes({ items: draft.items }, true))) : null),
+        el("button", { class: "btn-primary", style: "width:100%", onclick: () => stepClient() }, "Дальше — данные клиента"));
+      return [bar("Новое обращение", "/"), el("main", { class: "wrap" }, stage("Согласование — что будем делать", body))];
+    }
+    redraw();
+  }
 
-  function renderClientStep() {
-    const f = { phone: "+7 ", name: "", consent: true, bike: "new", kind: "любой другой", brand: "" };
+  function stepClient() {
+    const f = { phone: "+7 ", name: "", consent: true, bike: "new", brand: "" };
 
     const clientSlot = el("div", {});
     const bikeSlot = el("div", { class: "card" }, el("h2", {}, "Велосипед"));
@@ -573,7 +668,7 @@ function viewNewOrder() {
       for (const b of owned) {
         bikeSlot.append(el("label", { class: "opt" },
           el("input", { type: "radio", name: "bike", checked: f.bike === b.number, onchange: () => { f.bike = b.number; drawBike(); } }),
-          el("span", {}, bikeLabel(b) || "велосипед", el("span", { class: "small muted" }, " · " + b.kind))));
+          el("span", {}, bikeLabel(b) || "велосипед")));
       }
       if (owned.length)
         bikeSlot.append(el("label", { class: "opt" },
@@ -588,9 +683,7 @@ function viewNewOrder() {
     }
 
     const wrap = el("main", { class: "wrap" },
-      draft.items.length || draft.diagnosticNotes.length
-        ? el("p", { class: "small muted" }, `С диагностики: работ — ${draft.items.length}, заметок — ${draft.diagnosticNotes.length}.`)
-        : null,
+      draft.items.length ? el("p", { class: "small muted" }, `Согласовано работ: ${draft.items.filter((i) => i.agreed).length} из ${draft.items.length}.`) : null,
       el("div", { class: "card" }, el("h2", {}, "Клиент"),
         el("label", {}, "Телефон"),
         el("input", { type: "tel", value: f.phone, placeholder: "900 000-00-00", oninput: (e) => { f.phone = e.target.value; drawClient(); } }),
@@ -611,12 +704,12 @@ function viewNewOrder() {
             let bn = f.bike;
             if (bn === "new" || !d.bikes.some((b) => b.number === bn)) {
               bn = nextBikeKey(d, p);
-              d.bikes.push({ number: bn, kind: f.kind, suspension: suspensionByKind[f.kind] || "нет", brand: f.brand.trim(), model: "", ownerPhone: p });
+              d.bikes.push({ number: bn, brand: f.brand.trim(), model: "", ownerPhone: p });
             }
             number = nextOrderNumber(d);
             d.orders.push({
               number, clientPhone: p, bikeNumber: bn, request: draft.request, diagnosticNotes: draft.diagnosticNotes,
-              status: "приём", items: draft.items, createdAt: new Date().toISOString(),
+              status: "в работе", items: draft.items, createdAt: new Date().toISOString(),
             });
           });
           go("/orders/" + number);
@@ -624,6 +717,7 @@ function viewNewOrder() {
     ]);
   }
 
+  stepDiagnostics();
   return [bar("Новое обращение", "/"), host];
 }
 
@@ -648,24 +742,20 @@ function viewOrder(number) {
       o.items.push(fa.custom ? makeCustomItem(fa, notes) : makeItem(fa.code, notes));
     });
   }
+  // Тихие версии (без refresh()) — для использования внутри диагностики, где
+  // список работ живой и перерисовывается самой диагностикой (draw()), а не
+  // всем экраном обращения.
+  function removeItemQuiet(code) { editOrder(number, (o) => { o.items = o.items.filter((i) => i.code !== code); }); }
+  function editItemQuiet(code, patch) { editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x) Object.assign(x, patch); }); }
   function removeItem(code) {
-    editOrder(number, (o) => { o.items = o.items.filter((i) => i.code !== code); });
+    removeItemQuiet(code);
     if (editingItemCode === code) editingItemCode = null;
     refresh();
   }
   function saveItemEdit(code, patch) {
-    editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x) Object.assign(x, patch); });
+    editItemQuiet(code, patch);
     editingItemCode = null;
     refresh();
-  }
-  function onFaults(faults, comment, checkText) {
-    const notes = [];
-    for (const fa of faults) {
-      if (fa.code) addItem(fa, [fa.label, fa.note, comment].filter(Boolean).join("; "));
-      else notes.push([fa.label, comment].filter(Boolean).join(" — "));
-    }
-    if (faults.length === 0 && comment) notes.push(`${shortCheck(checkText)}: ${comment}`);
-    if (notes.length) editOrder(number, (o) => { o.diagnosticNotes = [...(o.diagnosticNotes || []), ...notes]; });
   }
 
   // -- запуск диагностики / процедуры внутри обращения --
@@ -678,9 +768,14 @@ function viewOrder(number) {
     const host = el("div", {});
     render([subBar("Диагностика"), host]);
     mountDiagnostics(host, {
-      onFaults,
-      onDone: refresh,
-      suspension: bike?.suspension || (bike?.kind === "МТБ" ? "вилка" : "нет"),
+      getItems: () => order.items,
+      onCheck: (fa) => addItem(fa),
+      onUncheck: (fa) => removeItemQuiet(fa.code),
+      onEditItem: (code, patch) => editItemQuiet(code, patch),
+      onDone: (notes) => {
+        if (notes.length) editOrder(number, (o) => { o.diagnosticNotes = [...(o.diagnosticNotes || []), ...notes]; });
+        refresh();
+      },
       request: order.request || "",
       onRequest: (v) => editOrder(number, (o) => (o.request = v)),
       onlyBlocks: bike?.kind === "колесо" ? ["WHL"] : null,
@@ -691,48 +786,8 @@ function viewOrder(number) {
     render([subBar(cat.byCode.get(code)?.name || code), host]);
     mountRunner(host, cat.byCode.get(code), { onDone: refresh });
   }
-  // onPick получает объект {code, name, custom, ...} — как обычную операцию из
-  // каталога, так и неисправность, заведённую админом вручную (catalog/repairs).
   function openPicker(onPick) {
-    render([
-      el("header", { class: "bar" },
-        el("button", { class: "back", style: "border:0;background:none", onclick: refresh }, "‹"),
-        el("h1", {}, "Добавить работу")),
-      el("main", { class: "wrap" }, el("p", { class: "muted" }, "Загрузка…")),
-    ]);
-    ensureRepairs().then((repairs) => {
-      const host = el("main", { class: "wrap" });
-      const q = el("input", { type: "text", placeholder: "поиск по коду или названию" });
-      const listBox = el("div", { class: "rows", style: "margin-top:10px" });
-      const pool = [
-        ...billableOps
-          .filter((p) => bike?.kind !== "колесо" || WHEEL_ONLY_BLOCKS.includes(p.code.split("-")[0]))
-          .map((p) => ({ code: p.code, name: p.name, custom: false })),
-        ...repairs.map((r) => ({
-          code: `CF-${r.id}`, name: r.label, label: r.label, custom: true, id: r.id,
-          price: r.price, minutes: r.minutes, complications: r.complications,
-        })),
-      ];
-      const draw = () => {
-        const ql = q.value.trim().toLowerCase();
-        listBox.replaceChildren(
-          ...pool
-            .filter((p) => !order.items.some((i) => i.code === p.code))
-            .filter((p) => !ql || p.code.toLowerCase().includes(ql) || p.name.toLowerCase().includes(ql))
-            .map((p) => el("button", { class: "row", onclick: () => { onPick(p); } },
-              el("span", { style: "flex:1" }, p.name), el("span", { class: "chev" }, "+"))),
-        );
-      };
-      q.addEventListener("input", draw);
-      host.append(q, listBox);
-      draw();
-      render([
-        el("header", { class: "bar" },
-          el("button", { class: "back", style: "border:0;background:none", onclick: refresh }, "‹"),
-          el("h1", {}, "Добавить работу")),
-        host,
-      ]);
-    });
+    openWorkPicker({ existingItems: order.items, bikeKind: bike?.kind, onBack: refresh, onPick });
   }
 
   const range = orderRange(order);
@@ -1156,14 +1211,18 @@ function runActive(host, proc, mode, opts, onDone) {
 // ============================================================================
 
 const DIAG_TOGGLES = [
-  { param: "подвеска", label: "Подвеска на велосипеде", options: [["нет", "нет"], ["вилка", "вилка"], ["полная", "вилка + аморт"]] },
   { param: "тормоза", label: "Тормоза", options: [["гидравлика", "гидравлика"], ["механика", "механика"]] },
   { param: "покрышки", label: "Покрышки", options: [["камера", "камера"], ["бескамерка", "бескамерка"]] },
   { param: "трансмиссия", label: "Трансмиссия", options: [["механика", "механика"], ["электроника", "электроника"]] },
 ];
 
-function mountDiagnostics(host, { onFaults, onDone, suspension, request = "", onRequest, onlyBlocks }) {
-  const toggles = { подвеска: suspension || "нет", тормоза: "гидравлика", покрышки: "камера", трансмиссия: "механика" };
+// getItems/onCheck/onUncheck/onEditItem — список работ живёт у вызывающего
+// (наряд или черновик нового обращения) и меняется сразу по клику на
+// чекбокс, без ожидания «Готово»: поэтому его можно тут же посмотреть,
+// изменить (✎) или убрать (✕), не выходя из диагностики.
+// onDone(notes) получает только текстовые заметки без привязки к работе.
+function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDone, request = "", onRequest, onlyBlocks }) {
+  const toggles = { тормоза: "гидравлика", покрышки: "камера", трансмиссия: "механика" };
   let req = request;
   const states = {}; // instId -> { state, faults:Set<number>, comment }
   const st = (id) => (states[id] ||= { state: "ok", faults: new Set(), comment: "" });
@@ -1174,7 +1233,6 @@ function mountDiagnostics(host, { onFaults, onDone, suspension, request = "", on
     const out = [];
     for (const b of diagBlocks) {
       if (onlyBlocks && !onlyBlocks.includes(b.id)) continue;
-      if (b.showIf === "подвеска" && toggles["подвеска"] === "нет") continue;
       if (b.perSide) {
         out.push({ b, id: b.id + ".F", label: `${b.title} · перед` });
         out.push({ b, id: b.id + ".R", label: `${b.title} · зад` });
@@ -1190,6 +1248,21 @@ function mountDiagnostics(host, { onFaults, onDone, suspension, request = "", on
     })),
   ];
   const faultVisible = (f) => !f.if || toggles[f.if.param] === f.if.value;
+  // Снять галочку с чекбокса(ов) этого кода во всех узлах — работа могла быть
+  // убрана не через сам чекбокс (из сводного списка или удалением неисправности).
+  const uncheckByCode = (code) => {
+    for (const inst of instances()) {
+      const s = st(inst.id);
+      blockFaults(inst.b).forEach((f, i) => { if (f.code === code) s.faults.delete(i); });
+    }
+  };
+  // Тот же код мог быть отмечен и в другом узле/стороне (перед/зад) — проверяем
+  // перед тем, как убирать работу из наряда по снятой галочке.
+  const codeCheckedElsewhere = (code, exceptInstId) => instances().some((inst) => {
+    if (inst.id === exceptInstId) return false;
+    const s = st(inst.id);
+    return blockFaults(inst.b).some((f, i) => f.code === code && s.faults.has(i));
+  });
 
   async function reloadRepairs() {
     repairsCache = null;
@@ -1253,6 +1326,17 @@ function mountDiagnostics(host, { onFaults, onDone, suspension, request = "", on
       onRequest ? el("textarea", { rows: 2, value: req, placeholder: "с чем пришёл",
         onchange: (e) => { req = e.target.value.trim(); onRequest(req); } }) : null));
 
+    const items = getItems();
+    if (items.length) {
+      wrap.append(el("div", {},
+        el("p", { class: "small muted", style: "margin:14px 0 4px" }, "Уже добавлено в наряд"),
+        itemList({ items }, false, {
+          onRemove: (code) => { onUncheck({ code }); uncheckByCode(code); draw(); },
+          onSave: (code, patch) => { onEditItem(code, patch); draw(); },
+          refresh: draw,
+        })));
+    }
+
     for (const inst of list) {
       const s = st(inst.id);
       const card = el("div", { class: "card" },
@@ -1270,7 +1354,15 @@ function mountDiagnostics(host, { onFaults, onDone, suspension, request = "", on
           fb.append(el("div", { style: "display:flex;align-items:center;gap:6px" },
             el("label", { class: "opt", style: "flex:1" },
               el("input", { type: "checkbox", checked: s.faults.has(i),
-                onchange: () => { s.faults.has(i) ? s.faults.delete(i) : s.faults.add(i); } }),
+                onchange: () => {
+                  // Без code — неисправность без привязанной операции (определяется
+                  // на разборке), в наряд не превращается, только в заметку.
+                  // Один и тот же код может быть отмечен и спереди, и сзади —
+                  // убираем работу из наряда, только когда код больше нигде не отмечен.
+                  if (s.faults.has(i)) { s.faults.delete(i); if (f.code && !codeCheckedElsewhere(f.code, inst.id)) onUncheck(f); }
+                  else { s.faults.add(i); if (f.code) onCheck(f); }
+                  draw();
+                } }),
               el("span", {}, f.label,
                 f.code && !f.custom ? el("span", { class: "pill" }, rangeText(codeRange(f.code))) : null,
                 f.custom ? el("span", { class: "pill" }, rangeText(customFaultRange(f))) : null)),
@@ -1280,7 +1372,9 @@ function mountDiagnostics(host, { onFaults, onDone, suspension, request = "", on
                   onclick: async () => {
                     if (!confirm(`Удалить неисправность «${f.label}»?`)) return;
                     await fetch("/api/repairs", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: f.id }) });
-                    s.faults.delete(i);
+                    const wasChecked = s.faults.has(i);
+                    uncheckByCode(f.code);
+                    if (wasChecked) onUncheck(f);
                     await reloadRepairs();
                     draw();
                   },
@@ -1309,18 +1403,22 @@ function mountDiagnostics(host, { onFaults, onDone, suspension, request = "", on
         el("button", { class: "btn-primary", onclick: finish }, "Готово"))));
   }
 
+  // Работы с кодом уже добавлены живьём по каждому чекбоксу — тут собираем
+  // текстовые заметки: неисправности без кода (определяются на разборке) и
+  // свободный комментарий по узлу.
   function finish() {
+    const notes = [];
     for (const inst of instances()) {
       const s = st(inst.id);
       if (s.state !== "problem") continue;
       const faults = blockFaults(inst.b);
-      const picked = [...s.faults].map((i) => faults[i]).filter(Boolean).filter(faultVisible)
-        .map((f) => f.custom
-          ? { label: f.label, code: f.code, custom: true, id: f.id, price: f.price, minutes: f.minutes, complications: f.complications }
-          : { label: f.label, code: f.code, note: f.note });
-      onFaults?.(picked, (s.comment || "").trim(), inst.label);
+      const noCode = [...s.faults].map((i) => faults[i]).filter(Boolean).filter(faultVisible).filter((f) => !f.code)
+        .map((f) => [f.label, f.note].filter(Boolean).join(" — "));
+      const c = (s.comment || "").trim();
+      const parts = c ? [...noCode, c] : noCode;
+      if (parts.length) notes.push(`${inst.label}: ${parts.join("; ")}`);
     }
-    onDone();
+    onDone(notes);
   }
 
   host.replaceChildren(el("main", { class: "wrap" }, el("p", { class: "muted" }, "Загрузка…")));
