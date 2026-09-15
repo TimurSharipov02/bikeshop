@@ -369,8 +369,6 @@ const routes = [
   [/^\/orders\/new$/, viewNewOrder],
   [/^\/orders\/([^/]+)$/, (m) => viewOrder(m[1])],
   [/^\/orders$/, viewOrders],
-  [/^\/procedures\/([^/]+)$/, (m) => viewProcedure(m[1])],
-  [/^\/procedures$/, viewProcedures],
   [/^\/profile$/, viewProfile],
   [/^\/admin$/, adminOnly(viewAdmin)],
   [/^\/admin\/masters$/, adminOnly(viewMasters)],
@@ -412,7 +410,6 @@ const ICON_SVG = (inner) =>
 const ICONS = {
   newOrder: ICON_SVG('<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1"/><path d="M12 11v6M9 14h6"/>'),
   orders: ICON_SVG('<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1"/><path d="M9 11h6M9 15h6"/>'),
-  procedures: ICON_SVG('<path d="M14.7 6.3a4 4 0 0 0-5.4 4.6L3 17l2 2 6.1-6.3a4 4 0 0 0 4.6-5.4l-2.6 2.6-2-2 2.6-2.6Z"/>'),
   prices: ICON_SVG('<path d="M12.6 3H6a2 2 0 0 0-2 2v6.6a2 2 0 0 0 .6 1.4l8.4 8.4a2 2 0 0 0 2.8 0l5.6-5.6a2 2 0 0 0 0-2.8L13 3.6a2 2 0 0 0-1.4-.6Z"/><circle cx="8.5" cy="8.5" r="1.3"/>'),
   admin: ICON_SVG('<path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6l7-3Z"/>'),
   profile: ICON_SVG('<circle cx="12" cy="9" r="3"/><path d="M6 19c1.2-3 3.6-4.5 6-4.5s4.8 1.5 6 4.5"/>'),
@@ -433,8 +430,7 @@ function viewHome() {
     el("main", { class: "wrap" },
       el("div", { class: "rows" },
         homeLink("Новое обращение", "/orders/new", ICONS.newOrder),
-        homeLink("Обращения", "/orders", ICONS.orders),
-        homeLink("Техпроцедуры", "/procedures", ICONS.procedures)),
+        homeLink("Обращения", "/orders", ICONS.orders)),
       el("p", { class: "muted small", style: "margin-top:16px" },
         (serverOK ? "Данные общие для всех устройств." : "Данные хранятся только в этом браузере.")
           + (BUILD_TIME ? ` · версия от ${BUILD_TIME}` : ""))),
@@ -447,47 +443,6 @@ function groupBy(list, keyFn) {
   return m;
 }
 
-function viewProcedures() {
-  const groups = groupBy(
-    cat.procedures.filter((p) => p.code && p.kind === "operation" && !p.code.startsWith("DIA")),
-    (p) => blockOf(p.code));
-  return [
-    bar("Техпроцедуры", "/"),
-    el("main", { class: "wrap" },
-      [...BLOCK_TITLES, "Прочее"].map((title) => {
-        const list = groups.get(title);
-        if (!list || !list.length) return null;
-        return el("div", { class: "card" },
-          el("h2", {}, title),
-          el("div", { class: "rows" },
-            list.map((p) =>
-              el("a", { class: "row", href: `#/procedures/${p.code}` },
-                el("span", { style: "flex:1" }, p.name),
-                p.status !== "ready" ? el("span", { class: "tag" }, p.status) : null,
-                el("span", { class: "chev" }, "›")))));
-      }),
-    ),
-  ];
-}
-
-function viewProcedure(code) {
-  const proc = cat.byCode.get(code);
-  if (!proc) return [bar(code, "/procedures"), el("main", { class: "wrap" }, el("p", { class: "muted" }, "Не найдено"))];
-  const host = el("div", {});
-  if (code.startsWith("DIA")) {
-    // Пробный прогон диагностики вне обращения — список работ временный,
-    // никуда не сохраняется.
-    const scratch = [];
-    mountDiagnostics(host, {
-      getItems: () => scratch,
-      onCheck: (fa) => { if (!scratch.some((i) => i.code === fa.code)) scratch.push(fa.custom ? makeCustomItem(fa) : makeItem(fa.code)); },
-      onUncheck: (fa) => { const idx = scratch.findIndex((i) => i.code === fa.code); if (idx !== -1) scratch.splice(idx, 1); },
-      onEditItem: (itemCode, patch) => { const x = scratch.find((i) => i.code === itemCode); if (x) Object.assign(x, patch); },
-      onDone: () => go("/procedures"),
-    });
-  } else mountRunner(host, proc, { onDone: () => go("/procedures") });
-  return [bar(proc.name, "/procedures"), host];
-}
 
 // Пресет для быстрой проверки: создаёт готовое обращение одним кликом.
 const DEMO_PRESET = {
