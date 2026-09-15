@@ -81,6 +81,7 @@ let serverOK = false;
 let pushTimer = null;
 let dirty = false; // есть локальные правки, ещё не подтверждённые сервером
 let autoOpenDiagsFor = null; // номер только что созданного обращения — сразу открыть диагностику
+let editingItemCode = null; // код работы в наряде, у которой сейчас открыта форма редактирования
 
 // ---------------------------- вход и сессия ---------------------------------
 //
@@ -323,9 +324,13 @@ function router() {
   render(viewHome());
 }
 const go = (hash) => { location.hash = hash; };
-function render(nodes) {
+// keepScroll — для точечных обновлений текущего экрана (галочка, чекбокс,
+// правка поля): не дёргать страницу вверх при каждом клике. Без него — как
+// при обычном переходе на новый экран, скролл сбрасывается в начало.
+function render(nodes, { keepScroll } = {}) {
+  const y = window.scrollY;
   app.replaceChildren(...(Array.isArray(nodes) ? nodes.filter(Boolean) : [nodes]));
-  window.scrollTo(0, 0);
+  window.scrollTo(0, keepScroll ? y : 0);
 }
 window.addEventListener("hashchange", () => { router(); if (SESSION) syncFromServer(); });
 (async () => {
@@ -512,11 +517,8 @@ function viewOrders() {
 // собранные неисправности копятся в черновике и уходят в базу одним куском
 // вместе с клиентом и велосипедом на последнем шаге.
 function viewNewOrder() {
-  const draft = { items: [], diagnosticNotes: [], request: "", name: "" };
+  const draft = { items: [], diagnosticNotes: [], request: "" };
   const host = el("div", {});
-  const nameCard = el("div", { class: "card" },
-    el("label", {}, "Имя клиента"),
-    el("input", { type: "text", oninput: (e) => (draft.name = e.target.value) }));
 
   function draftAddFault(fa, notes) {
     const ex = draft.items.find((i) => i.code === fa.code);
@@ -542,7 +544,7 @@ function viewNewOrder() {
   });
 
   function renderClientStep() {
-    const f = { phone: "+7 ", name: draft.name, consent: true, bike: "new", kind: "любой другой", brand: "" };
+    const f = { phone: "+7 ", name: "", consent: true, bike: "new", kind: "любой другой", brand: "" };
 
     const clientSlot = el("div", {});
     const bikeSlot = el("div", { class: "card" }, el("h2", {}, "Велосипед"));
@@ -622,7 +624,7 @@ function viewNewOrder() {
     ]);
   }
 
-  return [bar("Новое обращение", "/"), el("main", { class: "wrap", style: "padding-bottom:0" }, nameCard), host];
+  return [bar("Новое обращение", "/"), host];
 }
 
 // ============================================================================
@@ -635,7 +637,9 @@ function viewOrder(number) {
   if (!order) return [bar(number, "/orders"), el("main", { class: "wrap" }, el("p", { class: "muted" }, "Не найдено"))];
   const bike = d.bikes.find((b) => b.number === order.bikeNumber);
   const client = d.clients.find((c) => c.phone === order.clientPhone);
-  const refresh = () => render(viewOrder(number));
+  // keepScroll: мелкая правка (чекбокс, будет/не будет/неизвестно, ✎/✕ у работы)
+  // не должна дёргать страницу вверх — только переход между стадиями наряда.
+  const refresh = () => render(viewOrder(number), { keepScroll: true });
 
   function addItem(fa, notes = "") {
     editOrder(number, (o) => {
@@ -643,6 +647,16 @@ function viewOrder(number) {
       if (ex) { if (notes) ex.notes = ex.notes ? `${ex.notes}; ${notes}` : notes; return; }
       o.items.push(fa.custom ? makeCustomItem(fa, notes) : makeItem(fa.code, notes));
     });
+  }
+  function removeItem(code) {
+    editOrder(number, (o) => { o.items = o.items.filter((i) => i.code !== code); });
+    if (editingItemCode === code) editingItemCode = null;
+    refresh();
+  }
+  function saveItemEdit(code, patch) {
+    editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x) Object.assign(x, patch); });
+    editingItemCode = null;
+    refresh();
   }
   function onFaults(faults, comment, checkText) {
     const notes = [];
@@ -736,14 +750,15 @@ function viewOrder(number) {
   }
 
   const main = el("main", { class: "wrap" }, head);
-  const setStatus = (s, extra) => { editOrder(number, (o) => { o.status = s; if (extra) extra(o); }); refresh(); };
+  // Переход на новую стадию — это новый экран, тут скролл наверх уместен.
+  const setStatus = (s, extra) => { editOrder(number, (o) => { o.status = s; if (extra) extra(o); }); render(viewOrder(number)); };
 
   if (order.status === "приём") {
     main.append(stage("Диагностика и список работ",
       el("div", { class: "btn-row" },
         el("button", { class: "btn-primary", onclick: () => openDiagnostics() }, "Пройти диагностику"),
         el("button", { onclick: () => openPicker((pick) => { addItem(pick); refresh(); }) }, "+ работа")),
-      itemList(order), order.items.length
+      itemList(order, false, { onRemove: removeItem, onSave: saveItemEdit, refresh }), order.items.length
         ? el("button", { class: "btn-primary", style: "width:100%;margin-top:12px", onclick: () => setStatus("оценка") }, "К оценке стоимости")
         : null));
   }
@@ -860,8 +875,59 @@ function itemRow(it, showFacts) {
     el("span", { class: "small muted" }, rangeText(r)));
 }
 
+const iconBtnStyle = "border:0;background:none;color:var(--muted);cursor:pointer;padding:0 2px;min-height:auto;font:inherit";
+
+// Строка работы в наряде на стадии «приём» — можно убрать (✕) или изменить
+// название/цену/время/усложнения (✎), не выходя из наряда.
+function editableItemRow(it, { onRemove, onSave, refresh }) {
+  const r = itemRange(it);
+  const isEditing = editingItemCode === it.code;
+  const header = el("div", { class: "row", style: "align-items:flex-start" },
+    el("span", { style: "flex:1" }, it.name, it.notes ? el("span", { class: "small muted" }, el("br"), it.notes) : null),
+    el("span", { class: "small muted" }, rangeText(r)),
+    el("button", { style: iconBtnStyle, onclick: () => { editingItemCode = isEditing ? null : it.code; refresh(); } }, "✎"),
+    el("button", { style: iconBtnStyle, onclick: () => { if (confirm(`Убрать «${it.name}» из наряда?`)) onRemove(it.code); } }, "✕"));
+  if (!isEditing) return header;
+
+  const d = {
+    name: it.name, workPrice: it.workPrice || 0, estimateMinutes: it.estimateMinutes || 0, notes: it.notes || "",
+    difficulties: JSON.parse(JSON.stringify(it.difficulties || [])),
+  };
+  const compsBox = el("div", {});
+  const drawComps = () => {
+    compsBox.replaceChildren(
+      ...d.difficulties.map((c, ci) => el("div", { style: "display:flex;gap:6px;align-items:center;margin-top:4px" },
+        el("input", { placeholder: "усложнение", value: c.label, style: "flex:1", oninput: (e) => (c.label = e.target.value) }),
+        el("input", { type: "number", value: c.add, style: "width:70px;text-align:right", oninput: (e) => (c.add = +e.target.value || 0) }),
+        el("span", { class: "muted small" }, "₽"),
+        el("button", { style: iconBtnStyle, onclick: () => { d.difficulties.splice(ci, 1); drawComps(); } }, "✕"))),
+      el("button", { style: "margin-top:4px", onclick: () => { d.difficulties.push({ label: "", add: 0, state: "unknown" }); drawComps(); } }, "+ усложнение"),
+    );
+  };
+  drawComps();
+  const form = el("div", { class: "card", style: "background:var(--bg);margin-top:8px" },
+    el("label", {}, "Название"),
+    el("input", { value: d.name, oninput: (e) => (d.name = e.target.value) }),
+    el("div", { style: "display:flex;gap:8px;margin-top:8px" },
+      el("div", { style: "flex:1" }, el("label", {}, "Цена, ₽"), el("input", { type: "number", value: d.workPrice, oninput: (e) => (d.workPrice = +e.target.value || 0) })),
+      el("div", { style: "flex:1" }, el("label", {}, "Минуты"), el("input", { type: "number", value: d.estimateMinutes, oninput: (e) => (d.estimateMinutes = +e.target.value || 0) }))),
+    el("label", { style: "margin-top:8px" }, "Заметка"),
+    el("input", { value: d.notes, oninput: (e) => (d.notes = e.target.value) }),
+    el("label", { style: "margin-top:8px" }, "Усложнения"),
+    compsBox,
+    el("div", { class: "btn-row", style: "margin-top:10px" },
+      el("button", { class: "btn-primary", onclick: () => onSave(it.code, {
+        name: d.name.trim() || it.name, workPrice: d.workPrice, estimateMinutes: d.estimateMinutes,
+        notes: d.notes.trim(), difficulties: d.difficulties,
+      }) }, "Сохранить"),
+      el("button", { onclick: () => { editingItemCode = null; refresh(); } }, "Отмена")));
+  return el("div", {}, header, form);
+}
+
 // Наряд сгруппирован по узлам велосипеда (блоки диагностики), порядок — как в diagnostics.json.
-function itemList(order, showFacts) {
+// edit — {onRemove, onSave, refresh}: если передан, работы на стадии «приём»
+// можно убрать или изменить прямо в списке.
+function itemList(order, showFacts, edit) {
   if (order.items.length === 0) return el("p", { class: "muted small" }, "Работ пока нет.");
   const groups = groupBy(order.items, (it) => blockOf(it.code));
   const box = el("div", { style: "margin-top:8px" });
@@ -870,7 +936,7 @@ function itemList(order, showFacts) {
     if (!list || !list.length) continue;
     box.append(
       el("p", { class: "small muted", style: "margin:14px 0 4px;letter-spacing:.05em" }, title.toUpperCase()),
-      el("div", { class: "rows" }, list.map((it) => itemRow(it, showFacts))));
+      el("div", { class: "rows" }, list.map((it) => edit ? editableItemRow(it, edit) : itemRow(it, showFacts))));
   }
   return box;
 }
