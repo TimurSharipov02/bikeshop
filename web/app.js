@@ -537,7 +537,10 @@ function viewNewOrder() {
           minutesText(orderMinutes({ items: draft.items }, false)) ? el("div", { class: "small muted", style: "margin-top:4px" }, minutesText(orderMinutes({ items: draft.items }, false))) : null),
         el("button", { onclick: () => openWorkPicker({
           existingItems: draft.items, bikeKind: null, onBack: redraw,
-          onPick: (pick) => { draft.items.push(pick.custom ? makeCustomItem(pick) : makeItem(pick.code)); redraw(); },
+          onPick: (pick) => {
+            if (!draft.items.some((i) => i.code === pick.code)) draft.items.push(pick.custom ? makeCustomItem(pick) : makeItem(pick.code));
+            redraw();
+          },
         }) }, "+ работа"),
         el("button", { class: "btn-primary", style: "width:100%;margin-top:12px", onclick: () => stepConfirm() }, "Дальше — согласование"));
       return [bar("Новое обращение", "/"), el("main", { class: "wrap" }, stage("Оценка усложнений и стоимости", body))];
