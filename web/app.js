@@ -124,6 +124,20 @@ async function ensureStock() {
   return stockCache;
 }
 
+// Неисправности, заведённые администратором вручную на экране диагностики
+// (без .proc-процедуры, цена/время/усложнения — прямо в них самих). Общие
+// для всех, привязаны к узлу (group = id блока диагностики).
+let repairsCache = null;
+async function ensureRepairs() {
+  if (repairsCache) return repairsCache;
+  try {
+    const r = await fetch("/api/repairs", { cache: "no-store" });
+    const j = await r.json();
+    repairsCache = r.ok ? j.items || [] : [];
+  } catch { repairsCache = []; }
+  return repairsCache;
+}
+
 function safeParse(s) { try { return JSON.parse(s || "{}"); } catch { return {}; } }
 const loadDB = () => DB;
 function writeLocal() { localStorage.setItem(DB_KEY, JSON.stringify(DB)); }
@@ -225,6 +239,12 @@ function codeRange(code) {
   const max = base + (p.spread || 0) + (p.difficulties || []).reduce((s, d) => s + (d.add || 0), 0);
   return { min: base, max };
 }
+// То же для неисправности, заведённой админом вручную (цена лежит в ней самой).
+function customFaultRange(f) {
+  const base = f.price || 0;
+  const max = base + (f.complications || []).reduce((s, c) => s + (c.add || 0), 0);
+  return { min: base, max };
+}
 
 function makeItem(code, notes = "") {
   const proc = cat.byCode.get(code);
@@ -236,6 +256,19 @@ function makeItem(code, notes = "") {
     spread: price.spread || 0,
     partsPrice: 0,
     difficulties: (price.difficulties || []).map((d) => ({ label: d.label, add: d.add, state: "unknown" })),
+  };
+}
+
+// Неисправность, заведённая администратором вручную (без кода .proc-процедуры) —
+// цена/время/усложнения лежат прямо в ней самой.
+function makeCustomItem(fa, notes = "") {
+  return {
+    code: fa.code, name: fa.label, agreed: false, done: false, parts: [], notes,
+    workPrice: fa.price || 0,
+    estimateMinutes: fa.minutes || 0,
+    spread: 0,
+    partsPrice: 0,
+    difficulties: (fa.complications || []).map((c) => ({ label: c.label, add: c.add, state: "unknown" })),
   };
 }
 
@@ -485,15 +518,15 @@ function viewNewOrder() {
     el("label", {}, "Имя клиента"),
     el("input", { type: "text", oninput: (e) => (draft.name = e.target.value) }));
 
-  function draftAddFault(code, notes) {
-    const ex = draft.items.find((i) => i.code === code);
+  function draftAddFault(fa, notes) {
+    const ex = draft.items.find((i) => i.code === fa.code);
     if (ex) { if (notes) ex.notes = ex.notes ? `${ex.notes}; ${notes}` : notes; return; }
-    draft.items.push(makeItem(code, notes));
+    draft.items.push(fa.custom ? makeCustomItem(fa, notes) : makeItem(fa.code, notes));
   }
   function draftOnFaults(faults, comment, checkText) {
     const notes = [];
     for (const fa of faults) {
-      if (fa.code) draftAddFault(fa.code, [fa.label, fa.note, comment].filter(Boolean).join("; "));
+      if (fa.code) draftAddFault(fa, [fa.label, fa.note, comment].filter(Boolean).join("; "));
       else notes.push([fa.label, comment].filter(Boolean).join(" — "));
     }
     if (faults.length === 0 && comment) notes.push(`${shortCheck(checkText)}: ${comment}`);
@@ -604,17 +637,17 @@ function viewOrder(number) {
   const client = d.clients.find((c) => c.phone === order.clientPhone);
   const refresh = () => render(viewOrder(number));
 
-  function addItem(code, notes = "") {
+  function addItem(fa, notes = "") {
     editOrder(number, (o) => {
-      const ex = o.items.find((i) => i.code === code);
+      const ex = o.items.find((i) => i.code === fa.code);
       if (ex) { if (notes) ex.notes = ex.notes ? `${ex.notes}; ${notes}` : notes; return; }
-      o.items.push(makeItem(code, notes));
+      o.items.push(fa.custom ? makeCustomItem(fa, notes) : makeItem(fa.code, notes));
     });
   }
   function onFaults(faults, comment, checkText) {
     const notes = [];
     for (const fa of faults) {
-      if (fa.code) addItem(fa.code, [fa.label, fa.note, comment].filter(Boolean).join("; "));
+      if (fa.code) addItem(fa, [fa.label, fa.note, comment].filter(Boolean).join("; "));
       else notes.push([fa.label, comment].filter(Boolean).join(" — "));
     }
     if (faults.length === 0 && comment) notes.push(`${shortCheck(checkText)}: ${comment}`);
@@ -644,30 +677,48 @@ function viewOrder(number) {
     render([subBar(cat.byCode.get(code)?.name || code), host]);
     mountRunner(host, cat.byCode.get(code), { onDone: refresh });
   }
+  // onPick получает объект {code, name, custom, ...} — как обычную операцию из
+  // каталога, так и неисправность, заведённую админом вручную (catalog/repairs).
   function openPicker(onPick) {
-    const host = el("main", { class: "wrap" });
-    const q = el("input", { type: "text", placeholder: "поиск по коду или названию" });
-    const listBox = el("div", { class: "rows", style: "margin-top:10px" });
-    const draw = () => {
-      const ql = q.value.trim().toLowerCase();
-      listBox.replaceChildren(
-        ...billableOps
-          .filter((p) => !order.items.some((i) => i.code === p.code))
-          .filter((p) => bike?.kind !== "колесо" || WHEEL_ONLY_BLOCKS.includes(p.code.split("-")[0]))
-          .filter((p) => !ql || p.code.toLowerCase().includes(ql) || p.name.toLowerCase().includes(ql))
-          .map((p) => el("button", { class: "row", onclick: () => { onPick(p.code); } },
-            el("span", { style: "flex:1" }, p.name), el("span", { class: "chev" }, "+"))),
-      );
-    };
-    q.addEventListener("input", draw);
-    host.append(q, listBox);
-    draw();
     render([
       el("header", { class: "bar" },
         el("button", { class: "back", style: "border:0;background:none", onclick: refresh }, "‹"),
         el("h1", {}, "Добавить работу")),
-      host,
+      el("main", { class: "wrap" }, el("p", { class: "muted" }, "Загрузка…")),
     ]);
+    ensureRepairs().then((repairs) => {
+      const host = el("main", { class: "wrap" });
+      const q = el("input", { type: "text", placeholder: "поиск по коду или названию" });
+      const listBox = el("div", { class: "rows", style: "margin-top:10px" });
+      const pool = [
+        ...billableOps
+          .filter((p) => bike?.kind !== "колесо" || WHEEL_ONLY_BLOCKS.includes(p.code.split("-")[0]))
+          .map((p) => ({ code: p.code, name: p.name, custom: false })),
+        ...repairs.map((r) => ({
+          code: `CF-${r.id}`, name: r.label, label: r.label, custom: true, id: r.id,
+          price: r.price, minutes: r.minutes, complications: r.complications,
+        })),
+      ];
+      const draw = () => {
+        const ql = q.value.trim().toLowerCase();
+        listBox.replaceChildren(
+          ...pool
+            .filter((p) => !order.items.some((i) => i.code === p.code))
+            .filter((p) => !ql || p.code.toLowerCase().includes(ql) || p.name.toLowerCase().includes(ql))
+            .map((p) => el("button", { class: "row", onclick: () => { onPick(p); } },
+              el("span", { style: "flex:1" }, p.name), el("span", { class: "chev" }, "+"))),
+        );
+      };
+      q.addEventListener("input", draw);
+      host.append(q, listBox);
+      draw();
+      render([
+        el("header", { class: "bar" },
+          el("button", { class: "back", style: "border:0;background:none", onclick: refresh }, "‹"),
+          el("h1", {}, "Добавить работу")),
+        host,
+      ]);
+    });
   }
 
   const range = orderRange(order);
@@ -691,7 +742,7 @@ function viewOrder(number) {
     main.append(stage("Диагностика и список работ",
       el("div", { class: "btn-row" },
         el("button", { class: "btn-primary", onclick: () => openDiagnostics() }, "Пройти диагностику"),
-        el("button", { onclick: () => openPicker((code) => { addItem(code); refresh(); }) }, "+ работа")),
+        el("button", { onclick: () => openPicker((pick) => { addItem(pick); refresh(); }) }, "+ работа")),
       itemList(order), order.items.length
         ? el("button", { class: "btn-primary", style: "width:100%;margin-top:12px", onclick: () => setStatus("оценка") }, "К оценке стоимости")
         : null));
@@ -714,7 +765,7 @@ function viewOrder(number) {
         el("span", { class: "muted small" }, "Итого клиенту"),
         el("div", { class: "price-range" }, rangeText(orderRangeAll(order))),
         minutesText(orderMinutes(order, false)) ? el("div", { class: "small muted", style: "margin-top:4px" }, minutesText(orderMinutes(order, false))) : null),
-      el("button", { onclick: () => openPicker((code) => { addItem(code); refresh(); }) }, "+ работа"),
+      el("button", { onclick: () => openPicker((pick) => { addItem(pick); refresh(); }) }, "+ работа"),
       el("button", { class: "btn-primary", style: "width:100%;margin-top:12px", onclick: () => setStatus("согласование") }, "К согласованию"));
     main.append(stage("Оценка трудностей и стоимости", body));
   }
@@ -763,7 +814,7 @@ function viewOrder(number) {
           onRun: () => openRunner(it.code),
           onSave: (patch) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) Object.assign(x, patch, { done: true }); }); refresh(); },
         })));
-        body.append(el("button", { onclick: () => openPicker((code) => { addItem(code); editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x) x.agreed = true; }); refresh(); }) }, "+ доп. работа"));
+        body.append(el("button", { onclick: () => openPicker((pick) => { addItem(pick); editOrder(number, (o) => { const x = o.items.find((i) => i.code === pick.code); if (x) x.agreed = true; }); refresh(); }) }, "+ доп. работа"));
         body.append(el("button", { style: "margin-top:10px", onclick: leaveOrder }, "Завершить и выйти — освободить заявку"));
         const allDone = order.items.filter((i) => i.agreed).length > 0 && order.items.filter((i) => i.agreed).every((i) => i.done);
         if (allDone) body.append(el("button", { class: "btn-primary", style: "width:100%;margin-top:12px", onclick: () => setStatus("проверка", (o) => { o.finishedAt = new Date().toISOString(); o.occupiedBy = null; o.occupiedByName = ""; }) }, "На проверку"));
@@ -1050,6 +1101,8 @@ function mountDiagnostics(host, { onFaults, onDone, suspension, request = "", on
   let req = request;
   const states = {}; // instId -> { state, faults:Set<number>, comment }
   const st = (id) => (states[id] ||= { state: "ok", faults: new Set(), comment: "" });
+  let repairs = []; // неисправности, заведённые админом вручную (общие для всех)
+  const addFormOpenFor = new Set(); // id блоков, где сейчас открыта форма «+ своя неисправность»
 
   const instances = () => {
     const out = [];
@@ -1063,8 +1116,59 @@ function mountDiagnostics(host, { onFaults, onDone, suspension, request = "", on
     }
     return out;
   };
-  const blockFaults = (b) => b.sections.flatMap((s) => s.faults.map((f) => ({ ...f, section: s.title })));
+  const blockFaults = (b) => [
+    ...b.sections.flatMap((s) => s.faults.map((f) => ({ ...f, section: s.title }))),
+    ...repairs.filter((r) => r.group === b.id).map((r) => ({
+      label: r.label, code: `CF-${r.id}`, custom: true, id: r.id,
+      price: r.price, minutes: r.minutes, complications: r.complications,
+    })),
+  ];
   const faultVisible = (f) => !f.if || toggles[f.if.param] === f.if.value;
+
+  async function reloadRepairs() {
+    repairsCache = null;
+    repairs = await ensureRepairs();
+  }
+
+  // Форма добавления своей неисправности (только у администратора) — цена,
+  // время и усложнения задаются сразу тут же, без .proc-процедуры.
+  function customFaultForm(blockId) {
+    const draftFa = { label: "", price: 0, minutes: 0, complications: [] };
+    const compsBox = el("div", {});
+    const drawComps = () => {
+      compsBox.replaceChildren(
+        ...draftFa.complications.map((c, ci) => el("div", { style: "display:flex;gap:6px;align-items:center;margin-top:4px" },
+          el("input", { placeholder: "усложнение", value: c.label, style: "flex:1", oninput: (e) => (c.label = e.target.value) }),
+          el("input", { type: "number", value: c.add, style: "width:70px;text-align:right", oninput: (e) => (c.add = +e.target.value || 0) }),
+          el("span", { class: "muted small" }, "₽"),
+          el("button", { onclick: () => { draftFa.complications.splice(ci, 1); drawComps(); } }, "✕"))),
+        el("button", { style: "margin-top:4px", onclick: () => { draftFa.complications.push({ label: "", add: 0 }); drawComps(); } }, "+ усложнение"),
+      );
+    };
+    drawComps();
+    return el("div", { class: "card", style: "background:var(--bg);margin-top:8px" },
+      el("label", {}, "Название неисправности"),
+      el("input", { placeholder: "напр. Восьмёрка", oninput: (e) => (draftFa.label = e.target.value) }),
+      el("div", { style: "display:flex;gap:8px;margin-top:8px" },
+        el("div", { style: "flex:1" }, el("label", {}, "Цена, ₽"), el("input", { type: "number", oninput: (e) => (draftFa.price = +e.target.value || 0) })),
+        el("div", { style: "flex:1" }, el("label", {}, "Минуты"), el("input", { type: "number", oninput: (e) => (draftFa.minutes = +e.target.value || 0) }))),
+      el("label", { style: "margin-top:8px" }, "Усложнения (надбавка к цене, необязательно)"),
+      compsBox,
+      el("div", { class: "btn-row", style: "margin-top:10px" },
+        el("button", { class: "btn-primary", onclick: async () => {
+          if (!draftFa.label.trim()) return alert("Укажите название");
+          const r = await fetch("/api/repairs", {
+            method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ group: blockId, label: draftFa.label.trim(), price: draftFa.price, minutes: draftFa.minutes, complications: draftFa.complications }),
+          });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) return alert(j.error || "ошибка");
+          addFormOpenFor.delete(blockId);
+          await reloadRepairs();
+          draw();
+        } }, "Добавить"),
+        el("button", { onclick: () => { addFormOpenFor.delete(blockId); draw(); } }, "Отмена")));
+  }
 
   function draw() {
     const list = instances();
@@ -1097,12 +1201,34 @@ function mountDiagnostics(host, { onFaults, onDone, suspension, request = "", on
         const faults = blockFaults(inst.b);
         faults.forEach((f, i) => {
           if (!faultVisible(f)) return;
-          fb.append(el("label", { class: "opt" },
-            el("input", { type: "checkbox", checked: s.faults.has(i),
-              onchange: () => { s.faults.has(i) ? s.faults.delete(i) : s.faults.add(i); } }),
-            el("span", {}, f.label,
-              f.code ? el("span", { class: "pill" }, rangeText(codeRange(f.code))) : null)));
+          fb.append(el("div", { style: "display:flex;align-items:center;gap:6px" },
+            el("label", { class: "opt", style: "flex:1" },
+              el("input", { type: "checkbox", checked: s.faults.has(i),
+                onchange: () => { s.faults.has(i) ? s.faults.delete(i) : s.faults.add(i); } }),
+              el("span", {}, f.label,
+                f.code && !f.custom ? el("span", { class: "pill" }, rangeText(codeRange(f.code))) : null,
+                f.custom ? el("span", { class: "pill" }, rangeText(customFaultRange(f))) : null)),
+            f.custom && SESSION?.role === "admin"
+              ? el("button", {
+                  style: "border:0;background:none;color:var(--muted);cursor:pointer;padding:0;min-height:auto;font:inherit",
+                  onclick: async () => {
+                    if (!confirm(`Удалить неисправность «${f.label}»?`)) return;
+                    await fetch("/api/repairs", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: f.id }) });
+                    s.faults.delete(i);
+                    await reloadRepairs();
+                    draw();
+                  },
+                }, "✕")
+              : null));
         });
+        if (SESSION?.role === "admin") {
+          fb.append(addFormOpenFor.has(inst.b.id)
+            ? customFaultForm(inst.b.id)
+            : el("button", {
+                class: "small", style: "margin-top:8px;border:0;background:none;color:var(--muted);text-decoration:underline;padding:0",
+                onclick: () => { addFormOpenFor.add(inst.b.id); draw(); },
+              }, "+ своя неисправность"));
+        }
         fb.append(el("input", { type: "text", placeholder: "комментарий", value: s.comment,
           style: "margin-top:6px", oninput: (e) => (s.comment = e.target.value) }));
         card.append(fb);
@@ -1123,13 +1249,16 @@ function mountDiagnostics(host, { onFaults, onDone, suspension, request = "", on
       if (s.state !== "problem") continue;
       const faults = blockFaults(inst.b);
       const picked = [...s.faults].map((i) => faults[i]).filter(Boolean).filter(faultVisible)
-        .map((f) => ({ label: f.label, code: f.code, note: f.note }));
+        .map((f) => f.custom
+          ? { label: f.label, code: f.code, custom: true, id: f.id, price: f.price, minutes: f.minutes, complications: f.complications }
+          : { label: f.label, code: f.code, note: f.note });
       onFaults?.(picked, (s.comment || "").trim(), inst.label);
     }
     onDone();
   }
 
-  draw();
+  host.replaceChildren(el("main", { class: "wrap" }, el("p", { class: "muted" }, "Загрузка…")));
+  ensureRepairs().then((r) => { repairs = r; draw(); });
 }
 
 // ============================================================================
