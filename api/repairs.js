@@ -10,7 +10,7 @@ const KEY = "vella:repairs";
 const loadStore = async (r) => (await r.get(KEY)) || { items: [] };
 const sanitizeComplications = (list) =>
   Array.isArray(list)
-    ? list.map((c) => ({ label: String(c.label || "").trim(), add: Number(c.add) || 0, addMinutes: Number(c.addMinutes) || 0 })).filter((c) => c.label)
+    ? list.map((c) => ({ label: String(c.label || "").trim(), add: Number(c.add) || 0, addMinutes: Number(c.addMinutes) || 0, multiple: !!c.multiple })).filter((c) => c.label)
     : [];
 
 export default async function handler(req, res) {
@@ -35,6 +35,7 @@ export default async function handler(req, res) {
       price: Number(body.price) || 0,
       minutes: Number(body.minutes) || 0,
       complications: sanitizeComplications(body.complications),
+      multiple: !!body.multiple,
     };
     const store = await loadStore(r);
     store.items.push(item);
@@ -52,6 +53,7 @@ export default async function handler(req, res) {
     if (body.price != null) it.price = Number(body.price) || 0;
     if (body.minutes != null) it.minutes = Number(body.minutes) || 0;
     if (body.complications != null) it.complications = sanitizeComplications(body.complications);
+    if (body.multiple != null) it.multiple = !!body.multiple;
     await r.set(KEY, store);
     return res.status(200).json({ item: it, items: store.items });
   }

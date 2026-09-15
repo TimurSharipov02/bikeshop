@@ -3,7 +3,10 @@
 // скрыть работу, не трогая код. Хранится одним документом в Upstash Redis,
 // общее для всех пользователей, живёт поверх статического каталога.
 //
-// byCode: { "WHL-05": { name?, price?, minutes?, complications?, hidden? } }
+// byCode: { "WHL-05": { name?, price?, minutes?, complications?, hidden?, multiple? } }
+// multiple — работу можно делать несколько раз на одном велосипеде (два
+// колеса, несколько спиц и т.п.): при добавлении в наряд можно увеличивать
+// количество. То же поле есть у каждого усложнения — повторяется отдельно.
 // Присутствует только то, что реально переопределено; null-поле в PUT —
 // сброс конкретного поля к значению по умолчанию.
 
@@ -14,7 +17,7 @@ const loadStore = async (r) => (await r.get(KEY)) || { byCode: {} };
 
 function sanitizeComplications(list) {
   return Array.isArray(list)
-    ? list.map((c) => ({ label: String(c.label || "").trim(), add: Number(c.add) || 0, addMinutes: Number(c.addMinutes) || 0 })).filter((c) => c.label)
+    ? list.map((c) => ({ label: String(c.label || "").trim(), add: Number(c.add) || 0, addMinutes: Number(c.addMinutes) || 0, multiple: !!c.multiple })).filter((c) => c.label)
     : undefined;
 }
 
@@ -45,6 +48,7 @@ export default async function handler(req, res) {
     setOrClear("minutes", body.minutes, (v) => Number(v) || 0);
     setOrClear("complications", body.complications, sanitizeComplications);
     setOrClear("hidden", body.hidden, (v) => !!v);
+    setOrClear("multiple", body.multiple, (v) => !!v);
 
     if (Object.keys(entry).length === 0) delete store.byCode[code];
     else store.byCode[code] = entry;
