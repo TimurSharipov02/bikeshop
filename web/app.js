@@ -420,8 +420,6 @@ window.addEventListener("hashchange", () => { router(); if (SESSION) syncFromSer
 const ICON_SVG = (inner) =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
 const ICONS = {
-  newOrder: ICON_SVG('<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1"/><path d="M12 11v6M9 14h6"/>'),
-  orders: ICON_SVG('<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1"/><path d="M9 11h6M9 15h6"/>'),
   prices: ICON_SVG('<path d="M12.6 3H6a2 2 0 0 0-2 2v6.6a2 2 0 0 0 .6 1.4l8.4 8.4a2 2 0 0 0 2.8 0l5.6-5.6a2 2 0 0 0 0-2.8L13 3.6a2 2 0 0 0-1.4-.6Z"/><circle cx="8.5" cy="8.5" r="1.3"/>'),
   admin: ICON_SVG('<path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6l7-3Z"/>'),
   profile: ICON_SVG('<circle cx="12" cy="9" r="3"/><path d="M6 19c1.2-3 3.6-4.5 6-4.5s4.8 1.5 6 4.5"/>'),
@@ -435,17 +433,42 @@ function homeLink(text, hash, icon) {
     el("span", { style: "flex:1" }, text), el("span", { class: "chev" }, "›"));
 }
 
+// Строка обращения в списке — код, велосипед/клиент, статус. Общая для
+// главного экрана (активные) и полного списка «Обращения».
+function orderRow(o, d) {
+  const bike = d.bikes.find((b) => b.number === o.bikeNumber);
+  const client = d.clients.find((c) => c.phone === o.clientPhone);
+  return el("a", { class: "row", href: `#/orders/${o.number}` },
+    el("span", { class: "code" }, o.number),
+    el("span", { style: "flex:1;min-width:0" }, bike ? bikeLabel(bike) : o.bikeNumber,
+      el("br"), el("span", { class: "small muted" }, client?.name || o.clientPhone),
+      o.status === "в работе"
+        ? el("span", { class: "small muted" }, " · " + (o.occupiedByName ? "занята: " + o.occupiedByName : "свободна"))
+        : null),
+    statusTag(o.status));
+}
+
+// Главный экран сразу показывает активные обращения (всё, кроме выданных) —
+// не нужно лишний раз заходить в «Обращения», чтобы увидеть, что в работе.
+// Кнопка добавления — внизу, всегда на виду и одного размера (как везде в
+// приложении), архив выданных — по ссылке отдельно.
 function viewHome() {
+  const d = loadDB();
+  const active = [...d.orders].reverse().filter((o) => o.status !== "выдан");
   return [
-    el("header", { class: "bar" }, el("h1", {}, "Веломастерская Vella"),
+    el("header", { class: "bar" }, el("h1", {}, "Vella"),
       el("a", { class: "sub", href: "#/profile" }, SESSION?.name || SESSION?.login || "")),
     el("main", { class: "wrap" },
-      el("div", { class: "rows" },
-        homeLink("Новое обращение", "/orders/new", ICONS.newOrder),
-        homeLink("Обращения", "/orders", ICONS.orders)),
+      el("h2", { class: "small muted", style: "margin:0 0 8px;font-weight:600;letter-spacing:.02em" }, "АКТИВНЫЕ ОБРАЩЕНИЯ"),
+      active.length === 0
+        ? el("p", { class: "muted small" }, "Активных обращений нет.")
+        : el("div", { class: "rows" }, active.map((o) => orderRow(o, d))),
+      el("a", { href: "#/orders", class: "small", style: "display:inline-block;margin-top:4px" }, "Все обращения, включая выданные ›"),
       el("p", { class: "muted small", style: "margin-top:16px" },
         (serverOK ? "Данные общие для всех устройств." : "Данные хранятся только в этом браузере.")
           + (BUILD_TIME ? ` · версия от ${BUILD_TIME}` : ""))),
+    el("div", { class: "actions" }, el("div", { class: "actions-inner" },
+      el("button", { class: "btn-primary", onclick: () => go("/orders/new") }, "+ Новое обращение"))),
   ];
 }
 
@@ -488,19 +511,7 @@ function viewOrders() {
       el("a", { href: "#/orders/new", style: "color:inherit" }, "+ новое"))),
     el("main", { class: "wrap" },
       orders.length === 0 ? el("p", { class: "muted" }, "Пока нет обращений.") : null,
-      el("div", { class: "rows" },
-        orders.map((o) => {
-          const bike = d.bikes.find((b) => b.number === o.bikeNumber);
-          const client = d.clients.find((c) => c.phone === o.clientPhone);
-          return el("a", { class: "row", href: `#/orders/${o.number}` },
-            el("span", { class: "code" }, o.number),
-            el("span", {}, bike ? bikeLabel(bike) : o.bikeNumber,
-              el("br"), el("span", { class: "small muted" }, client?.name || o.clientPhone),
-              o.status === "в работе"
-                ? el("span", { class: "small muted" }, " · " + (o.occupiedByName ? "занята: " + o.occupiedByName : "свободна"))
-                : null),
-            statusTag(o.status));
-        }))),
+      el("div", { class: "rows" }, orders.map((o) => orderRow(o, d)))),
   ];
 }
 
@@ -921,12 +932,16 @@ function complicationsEditor(list) {
 function editableItemRow(it, { onRemove, onSave, refresh }) {
   const r = itemRange(it);
   const isEditing = editingItemCode === it.code;
-  const header = el("div", { class: "row", style: "align-items:flex-start;flex-wrap:wrap" },
-    el("span", { style: "flex:1" }, it.name, it.notes ? el("span", { class: "small muted" }, el("br"), it.notes) : null),
-    it.multiple ? qtyStepper(it.qty, (qty) => onSave(it.code, { qty })) : null,
-    el("span", { class: "small muted" }, rangeText(r)),
-    el("button", { style: iconBtnStyle, onclick: () => { editingItemCode = isEditing ? null : it.code; refresh(); } }, "✎"),
-    el("button", { style: iconBtnStyle, onclick: () => { if (confirm(`Убрать «${it.name}» из наряда?`)) onRemove(it.code); } }, "✕"));
+  // Имя — на своей строке (растягивается на всю ширину, переносится
+  // предсказуемо), цена/счётчик количества/действия — строкой ниже, всегда
+  // в одном и том же порядке независимо от длины названия.
+  const header = el("div", { class: "row", style: "align-items:flex-start;flex-direction:column;gap:6px" },
+    el("span", { style: "width:100%" }, it.name, it.notes ? el("span", { class: "small muted" }, el("br"), it.notes) : null),
+    el("div", { style: "display:flex;align-items:center;gap:10px;width:100%" },
+      it.multiple ? qtyStepper(it.qty, (qty) => onSave(it.code, { qty })) : null,
+      el("span", { class: "small muted", style: "flex:1" }, rangeText(r)),
+      el("button", { style: iconBtnStyle, onclick: () => { editingItemCode = isEditing ? null : it.code; refresh(); } }, "✎"),
+      el("button", { style: iconBtnStyle, onclick: () => { if (confirm(`Убрать «${it.name}» из наряда?`)) onRemove(it.code); } }, "✕")));
   if (!isEditing) return header;
 
   const d = {
@@ -1005,21 +1020,27 @@ function assessItem(it, onSet, onParts, onQty) {
 
 function repairItem(it, stock, { onRun, onSave, onQty }) {
   const box = el("div", { class: "assess" });
-  const top = el("div", { style: "display:flex;flex-wrap:wrap;gap:8px;align-items:center" },
-    el("span", { style: "flex:1" }, el("b", {}, it.name),
-      it.done ? el("span", { class: "pill", style: "margin-left:6px" }, "готово") : null),
-    it.multiple ? qtyStepper(it.qty, onQty) : null);
+  // Имя всегда на своей строке (любой длины, без конкуренции с кнопками), а
+  // кнопки — отдельной строкой через .btn-row, чтобы они всегда были
+  // одинакового размера и в одном порядке, независимо от длины названия.
+  const nameRow = el("div", { style: "display:flex;align-items:center;gap:8px" },
+    el("b", { style: "flex:1;min-width:0" }, it.name),
+    it.done ? el("span", { class: "pill" }, "готово") : null);
+  const controls = el("div", { style: "display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px" });
+  if (it.multiple) controls.append(qtyStepper(it.qty, onQty));
+  const btnRow = el("div", { class: "btn-row", style: "flex:1;min-width:180px" });
   const form = el("div", { style: "margin-top:8px;display:none" });
   let open = false;
   const toggle = () => { open = !open; form.style.display = open ? "block" : "none"; };
   if (!it.done) {
-    top.append(
+    btnRow.append(
       el("button", { onclick: onRun }, "по шагам"),
       el("button", { class: "btn-primary", onclick: toggle }, "отметить"));
   } else {
-    top.append(el("button", { onclick: toggle }, "изменить"));
+    btnRow.append(el("button", { onclick: toggle }, "изменить"));
   }
-  box.append(top);
+  controls.append(btnRow);
+  box.append(nameRow, controls);
   if (it.notes) box.append(el("p", { class: "small muted" }, it.notes));
   {
     const diffs = JSON.parse(JSON.stringify(it.difficulties || []));
