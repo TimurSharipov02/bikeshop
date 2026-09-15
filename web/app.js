@@ -208,7 +208,6 @@ function effectivePrice(code) {
   if (!ov) return base;
   return {
     work: ov.price ?? base.work,
-    spread: ov.spread ?? base.spread,
     minutes: ov.minutes ?? base.minutes,
     difficulties: ov.complications ?? base.difficulties,
   };
@@ -225,12 +224,21 @@ const nextBikeKey = (d, phone) => `${phone}#${d.bikes.filter((b) => b.ownerPhone
 
 function itemRange(it) {
   const base = (it.workPrice || 0) + (it.partsPrice || 0);
-  let min = base, max = base + (it.spread || 0);
+  let min = base, max = base;
   for (const d of it.difficulties || []) {
     if (d.state === "yes") { min += d.add; max += d.add; }
     else if (d.state === "unknown") max += d.add;
   }
   return { min, max };
+}
+// Ориентировочное время работы с учётом отмеченных трудностей (будет/неизвестно
+// тоже добавляют время, как и цену — на «неизвестно» берём время по максимуму).
+function itemMinutes(it) {
+  let m = it.estimateMinutes || 0;
+  for (const d of it.difficulties || []) {
+    if (d.state === "yes" || d.state === "unknown") m += d.addMinutes || 0;
+  }
+  return m;
 }
 const orderRange = (o) =>
   o.items.filter((i) => i.agreed).reduce(
@@ -242,7 +250,7 @@ const orderRangeAll = (o) =>
 const rangeText = (r) => (r.min === r.max ? money(r.min) : `${money(r.min)} – ${money(r.max)}`);
 // Ориентировочное время — не для мастера в интерфейсе наравне с ценой, а тихой строкой для клиента.
 const orderMinutes = (o, onlyAgreed) =>
-  o.items.filter((i) => !onlyAgreed || i.agreed).reduce((s, it) => s + (it.estimateMinutes || 0), 0);
+  o.items.filter((i) => !onlyAgreed || i.agreed).reduce((s, it) => s + itemMinutes(it), 0);
 function minutesText(m) {
   if (!m) return null;
   const h = Math.floor(m / 60), mm = m % 60;
@@ -252,7 +260,7 @@ function minutesText(m) {
 function codeRange(code) {
   const p = priceOf(code);
   const base = p.work || 0;
-  const max = base + (p.spread || 0) + (p.difficulties || []).reduce((s, d) => s + (d.add || 0), 0);
+  const max = base + (p.difficulties || []).reduce((s, d) => s + (d.add || 0), 0);
   return { min: base, max };
 }
 // То же для неисправности, заведённой админом вручную (цена лежит в ней самой).
@@ -269,9 +277,8 @@ function makeItem(code, notes = "") {
     code, name: OVERRIDES[code]?.name || (proc ? proc.name : code), agreed: false, done: false, parts: [], notes,
     workPrice: price.work || 0,
     estimateMinutes: price.minutes || 0,
-    spread: price.spread || 0,
     partsPrice: 0,
-    difficulties: (price.difficulties || []).map((d) => ({ label: d.label, add: d.add, state: "unknown" })),
+    difficulties: (price.difficulties || []).map((d) => ({ label: d.label, add: d.add, addMinutes: d.addMinutes || 0, state: "unknown" })),
   };
 }
 
@@ -282,9 +289,8 @@ function makeCustomItem(fa, notes = "") {
     code: fa.code, name: fa.label, agreed: false, done: false, parts: [], notes,
     workPrice: fa.price || 0,
     estimateMinutes: fa.minutes || 0,
-    spread: 0,
     partsPrice: 0,
-    difficulties: (fa.complications || []).map((c) => ({ label: c.label, add: c.add, state: "unknown" })),
+    difficulties: (fa.complications || []).map((c) => ({ label: c.label, add: c.add, addMinutes: c.addMinutes || 0, state: "unknown" })),
   };
 }
 
@@ -901,6 +907,27 @@ function itemRow(it, showFacts) {
 
 const iconBtnStyle = "border:0;background:none;color:var(--muted);cursor:pointer;padding:0 2px;min-height:auto;font:inherit";
 
+// Редактор списка усложнений (название + надбавка к цене + надбавка к времени) —
+// общий для форм правки работы каталога, своей неисправности и позиции наряда.
+// Мутирует list на месте, box перерисовывается сам.
+function complicationsEditor(list) {
+  const box = el("div", {});
+  const draw = () => {
+    box.replaceChildren(
+      ...list.map((c, ci) => el("div", { style: "display:flex;gap:6px;align-items:center;margin-top:4px" },
+        el("input", { placeholder: "усложнение", value: c.label, style: "flex:1", oninput: (e) => (c.label = e.target.value) }),
+        el("input", { type: "number", value: c.add, style: "width:64px;text-align:right", oninput: (e) => (c.add = +e.target.value || 0) }),
+        el("span", { class: "muted small" }, "₽"),
+        el("input", { type: "number", value: c.addMinutes || 0, style: "width:56px;text-align:right", oninput: (e) => (c.addMinutes = +e.target.value || 0) }),
+        el("span", { class: "muted small" }, "мин"),
+        el("button", { style: iconBtnStyle, onclick: () => { list.splice(ci, 1); draw(); } }, "✕"))),
+      el("button", { style: "margin-top:4px", onclick: () => { list.push({ label: "", add: 0, addMinutes: 0 }); draw(); } }, "+ усложнение"),
+    );
+  };
+  draw();
+  return box;
+}
+
 // Строка работы в наряде на стадии «приём» — можно убрать (✕) или изменить
 // название/цену/время/усложнения (✎), не выходя из наряда.
 function editableItemRow(it, { onRemove, onSave, refresh }) {
@@ -917,18 +944,7 @@ function editableItemRow(it, { onRemove, onSave, refresh }) {
     name: it.name, workPrice: it.workPrice || 0, estimateMinutes: it.estimateMinutes || 0, notes: it.notes || "",
     difficulties: JSON.parse(JSON.stringify(it.difficulties || [])),
   };
-  const compsBox = el("div", {});
-  const drawComps = () => {
-    compsBox.replaceChildren(
-      ...d.difficulties.map((c, ci) => el("div", { style: "display:flex;gap:6px;align-items:center;margin-top:4px" },
-        el("input", { placeholder: "усложнение", value: c.label, style: "flex:1", oninput: (e) => (c.label = e.target.value) }),
-        el("input", { type: "number", value: c.add, style: "width:70px;text-align:right", oninput: (e) => (c.add = +e.target.value || 0) }),
-        el("span", { class: "muted small" }, "₽"),
-        el("button", { style: iconBtnStyle, onclick: () => { d.difficulties.splice(ci, 1); drawComps(); } }, "✕"))),
-      el("button", { style: "margin-top:4px", onclick: () => { d.difficulties.push({ label: "", add: 0, state: "unknown" }); drawComps(); } }, "+ усложнение"),
-    );
-  };
-  drawComps();
+  const compsBox = complicationsEditor(d.difficulties);
   const form = el("div", { class: "card", style: "background:var(--bg);margin-top:8px" },
     el("label", {}, "Название"),
     el("input", { value: d.name, oninput: (e) => (d.name = e.target.value) }),
@@ -971,7 +987,7 @@ function difficultyList(difficulties, onSet) {
   const box = el("div", {});
   (difficulties || []).forEach((d, di) => {
     box.append(el("div", { style: "margin-top:8px" },
-      el("div", { class: "small" }, d.label, " ", el("span", { class: "muted" }, `(+${money(d.add)})`)),
+      el("div", { class: "small" }, d.label, " ", el("span", { class: "muted" }, `(+${money(d.add)}${d.addMinutes ? `, +${d.addMinutes} мин` : ""})`)),
       el("div", { class: "tri", style: "margin-top:4px" },
         el("button", { class: d.state === "yes" ? "sel-yes" : "", onclick: () => onSet(di, "yes") }, "будет"),
         el("button", { class: d.state === "no" ? "sel-no" : "", onclick: () => onSet(di, "no") }, "не будет"),
@@ -1256,35 +1272,23 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
     const eff = hasPrice ? priceOf(f.code) : {};
     const draftOv = {
       name: OVERRIDES[f.overrideKey]?.name || f.label,
-      price: eff.work || 0, spread: eff.spread || 0, minutes: eff.minutes || 0,
+      price: eff.work || 0, minutes: eff.minutes || 0,
       complications: JSON.parse(JSON.stringify(eff.difficulties || [])),
     };
-    const compsBox = el("div", {});
-    const drawComps = () => {
-      compsBox.replaceChildren(
-        ...draftOv.complications.map((c, ci) => el("div", { style: "display:flex;gap:6px;align-items:center;margin-top:4px" },
-          el("input", { placeholder: "усложнение", value: c.label, style: "flex:1", oninput: (e) => (c.label = e.target.value) }),
-          el("input", { type: "number", value: c.add, style: "width:70px;text-align:right", oninput: (e) => (c.add = +e.target.value || 0) }),
-          el("span", { class: "muted small" }, "₽"),
-          el("button", { onclick: () => { draftOv.complications.splice(ci, 1); drawComps(); } }, "✕"))),
-        el("button", { style: "margin-top:4px", onclick: () => { draftOv.complications.push({ label: "", add: 0 }); drawComps(); } }, "+ усложнение"),
-      );
-    };
-    if (hasPrice) drawComps();
+    const compsBox = hasPrice ? complicationsEditor(draftOv.complications) : null;
     return el("div", { class: "card", style: "background:var(--bg);margin-top:8px" },
       el("label", {}, "Название"),
       el("input", { value: draftOv.name, oninput: (e) => (draftOv.name = e.target.value) }),
       !hasPrice ? el("p", { class: "small muted", style: "margin-top:6px" }, "Без кода операции — цена определяется на разборке, тут доступно только название.") : null,
       hasPrice ? el("div", { style: "display:flex;gap:8px;margin-top:8px" },
         el("div", { style: "flex:1" }, el("label", {}, "Цена, ₽"), el("input", { type: "number", value: draftOv.price, oninput: (e) => (draftOv.price = +e.target.value || 0) })),
-        el("div", { style: "flex:1" }, el("label", {}, "Разброс (± в максимум)"), el("input", { type: "number", value: draftOv.spread, oninput: (e) => (draftOv.spread = +e.target.value || 0) })),
         el("div", { style: "flex:1" }, el("label", {}, "Минуты"), el("input", { type: "number", value: draftOv.minutes, oninput: (e) => (draftOv.minutes = +e.target.value || 0) }))) : null,
-      hasPrice ? el("label", { style: "margin-top:8px" }, "Усложнения (надбавка к цене)") : null,
+      hasPrice ? el("label", { style: "margin-top:8px" }, "Усложнения (надбавка к цене и времени)") : null,
       hasPrice ? compsBox : null,
       el("div", { class: "btn-row", style: "margin-top:10px" },
         el("button", { class: "btn-primary", onclick: async () => {
           const patch = { code: f.overrideKey, name: draftOv.name.trim() || null };
-          if (hasPrice) Object.assign(patch, { price: draftOv.price, spread: draftOv.spread || null, minutes: draftOv.minutes || null, complications: draftOv.complications });
+          if (hasPrice) Object.assign(patch, { price: draftOv.price, minutes: draftOv.minutes || null, complications: draftOv.complications });
           const ok = await overridesApi("PUT", patch);
           if (ok) onClose();
         } }, "Сохранить"),
@@ -1295,25 +1299,14 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
   // время и усложнения задаются сразу тут же, без .proc-процедуры.
   function customFaultForm(blockId) {
     const draftFa = { label: "", price: 0, minutes: 0, complications: [] };
-    const compsBox = el("div", {});
-    const drawComps = () => {
-      compsBox.replaceChildren(
-        ...draftFa.complications.map((c, ci) => el("div", { style: "display:flex;gap:6px;align-items:center;margin-top:4px" },
-          el("input", { placeholder: "усложнение", value: c.label, style: "flex:1", oninput: (e) => (c.label = e.target.value) }),
-          el("input", { type: "number", value: c.add, style: "width:70px;text-align:right", oninput: (e) => (c.add = +e.target.value || 0) }),
-          el("span", { class: "muted small" }, "₽"),
-          el("button", { onclick: () => { draftFa.complications.splice(ci, 1); drawComps(); } }, "✕"))),
-        el("button", { style: "margin-top:4px", onclick: () => { draftFa.complications.push({ label: "", add: 0 }); drawComps(); } }, "+ усложнение"),
-      );
-    };
-    drawComps();
+    const compsBox = complicationsEditor(draftFa.complications);
     return el("div", { class: "card", style: "background:var(--bg);margin-top:8px" },
       el("label", {}, "Название неисправности"),
       el("input", { placeholder: "напр. Восьмёрка", oninput: (e) => (draftFa.label = e.target.value) }),
       el("div", { style: "display:flex;gap:8px;margin-top:8px" },
         el("div", { style: "flex:1" }, el("label", {}, "Цена, ₽"), el("input", { type: "number", oninput: (e) => (draftFa.price = +e.target.value || 0) })),
         el("div", { style: "flex:1" }, el("label", {}, "Минуты"), el("input", { type: "number", oninput: (e) => (draftFa.minutes = +e.target.value || 0) }))),
-      el("label", { style: "margin-top:8px" }, "Усложнения (надбавка к цене, необязательно)"),
+      el("label", { style: "margin-top:8px" }, "Усложнения (надбавка к цене и времени, необязательно)"),
       compsBox,
       el("div", { class: "btn-row", style: "margin-top:10px" },
         el("button", { class: "btn-primary", onclick: async () => {
@@ -1335,25 +1328,14 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
   // хранится в catalog/repairs) — то же самое, что и при создании, но PUT.
   function customFaultEditForm(f, onClose) {
     const draftFa = { label: f.label, price: f.price || 0, minutes: f.minutes || 0, complications: JSON.parse(JSON.stringify(f.complications || [])) };
-    const compsBox = el("div", {});
-    const drawComps = () => {
-      compsBox.replaceChildren(
-        ...draftFa.complications.map((c, ci) => el("div", { style: "display:flex;gap:6px;align-items:center;margin-top:4px" },
-          el("input", { placeholder: "усложнение", value: c.label, style: "flex:1", oninput: (e) => (c.label = e.target.value) }),
-          el("input", { type: "number", value: c.add, style: "width:70px;text-align:right", oninput: (e) => (c.add = +e.target.value || 0) }),
-          el("span", { class: "muted small" }, "₽"),
-          el("button", { onclick: () => { draftFa.complications.splice(ci, 1); drawComps(); } }, "✕"))),
-        el("button", { style: "margin-top:4px", onclick: () => { draftFa.complications.push({ label: "", add: 0 }); drawComps(); } }, "+ усложнение"),
-      );
-    };
-    drawComps();
+    const compsBox = complicationsEditor(draftFa.complications);
     return el("div", { class: "card", style: "background:var(--bg);margin-top:8px" },
       el("label", {}, "Название неисправности"),
       el("input", { value: draftFa.label, oninput: (e) => (draftFa.label = e.target.value) }),
       el("div", { style: "display:flex;gap:8px;margin-top:8px" },
         el("div", { style: "flex:1" }, el("label", {}, "Цена, ₽"), el("input", { type: "number", value: draftFa.price, oninput: (e) => (draftFa.price = +e.target.value || 0) })),
         el("div", { style: "flex:1" }, el("label", {}, "Минуты"), el("input", { type: "number", value: draftFa.minutes, oninput: (e) => (draftFa.minutes = +e.target.value || 0) }))),
-      el("label", { style: "margin-top:8px" }, "Усложнения (надбавка к цене, необязательно)"),
+      el("label", { style: "margin-top:8px" }, "Усложнения (надбавка к цене и времени, необязательно)"),
       compsBox,
       el("div", { class: "btn-row", style: "margin-top:10px" },
         el("button", { class: "btn-primary", onclick: async () => {
@@ -1661,7 +1643,6 @@ function overridesScreen(byCode, error) {
     if (ov.hidden) bits.push("скрыта");
     if (ov.name) bits.push(`название: «${ov.name}»`);
     if (ov.price != null) bits.push(`цена: ${money(ov.price)}`);
-    if (ov.spread != null) bits.push(`разброс: ${money(ov.spread)}`);
     if (ov.minutes != null) bits.push(`время: ${ov.minutes} мин`);
     if (ov.complications?.length) bits.push(`усложнений: ${ov.complications.length}`);
     return el("div", { class: "card" },

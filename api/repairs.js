@@ -10,7 +10,7 @@ const KEY = "vella:repairs";
 const loadStore = async (r) => (await r.get(KEY)) || { items: [] };
 const sanitizeComplications = (list) =>
   Array.isArray(list)
-    ? list.map((c) => ({ label: String(c.label || "").trim(), add: Number(c.add) || 0 })).filter((c) => c.label)
+    ? list.map((c) => ({ label: String(c.label || "").trim(), add: Number(c.add) || 0, addMinutes: Number(c.addMinutes) || 0 })).filter((c) => c.label)
     : [];
 
 export default async function handler(req, res) {

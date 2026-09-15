@@ -3,7 +3,7 @@
 // скрыть работу, не трогая код. Хранится одним документом в Upstash Redis,
 // общее для всех пользователей, живёт поверх статического каталога.
 //
-// byCode: { "WHL-05": { name?, price?, spread?, minutes?, complications?, hidden? } }
+// byCode: { "WHL-05": { name?, price?, minutes?, complications?, hidden? } }
 // Присутствует только то, что реально переопределено; null-поле в PUT —
 // сброс конкретного поля к значению по умолчанию.
 
@@ -14,7 +14,7 @@ const loadStore = async (r) => (await r.get(KEY)) || { byCode: {} };
 
 function sanitizeComplications(list) {
   return Array.isArray(list)
-    ? list.map((c) => ({ label: String(c.label || "").trim(), add: Number(c.add) || 0 })).filter((c) => c.label)
+    ? list.map((c) => ({ label: String(c.label || "").trim(), add: Number(c.add) || 0, addMinutes: Number(c.addMinutes) || 0 })).filter((c) => c.label)
     : undefined;
 }
 
@@ -42,7 +42,6 @@ export default async function handler(req, res) {
     };
     setOrClear("name", body.name, (v) => String(v).trim());
     setOrClear("price", body.price, (v) => Number(v) || 0);
-    setOrClear("spread", body.spread, (v) => Number(v) || 0);
     setOrClear("minutes", body.minutes, (v) => Number(v) || 0);
     setOrClear("complications", body.complications, sanitizeComplications);
     setOrClear("hidden", body.hidden, (v) => !!v);
