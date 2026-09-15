@@ -1331,6 +1331,45 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
         el("button", { onclick: () => { addFormOpenFor.delete(blockId); draw(); } }, "Отмена")));
   }
 
+  // Правка своей неисправности (заведённой через «+ своя неисправность»,
+  // хранится в catalog/repairs) — то же самое, что и при создании, но PUT.
+  function customFaultEditForm(f, onClose) {
+    const draftFa = { label: f.label, price: f.price || 0, minutes: f.minutes || 0, complications: JSON.parse(JSON.stringify(f.complications || [])) };
+    const compsBox = el("div", {});
+    const drawComps = () => {
+      compsBox.replaceChildren(
+        ...draftFa.complications.map((c, ci) => el("div", { style: "display:flex;gap:6px;align-items:center;margin-top:4px" },
+          el("input", { placeholder: "усложнение", value: c.label, style: "flex:1", oninput: (e) => (c.label = e.target.value) }),
+          el("input", { type: "number", value: c.add, style: "width:70px;text-align:right", oninput: (e) => (c.add = +e.target.value || 0) }),
+          el("span", { class: "muted small" }, "₽"),
+          el("button", { onclick: () => { draftFa.complications.splice(ci, 1); drawComps(); } }, "✕"))),
+        el("button", { style: "margin-top:4px", onclick: () => { draftFa.complications.push({ label: "", add: 0 }); drawComps(); } }, "+ усложнение"),
+      );
+    };
+    drawComps();
+    return el("div", { class: "card", style: "background:var(--bg);margin-top:8px" },
+      el("label", {}, "Название неисправности"),
+      el("input", { value: draftFa.label, oninput: (e) => (draftFa.label = e.target.value) }),
+      el("div", { style: "display:flex;gap:8px;margin-top:8px" },
+        el("div", { style: "flex:1" }, el("label", {}, "Цена, ₽"), el("input", { type: "number", value: draftFa.price, oninput: (e) => (draftFa.price = +e.target.value || 0) })),
+        el("div", { style: "flex:1" }, el("label", {}, "Минуты"), el("input", { type: "number", value: draftFa.minutes, oninput: (e) => (draftFa.minutes = +e.target.value || 0) }))),
+      el("label", { style: "margin-top:8px" }, "Усложнения (надбавка к цене, необязательно)"),
+      compsBox,
+      el("div", { class: "btn-row", style: "margin-top:10px" },
+        el("button", { class: "btn-primary", onclick: async () => {
+          if (!draftFa.label.trim()) return alert("Укажите название");
+          const r = await fetch("/api/repairs", {
+            method: "PUT", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ id: f.id, label: draftFa.label.trim(), price: draftFa.price, minutes: draftFa.minutes, complications: draftFa.complications }),
+          });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) return alert(j.error || "ошибка");
+          await reloadRepairs();
+          onClose();
+        } }, "Сохранить"),
+        el("button", { onclick: onClose }, "Отмена")));
+  }
+
   function draw() {
     const list = instances();
     const wrap = el("main", { class: "wrap" });
@@ -1374,7 +1413,8 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
         faults.forEach((f, i) => {
           if (!faultVisible(f)) return;
           const isAdmin = SESSION?.role === "admin";
-          const editingThis = !f.custom && editOverrideFor.has(f.overrideKey);
+          const editKey = f.custom ? f.id : f.overrideKey;
+          const editingThis = editOverrideFor.has(editKey);
           fb.append(el("div", {},
             el("div", { style: "display:flex;align-items:center;gap:6px" },
               el("label", { class: "opt", style: "flex:1" },
@@ -1391,10 +1431,10 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
                 el("span", {}, f.label,
                   f.code && !f.custom ? el("span", { class: "pill" }, rangeText(codeRange(f.code))) : null,
                   f.custom ? el("span", { class: "pill" }, rangeText(customFaultRange(f))) : null)),
-              !f.custom && isAdmin
+              isAdmin
                 ? el("button", {
                     style: "border:0;background:none;color:var(--muted);cursor:pointer;padding:0;min-height:auto;font:inherit",
-                    onclick: () => { editingThis ? editOverrideFor.delete(f.overrideKey) : editOverrideFor.add(f.overrideKey); draw(); },
+                    onclick: () => { editingThis ? editOverrideFor.delete(editKey) : editOverrideFor.add(editKey); draw(); },
                   }, "✎")
                 : null,
               isAdmin
@@ -1426,7 +1466,9 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
                     },
                   }, "✕")
                 : null),
-            editingThis ? overrideForm(f, () => { editOverrideFor.delete(f.overrideKey); draw(); }) : null));
+            editingThis
+              ? (f.custom ? customFaultEditForm(f, () => { editOverrideFor.delete(editKey); draw(); }) : overrideForm(f, () => { editOverrideFor.delete(editKey); draw(); }))
+              : null));
         });
         if (SESSION?.role === "admin") {
           fb.append(addFormOpenFor.has(inst.b.id)
