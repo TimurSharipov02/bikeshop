@@ -1210,9 +1210,15 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
     }
     return out;
   };
+  // overrideKey — ключ для переопределения/скрытия: у обычной работы это её
+  // код операции (WHL-05 и т.п.); у неисправности без кода (определяется на
+  // разборке, code:"") — свой синтетический ключ, т.к. code у них у всех
+  // одинаковый ("") и по нему нельзя различить разные пункты списка.
   const blockFaults = (b) => [
-    ...b.sections.flatMap((s) => s.faults.map((f) => ({ ...f, section: s.title, label: (f.code && OVERRIDES[f.code]?.name) || f.label })))
-      .filter((f) => !(f.code && OVERRIDES[f.code]?.hidden)),
+    ...b.sections.flatMap((s) => s.faults.map((f, fi) => {
+      const overrideKey = f.code || `NC-${s.id}-${fi}`;
+      return { ...f, section: s.title, overrideKey, label: OVERRIDES[overrideKey]?.name || f.label };
+    })).filter((f) => !OVERRIDES[f.overrideKey]?.hidden),
     ...repairs.filter((r) => r.group === b.id).map((r) => ({
       label: r.label, code: `CF-${r.id}`, custom: true, id: r.id,
       price: r.price, minutes: r.minutes, complications: r.complications,
@@ -1243,9 +1249,13 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
   // Форма правки встроенной (из каталога) неисправности — переопределяет
   // название/цену/время/усложнения поверх дефолта, хранится на сервере.
   function overrideForm(f, onClose) {
-    const eff = priceOf(f.code);
+    // У неисправности без кода (f.code === "") нет ни цены, ни усложнений —
+    // конкретная операция и её стоимость определяются на разборке; тут можно
+    // только переименовать формулировку.
+    const hasPrice = !!f.code;
+    const eff = hasPrice ? priceOf(f.code) : {};
     const draftOv = {
-      name: OVERRIDES[f.code]?.name || f.label,
+      name: OVERRIDES[f.overrideKey]?.name || f.label,
       price: eff.work || 0, spread: eff.spread || 0, minutes: eff.minutes || 0,
       complications: JSON.parse(JSON.stringify(eff.difficulties || [])),
     };
@@ -1260,22 +1270,22 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
         el("button", { style: "margin-top:4px", onclick: () => { draftOv.complications.push({ label: "", add: 0 }); drawComps(); } }, "+ усложнение"),
       );
     };
-    drawComps();
+    if (hasPrice) drawComps();
     return el("div", { class: "card", style: "background:var(--bg);margin-top:8px" },
       el("label", {}, "Название"),
       el("input", { value: draftOv.name, oninput: (e) => (draftOv.name = e.target.value) }),
-      el("div", { style: "display:flex;gap:8px;margin-top:8px" },
+      !hasPrice ? el("p", { class: "small muted", style: "margin-top:6px" }, "Без кода операции — цена определяется на разборке, тут доступно только название.") : null,
+      hasPrice ? el("div", { style: "display:flex;gap:8px;margin-top:8px" },
         el("div", { style: "flex:1" }, el("label", {}, "Цена, ₽"), el("input", { type: "number", value: draftOv.price, oninput: (e) => (draftOv.price = +e.target.value || 0) })),
         el("div", { style: "flex:1" }, el("label", {}, "Разброс (± в максимум)"), el("input", { type: "number", value: draftOv.spread, oninput: (e) => (draftOv.spread = +e.target.value || 0) })),
-        el("div", { style: "flex:1" }, el("label", {}, "Минуты"), el("input", { type: "number", value: draftOv.minutes, oninput: (e) => (draftOv.minutes = +e.target.value || 0) }))),
-      el("label", { style: "margin-top:8px" }, "Усложнения (надбавка к цене)"),
-      compsBox,
+        el("div", { style: "flex:1" }, el("label", {}, "Минуты"), el("input", { type: "number", value: draftOv.minutes, oninput: (e) => (draftOv.minutes = +e.target.value || 0) }))) : null,
+      hasPrice ? el("label", { style: "margin-top:8px" }, "Усложнения (надбавка к цене)") : null,
+      hasPrice ? compsBox : null,
       el("div", { class: "btn-row", style: "margin-top:10px" },
         el("button", { class: "btn-primary", onclick: async () => {
-          const ok = await overridesApi("PUT", {
-            code: f.code, name: draftOv.name.trim() || null, price: draftOv.price, spread: draftOv.spread || null,
-            minutes: draftOv.minutes || null, complications: draftOv.complications,
-          });
+          const patch = { code: f.overrideKey, name: draftOv.name.trim() || null };
+          if (hasPrice) Object.assign(patch, { price: draftOv.price, spread: draftOv.spread || null, minutes: draftOv.minutes || null, complications: draftOv.complications });
+          const ok = await overridesApi("PUT", patch);
           if (ok) onClose();
         } }, "Сохранить"),
         el("button", { onclick: onClose }, "Отмена")));
@@ -1364,7 +1374,7 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
         faults.forEach((f, i) => {
           if (!faultVisible(f)) return;
           const isAdmin = SESSION?.role === "admin";
-          const editingThis = !f.custom && editOverrideFor.has(f.code);
+          const editingThis = !f.custom && editOverrideFor.has(f.overrideKey);
           fb.append(el("div", {},
             el("div", { style: "display:flex;align-items:center;gap:6px" },
               el("label", { class: "opt", style: "flex:1" },
@@ -1381,35 +1391,42 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
                 el("span", {}, f.label,
                   f.code && !f.custom ? el("span", { class: "pill" }, rangeText(codeRange(f.code))) : null,
                   f.custom ? el("span", { class: "pill" }, rangeText(customFaultRange(f))) : null)),
-              f.code && !f.custom && isAdmin
+              !f.custom && isAdmin
                 ? el("button", {
                     style: "border:0;background:none;color:var(--muted);cursor:pointer;padding:0;min-height:auto;font:inherit",
-                    onclick: () => { editingThis ? editOverrideFor.delete(f.code) : editOverrideFor.add(f.code); draw(); },
+                    onclick: () => { editingThis ? editOverrideFor.delete(f.overrideKey) : editOverrideFor.add(f.overrideKey); draw(); },
                   }, "✎")
                 : null,
-              (f.custom || f.code) && isAdmin
+              isAdmin
                 ? el("button", {
                     style: "border:0;background:none;color:var(--muted);cursor:pointer;padding:0;min-height:auto;font:inherit",
                     onclick: async () => {
                       if (!confirm(`Убрать «${f.label}» из списка совсем?`)) return;
                       const wasChecked = s.faults.has(i);
-                      // Снимаем галочки везде, пока код ещё находится в blockFaults()
-                      // (до скрытия/удаления он там есть, после — уже не найти).
-                      uncheckByCode(f.code);
                       if (f.custom) {
+                        // Реальный уникальный код (CF-id) — может повторяться на обеих
+                        // сторонах, снимаем везде, пока он ещё виден в blockFaults().
+                        uncheckByCode(f.code);
                         await fetch("/api/repairs", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: f.id }) });
                         if (wasChecked) onUncheck(f);
                         await reloadRepairs();
-                      } else {
+                      } else if (f.code) {
+                        uncheckByCode(f.code);
                         const ok = await overridesApi("PUT", { code: f.code, hidden: true });
                         if (!ok) return;
                         if (wasChecked) onUncheck(f);
+                      } else {
+                        // Без кода: overrideKey свой у каждого пункта, а не общий код
+                        // операции — снимаем только эту галочку, не трогая остальные.
+                        s.faults.delete(i);
+                        const ok = await overridesApi("PUT", { code: f.overrideKey, hidden: true });
+                        if (!ok) return;
                       }
                       draw();
                     },
                   }, "✕")
                 : null),
-            editingThis ? overrideForm(f, () => { editOverrideFor.delete(f.code); draw(); }) : null));
+            editingThis ? overrideForm(f, () => { editOverrideFor.delete(f.overrideKey); draw(); }) : null));
         });
         if (SESSION?.role === "admin") {
           fb.append(addFormOpenFor.has(inst.b.id)
