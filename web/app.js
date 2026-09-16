@@ -826,20 +826,51 @@ function viewNewOrder() {
     });
   }
 
+  // Оценка усложнений и согласование — по сути один и тот же экран, что и
+  // «в работе»: список работ, у каждой можно развернуть усложнения (тут ещё
+  // прогноз — будет/не будет/неизвестно) и запчасти в счёт, плюс отметить
+  // согласовано или нет. Единственная разница — тут ещё нет клиента и
+  // велосипеда, так что шапка с ними не показывается.
   function stepAssess() {
+    const openCodes = new Set();
     const redraw = () => render(build(), { keepScroll: true });
     function build() {
       const body = el("div", {});
       if (draft.items.length === 0) body.append(el("p", { class: "muted small" }, "Работ пока нет."));
-      draft.items.forEach((it) => body.append(assessItem(it,
-        (di, st) => { if (it.difficulties?.[di]) it.difficulties[di].state = st; redraw(); },
-        (val) => { it.partsPrice = val; redraw(); },
-        (qty) => { it.qty = qty; redraw(); })));
+      draft.items.forEach((it) => {
+        const isOpen = openCodes.has(it.code);
+        const row = el("div", { class: "assess" });
+        const nameRow = el("div", {
+          style: "display:flex;align-items:center;gap:8px;cursor:pointer",
+          onclick: () => { isOpen ? openCodes.delete(it.code) : openCodes.add(it.code); redraw(); },
+        },
+          el("input", {
+            type: "checkbox", checked: it.agreed, style: "width:20px;height:20px;flex:0 0 auto;padding:0",
+            onclick: (e) => e.stopPropagation(),
+            onchange: (e) => { it.agreed = e.target.checked; redraw(); },
+          }),
+          el("b", { style: "flex:1;min-width:0" }, it.name, it.multiple && (it.qty || 1) > 1 ? el("span", { class: "small muted" }, ` × ${it.qty}`) : null),
+          el("span", { style: `flex:0 0 auto;color:var(--line);font-size:19px;transform:rotate(${isOpen ? "90deg" : "0deg"});transition:transform .15s ease` }, "›"),
+          el("button", {
+            style: iconBtnStyle,
+            onclick: (e) => { e.stopPropagation(); draft.items = draft.items.filter((x) => x.code !== it.code); redraw(); },
+          }, "✕"));
+        row.append(nameRow, el("div", { class: "small muted", style: "margin-top:2px" }, rangeText(itemRange(it))));
+        if (isOpen) {
+          if (it.multiple) row.append(el("div", { style: "margin-top:10px" }, qtyStepper(it.qty, (qty) => { it.qty = qty; redraw(); })));
+          if ((it.difficulties || []).length === 0) row.append(el("p", { class: "small muted", style: "margin-top:8px" }, "Трудностей не ожидается."));
+          else row.append(el("div", { style: "margin-top:8px" }, difficultyList(it.difficulties,
+            (di, st) => { it.difficulties[di].state = st; redraw(); },
+            (di, qty) => { if (it.difficulties[di]) it.difficulties[di].qty = qty; redraw(); })));
+          row.append(el("div", { style: "display:flex;gap:8px;align-items:center;margin-top:10px" },
+            el("span", { class: "small muted", style: "flex:1" }, "Запчасти (детали) в счёт"),
+            el("input", { type: "number", value: it.partsPrice || 0, style: "width:96px;text-align:right",
+              onchange: (e) => { it.partsPrice = +e.target.value || 0; redraw(); } }),
+            el("span", { class: "muted small" }, "₽")));
+        }
+        body.append(row);
+      });
       body.append(
-        el("div", { class: "card", style: "background:var(--bg)" },
-          el("span", { class: "muted small" }, "Итого клиенту"),
-          el("div", { class: "price-range" }, rangeText(orderRangeAll({ items: draft.items }))),
-          minutesText(orderMinutes({ items: draft.items }, false)) ? el("div", { class: "small muted", style: "margin-top:4px" }, minutesText(orderMinutes({ items: draft.items }, false))) : null),
         el("button", { onclick: () => openWorkPicker({
           existingItems: draft.items, bikeKind: null, onBack: redraw,
           onPick: (pick) => {
@@ -847,31 +878,12 @@ function viewNewOrder() {
             redraw();
           },
         }) }, "+ работа"),
-        el("button", { class: "btn-primary", style: "width:100%;margin-top:12px", onclick: () => stepConfirm() }, "Дальше — согласование"));
-      return [bar("Новое обращение", "/"), el("main", { class: "wrap" }, stage("Оценка усложнений и стоимости", body))];
-    }
-    redraw();
-  }
-
-  function stepConfirm() {
-    const redraw = () => render(build(), { keepScroll: true });
-    function build() {
-      const body = el("div", {});
-      if (draft.items.length === 0) body.append(el("p", { class: "muted small" }, "Работ пока нет."));
-      draft.items.forEach((it) => {
-        const r = itemRange(it);
-        body.append(el("label", { class: "opt" },
-          el("input", { type: "checkbox", checked: it.agreed, onchange: (e) => { it.agreed = e.target.checked; redraw(); } }),
-          el("span", { style: "flex:1" }, el("b", {}, it.name), it.multiple && (it.qty || 1) > 1 ? ` × ${it.qty}` : "", el("br"),
-            el("span", { class: "small muted" }, rangeText(r)))));
-      });
-      body.append(
         el("div", { class: "card", style: "background:var(--bg)" },
           el("span", { class: "muted small" }, "Согласовано на"),
           el("div", { class: "price-range" }, rangeText(orderRange({ items: draft.items }))),
           minutesText(orderMinutes({ items: draft.items }, true)) ? el("div", { class: "small muted", style: "margin-top:4px" }, minutesText(orderMinutes({ items: draft.items }, true))) : null),
-        el("button", { class: "btn-primary", style: "width:100%", onclick: () => stepClient() }, "Дальше — данные клиента"));
-      return [bar("Новое обращение", "/"), el("main", { class: "wrap" }, stage("Согласование — что будем делать", body))];
+        el("button", { class: "btn-primary", style: "width:100%;margin-top:12px", onclick: () => stepClient() }, "Дальше — данные клиента"));
+      return [bar("Новое обращение", "/"), el("main", { class: "wrap" }, stage("Оценка усложнений и стоимости", body))];
     }
     redraw();
   }
