@@ -355,6 +355,13 @@ function applyPhoneMask(raw) {
   if (d.length > 8) value += " " + d.slice(8, 10);
   return value;
 }
+// Цифры, уже введённые в поле с applyPhoneMask (сколько бы их ни было —
+// хоть одна) — не путать с phoneDigits(): та по длине гадает, есть ли код
+// страны, что ломается на неполном номере («+7 996» — это код страны и 3
+// цифры, а не 4 цифры номера). Тут код страны всегда есть по построению
+// маски, потому просто отбрасываем первую «7».
+const maskedDigits = (value) => (value || "").replace(/\D/g, "").replace(/^7/, "");
+
 // Привязывает маску к текстовому полю: реформатирует значение по мере ввода
 // и сохраняет позицию курсора относительно уже введённых цифр (не просто
 // прыгает в конец, чтобы можно было спокойно поправить середину номера).
@@ -680,7 +687,7 @@ function viewOrders() {
       el("button", { class: ordersGroupBy === "handed" ? "active" : "", onclick: () => setGroupBy("handed") }, "По дате выдачи"));
   };
   const drawList = () => {
-    const qDigits = phoneDigits(ordersSearch);
+    const qDigits = maskedDigits(ordersSearch);
     let issued = d.orders.filter((o) => o.status === "выдан");
     if (qDigits) issued = issued.filter((o) => phoneDigits(o.clientPhone).includes(qDigits));
     const field = ordersGroupBy === "handed" ? "handedOverAt" : "createdAt";
