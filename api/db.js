@@ -56,6 +56,18 @@ export default async function handler(req, res) {
       await r.set(KEY, merged);
       return res.status(200).json(merged);
     }
+    if (req.method === "DELETE") {
+      // Удаление обращения — отдельно от PUT-слияния выше: слияние всегда
+      // берёт объединение обеих сторон, так что пропавшее в несущей заказ
+      // стороне не удалилось бы на сервере. Тут просто убираем по номеру.
+      const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
+      const number = String(body.number || "").trim();
+      if (!number) return res.status(400).json({ error: "не указан номер обращения" });
+      const current = (await r.get(KEY)) || empty();
+      current.orders = (current.orders || []).filter((o) => o.number !== number);
+      await r.set(KEY, current);
+      return res.status(200).json(current);
+    }
     return res.status(405).json({ error: "method not allowed" });
   } catch (e) {
     return res.status(500).json({ error: String(e && e.message ? e.message : e) });

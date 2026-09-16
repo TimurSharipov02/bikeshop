@@ -183,6 +183,20 @@ function editOrder(number, fn) {
   editDB((d) => { const o = d.orders.find((x) => x.number === number); if (o) fn(o); });
 }
 
+// Удаление обращения — отдельным запросом мимо обычного merge-пуша (см.
+// api/db.js): слияние только объединяет, само по себе стереть запись на
+// сервере не может. При неудаче (офлайн) ничего не трогаем локально, чтобы
+// запись не «ожила» после следующей синхронизации.
+async function deleteOrderApi(number) {
+  try {
+    const r = await fetch("/api/db", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ number }) });
+    if (!r.ok) return false;
+    serverOK = true;
+    adopt(await r.json());
+    return true;
+  } catch { return false; }
+}
+
 // Переопределения работ каталога — правит администратор (общие для всех,
 // хранятся на сервере), см. /api/overrides. Собраны в объект один раз при
 // запуске и обновляются точечно после каждой правки/скрытия.
@@ -433,12 +447,96 @@ function homeLink(text, hash, icon) {
     el("span", { style: "flex:1" }, text), el("span", { class: "chev" }, "›"));
 }
 
+// Свайп влево на строке списка открывает красную кнопку «Удалить» под ней —
+// как в Почте/Напоминаниях. Открыта всегда только одна строка: свайп другой
+// строки или тап вне списка закрывают предыдущую. onDelete — async, должен
+// вернуть false при неудаче (тогда строка возвращается в закрытое состояние
+// и кнопку можно нажать ещё раз).
+let openSwipeClose = null;
+function closeOpenSwipe() { const c = openSwipeClose; openSwipeClose = null; if (c) c(); }
+document.addEventListener("pointerdown", (e) => {
+  if (openSwipeClose && !e.target.closest(".swipe-row")) closeOpenSwipe();
+}, true);
+
+function swipeToDelete(rowNode, onDelete, label = "Удалить") {
+  const ACTION_W = 88;
+  const wrap = el("div", { class: "swipe-row" });
+  const action = el("button", { class: "swipe-action" }, label);
+  rowNode.classList.add("swipe-content");
+  rowNode.setAttribute("draggable", "false"); // иначе браузер начинает нативный drag ссылки вместо свайпа
+  wrap.append(action, rowNode);
+
+  let x = 0, dragging = false, locked = null, moved = false, startX = 0, startY = 0, fromX = 0, pid = null;
+  const apply = (animate) => {
+    rowNode.style.transition = animate ? "transform .22s cubic-bezier(.2,.8,.2,1)" : "none";
+    rowNode.style.transform = x ? `translateX(${x}px)` : "";
+  };
+  const close = (animate = true) => { x = 0; apply(animate); };
+  const openFull = (animate = true) => { x = -ACTION_W; apply(animate); openSwipeClose = close; };
+
+  action.onclick = async (e) => {
+    e.preventDefault(); e.stopPropagation();
+    action.disabled = true; action.textContent = "…";
+    const ok = await onDelete();
+    if (ok === false) { action.disabled = false; action.textContent = label; close(); if (openSwipeClose === close) openSwipeClose = null; }
+  };
+
+  rowNode.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    if (openSwipeClose && openSwipeClose !== close) closeOpenSwipe();
+    dragging = true; locked = null; moved = false; pid = e.pointerId;
+    startX = e.clientX; startY = e.clientY; fromX = x;
+  });
+  rowNode.addEventListener("pointermove", (e) => {
+    if (!dragging || e.pointerId !== pid) return;
+    const ddx = e.clientX - startX, ddy = e.clientY - startY;
+    if (locked === null) {
+      if (Math.abs(ddx) < 6 && Math.abs(ddy) < 6) return;
+      locked = Math.abs(ddx) > Math.abs(ddy) ? "x" : "y";
+      if (locked === "x") rowNode.setPointerCapture(pid);
+    }
+    if (locked !== "x") return;
+    moved = true;
+    x = Math.max(-ACTION_W - 16, Math.min(0, fromX + ddx));
+    apply(false);
+  });
+  const finish = (e) => {
+    if (!dragging || (e && e.pointerId !== pid)) return;
+    dragging = false;
+    if (locked === "x") {
+      if (x < -ACTION_W / 2) openFull();
+      else { close(); if (openSwipeClose === close) openSwipeClose = null; }
+    }
+  };
+  rowNode.addEventListener("pointerup", finish);
+  rowNode.addEventListener("pointercancel", finish);
+  rowNode.addEventListener("click", (e) => {
+    if (moved) { e.preventDefault(); return; }
+    if (x !== 0) { e.preventDefault(); close(); if (openSwipeClose === close) openSwipeClose = null; }
+  });
+
+  return wrap;
+}
+
+// .rows полагается на CSS :last-child, чтобы убрать разделитель у последней
+// строки — когда строки обёрнуты в .swipe-row, эта связь рвётся (последняя
+// .row больше не последний ребёнок .rows). Снимаем разделитель явно.
+function rowsList(nodes) {
+  if (nodes.length) {
+    const last = nodes[nodes.length - 1];
+    const rowEl = last.matches?.(".row") ? last : last.querySelector?.(".row");
+    if (rowEl) rowEl.style.borderBottom = "0";
+  }
+  return el("div", { class: "rows" }, nodes);
+}
+
 // Строка обращения в списке — код, велосипед/клиент, статус. Общая для
-// главного экрана (активные) и полного списка «Обращения».
-function orderRow(o, d) {
+// главного экрана (активные) и полного списка «Обращения». onDelete, если
+// передан, включает свайп-удаление строки.
+function orderRow(o, d, onDelete) {
   const bike = d.bikes.find((b) => b.number === o.bikeNumber);
   const client = d.clients.find((c) => c.phone === o.clientPhone);
-  return el("a", { class: "row", href: `#/orders/${o.number}` },
+  const row = el("a", { class: "row", href: `#/orders/${o.number}` },
     el("span", { class: "code" }, o.number),
     el("span", { style: "flex:1;min-width:0" }, bike ? bikeLabel(bike) : o.bikeNumber,
       el("br"), el("span", { class: "small muted" }, client?.name || o.clientPhone),
@@ -446,6 +544,13 @@ function orderRow(o, d) {
         ? el("span", { class: "small muted" }, " · " + (o.occupiedByName ? "занята: " + o.occupiedByName : "свободна"))
         : null),
     statusTag(o.status));
+  return onDelete ? swipeToDelete(row, () => onDelete(o)) : row;
+}
+
+async function deleteOrderWithAlert(o) {
+  const ok = await deleteOrderApi(o.number);
+  if (!ok) alert("Не удалось удалить — нет соединения. Попробуйте ещё раз, когда будет интернет.");
+  return ok;
 }
 
 // Главный экран сразу показывает активные обращения (всё, кроме выданных) —
@@ -462,7 +567,7 @@ function viewHome() {
       el("h2", { class: "small muted", style: "margin:0 0 8px;font-weight:600;letter-spacing:.02em" }, "АКТИВНЫЕ ОБРАЩЕНИЯ"),
       active.length === 0
         ? el("p", { class: "muted small" }, "Активных обращений нет.")
-        : el("div", { class: "rows" }, active.map((o) => orderRow(o, d))),
+        : rowsList(active.map((o) => orderRow(o, d, deleteOrderWithAlert))),
       el("a", { href: "#/orders", class: "small", style: "display:inline-block;margin-top:4px" }, "Все обращения, включая выданные ›"),
       el("p", { class: "muted small", style: "margin-top:16px" },
         (serverOK ? "Данные общие для всех устройств." : "Данные хранятся только в этом браузере.")
@@ -511,7 +616,7 @@ function viewOrders() {
       el("a", { href: "#/orders/new", style: "color:inherit" }, "+ новое"))),
     el("main", { class: "wrap" },
       orders.length === 0 ? el("p", { class: "muted" }, "Пока нет обращений.") : null,
-      el("div", { class: "rows" }, orders.map((o) => orderRow(o, d)))),
+      rowsList(orders.map((o) => orderRow(o, d, deleteOrderWithAlert)))),
   ];
 }
 
@@ -1033,8 +1138,8 @@ function repairItem(it, stock, { onRun, onSave, onQty }) {
   let open = false;
   const toggle = () => { open = !open; form.style.display = open ? "block" : "none"; };
   if (!it.done) {
+    // «по шагам» временно скрыта — вернёмся к пошаговому раннеру позже.
     btnRow.append(
-      el("button", { onclick: onRun }, "по шагам"),
       el("button", { class: "btn-primary", onclick: toggle }, "отметить"));
   } else {
     btnRow.append(el("button", { onclick: toggle }, "изменить"));
@@ -1224,8 +1329,8 @@ const DIAG_TOGGLES = [
 function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDone, request = "", onRequest, onlyBlocks }) {
   const toggles = { тормоза: "гидравлика", покрышки: "камера", трансмиссия: "механика" };
   let req = request;
-  const states = {}; // instId -> { state, faults:Set<number>, comment }
-  const st = (id) => (states[id] ||= { state: "ok", faults: new Set(), comment: "" });
+  const states = {}; // instId -> { open, faults:Set<number>, comment }
+  const st = (id) => (states[id] ||= { open: false, faults: new Set(), comment: "" });
   let repairs = []; // неисправности, заведённые админом вручную (общие для всех)
   const addFormOpenFor = new Set(); // id блоков, где сейчас открыта форма «+ своя неисправность»
   const editOverrideFor = new Set(); // коды работ каталога, у которых сейчас открыта форма правки
@@ -1383,7 +1488,7 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
 
     wrap.append(el("div", { class: "card" },
       el("h2", {}, "Диагностика"),
-      el("p", { class: "small muted" }, "Все узлы по умолчанию «Норма». Отметь только те, где есть проблема."),
+      el("p", { class: "small muted" }, "Раскрой узел, если с ним есть проблема, и отметь неисправность в списке."),
       ...DIAG_TOGGLES.map((t) => el("div", {},
         el("label", { class: "small muted", style: "margin-top:10px" }, t.label),
         el("div", { class: "segmented" },
@@ -1407,14 +1512,21 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
 
     for (const inst of list) {
       const s = st(inst.id);
-      const card = el("div", { class: "card" },
-        el("h2", {}, inst.label),
-        el("p", { class: "small muted" }, inst.b.prompt),
-        el("div", { class: "tri" },
-          el("button", { class: s.state === "ok" ? "sel-no" : "", onclick: () => { s.state = "ok"; draw(); } }, "Норма"),
-          el("button", { class: s.state === "problem" ? "sel-yes" : "", onclick: () => { s.state = s.state === "problem" ? "ok" : "problem"; draw(); } }, "Проблема")));
+      const count = s.faults.size;
+      const header = el("div", {
+        style: "display:flex;align-items:center;gap:10px;cursor:pointer",
+        onclick: () => { s.open = !s.open; draw(); },
+      },
+        el("div", { style: "flex:1" },
+          el("h2", { style: "margin:0" }, inst.label),
+          el("p", { class: "small muted", style: "margin:2px 0 0" }, inst.b.prompt)),
+        count ? el("span", { class: "pill", style: "background:var(--warn-weak);color:var(--warn)" }, String(count)) : null,
+        el("span", {
+          style: `flex:0 0 auto;color:var(--line);font-size:19px;transform:rotate(${s.open ? "90deg" : "0deg"});transition:transform .15s ease`,
+        }, "›"));
+      const card = el("div", { class: "card" }, header);
 
-      if (s.state === "problem") {
+      if (s.open) {
         const fb = el("div", { style: "margin-top:8px" });
         const faults = blockFaults(inst.b);
         faults.forEach((f, i) => {
@@ -1504,7 +1616,7 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
     const notes = [];
     for (const inst of instances()) {
       const s = st(inst.id);
-      if (s.state !== "problem") continue;
+      if (!s.faults.size && !s.comment.trim()) continue;
       const faults = blockFaults(inst.b);
       const noCode = [...s.faults].map((i) => faults[i]).filter(Boolean).filter(faultVisible).filter((f) => !f.code)
         .map((f) => [f.label, f.note].filter(Boolean).join(" — "));

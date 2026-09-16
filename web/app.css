@@ -62,6 +62,14 @@ a.sub:active { opacity:.5; }
   color:#fff; display:flex; align-items:center; justify-content:center; }
 .row-icon svg { width:17px; height:17px; }
 
+/* Свайп-удаление строки списка (Почта/Напоминания): красная кнопка спрятана
+   под строкой, строка едет по X поверх неё. */
+.swipe-row { position:relative; overflow:hidden; }
+.swipe-content { position:relative; z-index:1; background:var(--card); touch-action:pan-y;
+  -webkit-user-drag:none; user-select:none; -webkit-user-select:none; }
+.swipe-action { position:absolute; top:0; right:0; bottom:0; width:88px; border:0; border-radius:0;
+  min-height:0; padding:0; background:var(--warn); color:#fff; font-size:14px; font-weight:600; cursor:pointer; }
+
 /* статус обращения — цвет для быстрого сканирования списка */
 .tag.tag-new     { background:var(--fill); color:var(--muted); }
 .tag.tag-quote   { background:var(--orange-weak); color:var(--orange); }
@@ -114,7 +122,20 @@ label { display:block; font-size:13px; color:var(--muted); margin:14px 0 5px; fo
 .opt { display:flex; align-items:center; gap:10px; padding:13px; border:.5px solid var(--line); border-radius:var(--radius-sm);
   margin:6px 0; cursor:pointer; background:var(--card); transition:border-color .12s ease, background .12s ease; }
 .opt:has(input:checked) { border-color:var(--accent); background:var(--accent-weak); }
-.opt input { width:22px; height:22px; accent-color:var(--accent); }
+/* Свой чекбокс/радио вместо голого системного — квадрат со скруглением или
+   кружок, заливка акцентом и белая галочка/точка при выборе. */
+.opt input[type="checkbox"], .opt input[type="radio"] {
+  appearance:none; -webkit-appearance:none; margin:0; flex:0 0 auto; width:22px; height:22px;
+  border:1.5px solid var(--line); background:var(--card); display:grid; place-content:center;
+  transition:background .12s ease, border-color .12s ease;
+}
+.opt input[type="checkbox"] { border-radius:6px; }
+.opt input[type="radio"] { border-radius:50%; }
+.opt input[type="checkbox"]:checked, .opt input[type="radio"]:checked { background:var(--accent); border-color:var(--accent); }
+.opt input[type="checkbox"]:checked::after {
+  content:""; width:6px; height:10px; border:solid #fff; border-width:0 2px 2px 0; transform:rotate(45deg) translate(-1px,-1.5px);
+}
+.opt input[type="radio"]:checked::after { content:""; width:8px; height:8px; border-radius:50%; background:#fff; }
 .tri { display:flex; gap:6px; }
 .tri button { flex:1; padding:8px; font-size:13px; min-height:40px; }
 .tri button.sel-yes { background:var(--warn); color:#fff; border-color:var(--warn); }
