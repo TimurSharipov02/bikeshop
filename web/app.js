@@ -109,6 +109,7 @@ let pushTimer = null;
 let dirty = false; // есть локальные правки, ещё не подтверждённые сервером
 let autoOpenDiagsFor = null; // номер только что созданного обращения — сразу открыть диагностику
 let editingItemCode = null; // код работы в наряде, у которой сейчас открыта форма редактирования
+const repairOpenCodes = new Set(); // коды работ в ремонте, у которых сейчас открыта форма факта (было/не было, запчасти)
 let ordersSearch = ""; // архив «Обращения» — поиск по телефону клиента
 let ordersGroupBy = "created"; // архив «Обращения» — группировка: "created" | "handed"
 
@@ -983,6 +984,7 @@ function viewOrder(number) {
   function removeItem(code) {
     removeItemQuiet(code);
     if (editingItemCode === code) editingItemCode = null;
+    repairOpenCodes.delete(code);
     refresh();
   }
   function saveItemEdit(code, patch) {
@@ -1168,6 +1170,7 @@ function viewOrder(number) {
           onSave: (patch) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) Object.assign(x, patch, { done: true }); }); refresh(); },
           onQty: (qty) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) x.qty = qty; }); refresh(); },
           onRemove: removeItem,
+          refresh,
         })));
         body.append(el("button", { onclick: () => openDiagnostics(assessNewWork) }, "+ доп. работа"));
         body.append(el("button", { style: "margin-top:10px", onclick: leaveOrder }, "Выйти и освободить заявку"));
@@ -1390,43 +1393,53 @@ function pendingAgreementCard(order, handlers) {
     ...pending.map((it) => pendingAgreementRow(it, handlers)));
 }
 
-function repairItem(it, stock, { onRun, onSave, onQty, onRemove }) {
-  const box = el("div", { class: "assess" });
-  // Имя всегда на своей строке (любой длины, без конкуренции с кнопками), а
-  // кнопки — отдельной строкой через .btn-row, чтобы они всегда были
-  // одинакового размера и в одном порядке, независимо от длины названия.
-  const nameRow = el("div", { style: "display:flex;align-items:center;gap:8px" },
-    el("b", { style: "flex:1;min-width:0" }, it.name),
-    it.done ? el("span", { class: "pill" }, "готово") : null,
-    onRemove
-      ? el("button", { style: iconBtnStyle, onclick: () => { if (confirm(`Убрать «${it.name}» из наряда?`)) onRemove(it.code); } }, "✕")
-      : null);
-  const controls = el("div", { style: "display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px" });
-  if (it.multiple) controls.append(qtyStepper(it.qty, onQty));
-  // Одна кнопка на два шага: сначала открывает форму («отметить»/«изменить»),
-  // после открытия сама становится сохранением («Готово»/«Сохранить») —
-  // отдельная кнопка внизу формы только дублировала это же действие.
-  const mainBtn = el("button", {});
-  const btnRow = el("div", { class: "btn-row", style: "flex:1;min-width:180px" }, mainBtn);
-  controls.append(btnRow);
-  box.append(nameRow, controls);
-  if (it.notes) box.append(el("p", { class: "small muted" }, it.notes));
-
-  const form = el("div", { style: "margin-top:8px;display:none" });
-  let open = false;
+// Нет отдельной кнопки «отметить/изменить/сохранить» — тап по самой работе
+// открывает/закрывает форму факта, а любое изменение в ней (было/не было,
+// запчасти) сохраняется сразу же, без подтверждения (см. onSave ниже:
+// вызывающий код и так проставляет done:true на каждый вызов).
+function repairItem(it, stock, { onRun, onSave, onQty, onRemove, refresh }) {
+  const isOpen = repairOpenCodes.has(it.code);
   // «неизвестно» — прогнозное состояние (по умолчанию у новой работы), тут
   // такого выбора нет (см. fact:true ниже) — приводим к «не было», иначе
-  // контрол открывается без выбранной кнопки, а при сохранении без клика
-  // работа остаётся с диапазоном цены вместо точной, хотя уже выполнена.
+  // помеченная «готово» работа продолжала бы считаться диапазоном цены,
+  // а не точной суммой.
   const diffs = JSON.parse(JSON.stringify(it.difficulties || [])).map((d) => (d.state === "unknown" ? { ...d, state: "no" } : d));
+  const pickedParts = [...(it.parts || [])];
+  const save = () => onSave({ parts: pickedParts, difficulties: diffs, doneBy: it.doneBy ?? SESSION?.name ?? undefined });
+
+  const box = el("div", { class: "assess" });
+  const nameRow = el("div", {
+    style: "display:flex;align-items:center;gap:8px;cursor:pointer",
+    onclick: () => {
+      if (isOpen) { repairOpenCodes.delete(it.code); refresh(); return; }
+      repairOpenCodes.add(it.code);
+      // Тап и есть «отметить» — форма открывается сразу с проставленным
+      // «готово» (значения по умолчанию — «не было», без запчастей).
+      if (it.done) refresh(); else save();
+    },
+  },
+    el("b", { style: "flex:1;min-width:0" }, it.name),
+    it.done ? el("span", { class: "pill" }, "готово") : null,
+    el("span", { style: `flex:0 0 auto;color:var(--line);font-size:19px;transform:rotate(${isOpen ? "90deg" : "0deg"});transition:transform .15s ease` }, "›"),
+    onRemove
+      ? el("button", {
+          style: iconBtnStyle,
+          onclick: (e) => { e.stopPropagation(); if (confirm(`Убрать «${it.name}» из наряда?`)) onRemove(it.code); },
+        }, "✕")
+      : null);
+  box.append(nameRow);
+  if (it.multiple) box.append(el("div", { style: "margin-top:10px" }, qtyStepper(it.qty, onQty)));
+  if (it.notes) box.append(el("p", { class: "small muted" }, it.notes));
+  if (!isOpen) return box;
+
+  const form = el("div", { style: "margin-top:8px" });
   const diffBox = el("div", {});
   // Тут уже не прогноз, а факт — работа сделана, известно точно, было
   // усложнение или нет. Третий вариант («неизвестно») тут ни к чему.
   const drawDiffs = () => diffBox.replaceChildren(difficultyList(diffs,
-    (di, st) => { diffs[di].state = st; drawDiffs(); },
-    (di, qty) => { diffs[di].qty = qty; drawDiffs(); }, true));
+    (di, st) => { diffs[di].state = st; drawDiffs(); save(); },
+    (di, qty) => { diffs[di].qty = qty; drawDiffs(); save(); }, true));
   drawDiffs();
-  const pickedParts = [...(it.parts || [])];
   const partsChips = el("div", {});
   const drawParts = () => {
     partsChips.replaceChildren(...(pickedParts.length
@@ -1434,7 +1447,7 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove }) {
           pickedParts.map((p, i) => el("span", { class: "pill" }, p, " ",
             el("button", {
               style: "border:0;background:none;color:inherit;cursor:pointer;padding:0;min-height:auto;font:inherit",
-              onclick: () => { pickedParts.splice(i, 1); drawParts(); },
+              onclick: () => { pickedParts.splice(i, 1); drawParts(); save(); },
             }, "✕"))))]
       : []));
   };
@@ -1456,21 +1469,11 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove }) {
           if (!v) return;
           const found = stock.find((s) => (s.sku || s.name) === v);
           const label = found ? found.name : v;
-          if (!pickedParts.includes(label)) { pickedParts.push(label); drawParts(); }
+          if (!pickedParts.includes(label)) { pickedParts.push(label); drawParts(); save(); }
         },
       }, "+ добавить")),
     partsChips);
   box.append(form);
-
-  const updateBtn = () => {
-    mainBtn.className = open ? "btn-ok" : "btn-primary";
-    mainBtn.textContent = open ? (it.done ? "Сохранить" : "Готово") : (it.done ? "изменить" : "отметить");
-  };
-  mainBtn.onclick = () => {
-    if (!open) { open = true; form.style.display = "block"; updateBtn(); return; }
-    onSave({ parts: pickedParts, difficulties: diffs, doneBy: it.doneBy ?? SESSION?.name ?? undefined });
-  };
-  updateBtn();
   return box;
 }
 
