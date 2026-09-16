@@ -70,13 +70,16 @@ const bar = (title, backHash, rightNode) =>
 
 const DB_KEY = "vella.db.v1";
 
-// Статус «в работе» переименован в «принята» (плюс раньше занятость мастером
-// жила отдельным полем occupiedBy поверх статуса «в работе», а не отдельным
-// статусом «взята в работу»). Старые записи приводим к новым статусам при
-// каждой загрузке; исправление уедет на сервер со следующим же пушем (он
-// шлёт всю DB целиком), отдельная разовая миграция не нужна.
+// Переименования статусов («в работе» → «принята»/«взята в работу», «проверка»
+// → «готово к выдаче»). Старые записи приводим к новым статусам при каждой
+// загрузке; исправление уедет на сервер со следующим же пушем (он шлёт всю DB
+// целиком), отдельная разовая миграция не нужна.
 const migrateOrders = (orders) =>
-  (orders || []).map((o) => (o.status === "в работе" ? { ...o, status: o.occupiedBy ? "взята в работу" : "принята" } : o));
+  (orders || []).map((o) => {
+    if (o.status === "в работе") return { ...o, status: o.occupiedBy ? "взята в работу" : "принята" };
+    if (o.status === "проверка") return { ...o, status: "готово к выдаче" };
+    return o;
+  });
 
 const normalizeDB = (d) => ({
   clients: d?.clients || [], bikes: d?.bikes || [], orders: migrateOrders(d?.orders),
@@ -445,7 +448,7 @@ function openWorkPicker({ existingItems, bikeKind, onBack, onPick, customOnly })
 
 const STATUS_TAG_CLASS = {
   "приём": "tag-new", "оценка": "tag-quote", "согласование": "tag-approve",
-  "принята": "tag-new", "взята в работу": "tag-progress", "проверка": "tag-check", "выдан": "tag-done",
+  "принята": "tag-new", "взята в работу": "tag-progress", "готово к выдаче": "tag-check", "выдан": "tag-done",
 };
 const statusTag = (status) => el("span", { class: "tag " + (STATUS_TAG_CLASS[status] || "") }, status);
 
@@ -456,7 +459,7 @@ const statusTag = (status) => el("span", { class: "tag " + (STATUS_TAG_CLASS[sta
 const ORDER_STAGES = [
   { key: "принята", label: "Принята" },
   { key: "взята в работу", label: "В работе" },
-  { key: "проверка", label: "Проверка" },
+  { key: "готово к выдаче", label: "Готово к выдаче" },
   { key: "выдан", label: "Выдано" },
 ];
 function orderProgressBar(status, onJump) {
@@ -1026,13 +1029,11 @@ function viewOrder(number) {
   // чем нужно. Сбрасываем поля, которые эта и более поздние стадии проставляют,
   // чтобы состояние не противоречило статусу, на который вернулись.
   const jumpToStage = (target) => {
-    const label = ORDER_STAGES.find((s) => s.key === target)?.label || target;
-    if (!confirm(`Вернуть обращение на стадию «${label}»?`)) return;
     editOrder(number, (o) => {
       o.status = target;
       if (target === "принята") { o.occupiedBy = null; o.occupiedByName = ""; o.finishedAt = null; o.handedOverAt = null; }
       else if (target === "взята в работу") { o.occupiedBy = SESSION?.id || null; o.occupiedByName = SESSION?.name || ""; o.finishedAt = null; o.handedOverAt = null; }
-      else if (target === "проверка") { o.occupiedBy = null; o.occupiedByName = ""; o.handedOverAt = null; }
+      else if (target === "готово к выдаче") { o.occupiedBy = null; o.occupiedByName = ""; o.handedOverAt = null; }
     });
     render(viewOrder(number));
   };
@@ -1123,13 +1124,13 @@ function viewOrder(number) {
         body.append(el("button", { onclick: () => openPicker((pick) => { addItem(pick); refresh(); }, true) }, "+ доп. работа"));
         body.append(el("button", { style: "margin-top:10px", onclick: leaveOrder }, "Выйти и освободить заявку"));
         const allDone = order.items.filter((i) => i.agreed).length > 0 && order.items.filter((i) => i.agreed).every((i) => i.done);
-        if (allDone) body.append(el("button", { class: "btn-primary", style: "width:100%;margin-top:12px", onclick: () => setStatus("проверка", (o) => { o.finishedAt = new Date().toISOString(); o.occupiedBy = null; o.occupiedByName = ""; }) }, "На проверку"));
+        if (allDone) body.append(el("button", { class: "btn-primary", style: "width:100%;margin-top:12px", onclick: () => setStatus("готово к выдаче", (o) => { o.finishedAt = new Date().toISOString(); o.occupiedBy = null; o.occupiedByName = ""; }) }, "Готово к выдаче"));
       })();
       main.append(stage("Ремонт", body));
     }
   }
 
-  if (order.status === "проверка") {
+  if (order.status === "готово к выдаче") {
     const pendingCard = pendingAgreementCard(order, pendingHandlers);
     if (pendingCard) main.append(pendingCard);
     main.append(stage("Смета для звонка клиенту", itemList(order, true),
@@ -1138,7 +1139,10 @@ function viewOrder(number) {
         el("div", { class: "total" }, rangeText(range)))));
     main.append(stage("Что дальше",
       el("button", { style: "width:100%", onclick: () => jumpToStage("взята в работу") }, "Добавить работу"),
-      el("button", { class: "btn-ok", style: "width:100%;margin-top:10px", onclick: () => setStatus("выдан", (o) => (o.handedOverAt = new Date().toISOString())) }, "Выдать клиенту")));
+      el("button", {
+        class: "btn-ok", style: "width:100%;margin-top:10px",
+        onclick: () => { editOrder(number, (o) => { o.status = "выдан"; o.handedOverAt = new Date().toISOString(); }); go("/"); },
+      }, "Выдать клиенту")));
   }
 
   if (order.status === "выдан") {
