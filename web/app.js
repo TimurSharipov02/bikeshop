@@ -1030,15 +1030,18 @@ function viewOrder(number) {
   // ремонта. Показывается после диагностики из «+ доп. работа», перед
   // возвратом к ремонту — чтобы к звонку клиенту уже была вилка цены.
   function assessNewWork() {
+    // Не полагаемся на замыкание order — пока шла диагностика, фоновая
+    // синхронизация с сервером могла пересобрать DB (adopt), и order тут
+    // рискует смотреть на уже отвязанный снимок. Берём текущий заново.
+    const pendingNow = () => (loadDB().orders.find((o) => o.number === number) || order).items.filter((i) => !i.agreed);
+    // Уточнять нечего — либо диагностика не добавила ничего нового (работа
+    // уже была в наряде), либо у добавленного нет усложнений вовсе. В обоих
+    // случаях экран пустой/бесполезный — сразу возвращаемся к ремонту.
+    if (!pendingNow().some((i) => (i.difficulties || []).length > 0)) { refresh(); return; }
     const redraw = () => render(build(), { keepScroll: true });
     function build() {
-      // Не полагаемся на замыкание order — пока шла диагностика, фоновая
-      // синхронизация с сервером могла пересобрать DB (adopt), и order тут
-      // рискует смотреть на уже отвязанный снимок. Берём текущий заново.
-      const cur = loadDB().orders.find((o) => o.number === number) || order;
-      const pending = cur.items.filter((i) => !i.agreed);
+      const pending = pendingNow();
       const body = el("div", {});
-      if (pending.length === 0) body.append(el("p", { class: "muted small" }, "Новых работ нет."));
       pending.forEach((it) => body.append(assessItem(it,
         (di, st) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x?.difficulties?.[di]) x.difficulties[di].state = st; }); redraw(); },
         (val) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) x.partsPrice = val; }); redraw(); },
