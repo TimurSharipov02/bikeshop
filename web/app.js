@@ -115,6 +115,7 @@ let inSubScreen = false;
 let autoOpenDiagsFor = null; // номер только что созданного обращения — сразу открыть диагностику
 let editingItemCode = null; // код работы в наряде, у которой сейчас открыта форма редактирования
 const repairOpenCodes = new Set(); // коды работ в ремонте, у которых сейчас открыта форма факта (было/не было, запчасти)
+const pendingOpenCodes = new Set(); // коды работ «Ждёт согласования», у которых сейчас развёрнуты усложнения/запчасти
 let ordersSearch = ""; // архив «Обращения» — поиск по телефону клиента
 let ordersGroupBy = "created"; // архив «Обращения» — группировка: "created" | "handed"
 
@@ -1007,8 +1008,13 @@ function viewOrder(number) {
   // находка на повторной диагностике), ждёт явного подтверждения мастером —
   // см. pendingAgreementCard.
   const pendingHandlers = {
-    onAgree: (code) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x) x.agreed = true; }); refresh(); },
-    onRemove: (code) => { editOrder(number, (o) => { o.items = o.items.filter((i) => i.code !== code); }); refresh(); },
+    onAgree: (code) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x) x.agreed = true; }); pendingOpenCodes.delete(code); refresh(); },
+    onRemove: (code) => { editOrder(number, (o) => { o.items = o.items.filter((i) => i.code !== code); }); pendingOpenCodes.delete(code); refresh(); },
+    onSet: (code, di, st) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x?.difficulties?.[di]) x.difficulties[di].state = st; }); refresh(); },
+    onDiffQty: (code, di, qty) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x?.difficulties?.[di]) x.difficulties[di].qty = qty; }); refresh(); },
+    onParts: (code, val) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x) x.partsPrice = val; }); refresh(); },
+    onQty: (code, qty) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x) x.qty = qty; }); refresh(); },
+    refresh,
   };
 
   // -- запуск диагностики / процедуры внутри обращения --
@@ -1017,9 +1023,11 @@ function viewOrder(number) {
       el("button", { class: "back", style: "border:0;background:none", onclick: refresh }, "‹"),
       el("h1", {}, order.number), el("span", { class: "sub" }, code));
   }
-  // afterDone — что показать после диагностики вместо простого возврата
-  // (по умолчанию refresh). Для «+ доп. работа» — экран уточнения усложнений.
-  function openDiagnostics(afterDone) {
+  // Новая работа, добавленная тут (не из исходной сметы), попадает в наряд
+  // как agreed:false — уточнить усложнения/запчасти и согласовать можно
+  // прямо в карточке «Ждёт согласования» на экране ремонта (см.
+  // pendingAgreementRow), отдельный экран после диагностики не нужен.
+  function openDiagnostics() {
     inSubScreen = true;
     const host = el("div", {});
     render([subBar("Диагностика"), host]);
@@ -1030,39 +1038,12 @@ function viewOrder(number) {
       onEditItem: (code, patch) => editItemQuiet(code, patch),
       onDone: (notes) => {
         if (notes.length) editOrder(number, (o) => { o.diagnosticNotes = [...(o.diagnosticNotes || []), ...notes]; });
-        (afterDone || refresh)();
+        refresh();
       },
       request: order.request || "",
       onRequest: (v) => editOrder(number, (o) => (o.request = v)),
       onlyBlocks: bike?.kind === "колесо" ? ["WHL"] : null,
     });
-  }
-  // Экран уточнения усложнений для ещё не согласованных работ — как «Оценка»
-  // при оформлении обращения, только для того, что нашлось уже в процессе
-  // ремонта. Показывается после диагностики из «+ доп. работа», перед
-  // возвратом к ремонту — чтобы к звонку клиенту уже была вилка цены.
-  function assessNewWork() {
-    inSubScreen = true;
-    // Не полагаемся на замыкание order — пока шла диагностика, фоновая
-    // синхронизация с сервером могла пересобрать DB (adopt), и order тут
-    // рискует смотреть на уже отвязанный снимок. Берём текущий заново.
-    const pendingNow = () => (loadDB().orders.find((o) => o.number === number) || order).items.filter((i) => !i.agreed);
-    // Уточнять нечего — либо диагностика не добавила ничего нового (работа
-    // уже была в наряде), либо у добавленного нет усложнений вовсе. В обоих
-    // случаях экран пустой/бесполезный — сразу возвращаемся к ремонту.
-    if (!pendingNow().some((i) => (i.difficulties || []).length > 0)) { refresh(); return; }
-    const redraw = () => render(build(), { keepScroll: true });
-    function build() {
-      const pending = pendingNow();
-      const body = el("div", {});
-      pending.forEach((it) => body.append(assessItem(it,
-        (di, st) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x?.difficulties?.[di]) x.difficulties[di].state = st; }); redraw(); },
-        (val) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) x.partsPrice = val; }); redraw(); },
-        (qty) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) x.qty = qty; }); redraw(); })));
-      body.append(el("button", { class: "btn-primary", style: "width:100%;margin-top:12px", onclick: refresh }, "Готово"));
-      return [subBar("Уточнение усложнений"), el("main", { class: "wrap" }, stage("Новая работа — что по усложнениям", body))];
-    }
-    redraw();
   }
   function openRunner(code) {
     inSubScreen = true;
@@ -1190,7 +1171,7 @@ function viewOrder(number) {
           onRemove: removeItem,
           refresh,
         })));
-        body.append(el("button", { onclick: () => openDiagnostics(assessNewWork) }, "+ доп. работа"));
+        body.append(el("button", { onclick: () => openDiagnostics() }, "+ доп. работа"));
         body.append(el("button", { style: "margin-top:10px", onclick: leaveOrder }, "Выйти и освободить заявку"));
         const allDone = order.items.filter((i) => i.agreed).length > 0 && order.items.filter((i) => i.agreed).every((i) => i.done);
         if (allDone) body.append(el("button", { class: "btn-primary", style: "width:100%;margin-top:12px", onclick: () => setStatus("готово к выдаче", (o) => { o.finishedAt = new Date().toISOString(); o.occupiedBy = null; o.occupiedByName = ""; }) }, "Готово к выдаче"));
@@ -1391,15 +1372,32 @@ function assessItem(it, onSet, onParts, onQty) {
 // (позвонив клиенту). Без этого шага работа просто предлагается молча —
 // то как «+ доп. работа», то как невидимая навсегда, — и тут явный шаг
 // нужен в обоих случаях одинаково.
-function pendingAgreementRow(it, { onAgree, onRemove }) {
+function pendingAgreementRow(it, { onAgree, onRemove, onSet, onDiffQty, onParts, onQty, refresh }) {
+  const isOpen = pendingOpenCodes.has(it.code);
   const r = itemRange(it);
   const box = el("div", { class: "assess" });
-  box.append(
-    el("div", {}, el("b", {}, it.name), it.multiple && (it.qty || 1) > 1 ? ` × ${it.qty}` : "",
-      el("br"), el("span", { class: "small muted" }, rangeText(r))),
-    el("div", { class: "btn-row", style: "margin-top:10px" },
-      el("button", { class: "btn-ok", onclick: () => onAgree(it.code) }, "Согласовано"),
-      el("button", { onclick: () => { if (confirm(`Убрать «${it.name}» из наряда?`)) onRemove(it.code); } }, "Убрать")));
+  const nameRow = el("div", {
+    style: "display:flex;align-items:center;gap:8px;cursor:pointer",
+    onclick: () => { isOpen ? pendingOpenCodes.delete(it.code) : pendingOpenCodes.add(it.code); refresh(); },
+  },
+    el("b", { style: "flex:1;min-width:0" }, it.name, it.multiple && (it.qty || 1) > 1 ? el("span", { class: "small muted" }, ` × ${it.qty}`) : null),
+    el("span", { style: `flex:0 0 auto;color:var(--line);font-size:19px;transform:rotate(${isOpen ? "90deg" : "0deg"});transition:transform .15s ease` }, "›"));
+  box.append(nameRow, el("div", { class: "small muted", style: "margin-top:2px" }, rangeText(r)));
+  if (isOpen) {
+    if (it.multiple) box.append(el("div", { style: "margin-top:10px" }, qtyStepper(it.qty, (qty) => onQty(it.code, qty))));
+    if ((it.difficulties || []).length === 0) box.append(el("p", { class: "small muted", style: "margin-top:8px" }, "Трудностей не ожидается."));
+    else box.append(el("div", { style: "margin-top:8px" }, difficultyList(it.difficulties,
+      (di, st) => onSet(it.code, di, st),
+      (di, qty) => onDiffQty(it.code, di, qty))));
+    box.append(el("div", { style: "display:flex;gap:8px;align-items:center;margin-top:10px" },
+      el("span", { class: "small muted", style: "flex:1" }, "Запчасти (детали) в счёт"),
+      el("input", { type: "number", value: it.partsPrice || 0, style: "width:96px;text-align:right",
+        onchange: (e) => onParts(it.code, +e.target.value || 0) }),
+      el("span", { class: "muted small" }, "₽")));
+  }
+  box.append(el("div", { class: "btn-row", style: "margin-top:10px" },
+    el("button", { class: "btn-ok", onclick: () => onAgree(it.code) }, "Согласовано"),
+    el("button", { onclick: () => { if (confirm(`Убрать «${it.name}» из наряда?`)) onRemove(it.code); } }, "Убрать")));
   return box;
 }
 function pendingAgreementCard(order, handlers) {
@@ -1488,8 +1486,8 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove, refresh }) {
       }, "+ добавить")),
     partsChips,
     it.done
-      ? el("button", { style: "width:100%;margin-top:12px", onclick: () => save({ done: false }) }, "Отменить")
-      : el("button", { class: "btn-ok", style: "width:100%;margin-top:12px", onclick: () => save({ done: true }) }, "Готово"));
+      ? el("button", { style: "width:100%;margin-top:12px", onclick: () => { repairOpenCodes.delete(it.code); save({ done: false }); } }, "Отменить")
+      : el("button", { class: "btn-ok", style: "width:100%;margin-top:12px", onclick: () => { repairOpenCodes.delete(it.code); save({ done: true }); } }, "Готово"));
   box.append(form);
   return box;
 }
