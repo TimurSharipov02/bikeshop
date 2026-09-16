@@ -109,6 +109,11 @@ button:active { transform:scale(.98); opacity:.85; }
   font-size:14px; font-weight:500; border-radius:8px; box-shadow:none; }
 .segmented button.active { background:var(--card); font-weight:600; box-shadow:0 1px 3px rgba(0,0,0,.15); }
 @media (prefers-color-scheme: dark) { .segmented button.active { box-shadow:0 1px 3px rgba(0,0,0,.5); } }
+/* Будет/не будет/неизвестно — цвет держится и на активном сегменте, чтобы
+   состояние читалось с одного взгляда, как раньше у трёх отдельных кнопок. */
+.segmented button.active.sel-yes { background:var(--warn); color:#fff; box-shadow:none; }
+.segmented button.active.sel-no { background:var(--ok); color:#fff; box-shadow:none; }
+.segmented button.active.sel-unknown { background:var(--muted); color:#fff; box-shadow:none; }
 
 .actions { position:fixed; left:0; right:0; bottom:0; background:color-mix(in srgb, var(--card) 85%, transparent);
   -webkit-backdrop-filter:saturate(180%) blur(18px); backdrop-filter:saturate(180%) blur(18px);
@@ -152,7 +157,6 @@ label { display:block; font-size:13px; color:var(--muted); margin:14px 0 5px; fo
   content:""; width:6px; height:10px; border:solid #fff; border-width:0 2px 2px 0; transform:rotate(45deg) translate(-1px,-1.5px);
 }
 .opt input[type="radio"]:checked::after { content:""; width:8px; height:8px; border-radius:50%; background:#fff; }
-.diff-state { width:auto; min-width:140px; padding:8px 10px; font-size:14px; min-height:40px; }
 
 .check-item { padding:10px 0; border-bottom:.5px solid var(--line); }
 .hint-toggle { border:0; background:none; padding:4px 0; color:var(--accent); min-height:auto; }

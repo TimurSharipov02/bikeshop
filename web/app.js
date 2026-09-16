@@ -1298,11 +1298,14 @@ function difficultyList(difficulties, onSet, onQty) {
   (difficulties || []).forEach((d, di) => {
     box.append(el("div", { style: "margin-top:8px" },
       el("div", { class: "small" }, d.label, " ", el("span", { class: "muted" }, `(+${money(d.add)}${d.addMinutes ? `, +${d.addMinutes} мин` : ""})`)),
-      el("div", { style: "display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:4px" },
-        el("select", { class: "diff-state", onchange: (e) => onSet(di, e.target.value) },
-          ...Object.entries(DIFFICULTY_STATE_LABELS).map(([v, lbl]) =>
-            el("option", { value: v, selected: d.state === v }, lbl))),
-        d.multiple && onQty && d.state !== "no" ? qtyStepper(d.qty, (qty) => onQty(di, qty)) : null)));
+      // Свой ряд на всю ширину — сегментед-контрол (тот же паттерн, что и
+      // везде в приложении), один тап сразу меняет состояние, без открытия
+      // выпадающего списка. Счётчик количества — отдельной строкой ниже,
+      // чтобы не тесниться с кнопками.
+      el("div", { class: "segmented", style: "margin-top:4px" },
+        Object.entries(DIFFICULTY_STATE_LABELS).map(([v, lbl]) =>
+          el("button", { class: d.state === v ? `active sel-${v}` : "", onclick: () => onSet(di, v) }, lbl))),
+      d.multiple && onQty && d.state !== "no" ? el("div", { style: "margin-top:6px" }, qtyStepper(d.qty, (qty) => onQty(di, qty))) : null));
   });
   return box;
 }
