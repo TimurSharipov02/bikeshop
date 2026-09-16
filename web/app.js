@@ -107,6 +107,11 @@ let DB = normalizeDB(safeParse(localStorage.getItem(DB_KEY)));
 let serverOK = false;
 let pushTimer = null;
 let dirty = false; // есть локальные правки, ещё не подтверждённые сервером
+// Мы внутри экрана, отрисованного мимо router() (диагностика, «уточнение
+// усложнений», подбор работы, техпроцедура) — хеш при этом не меняется,
+// поэтому фоновый adopt() после debounce-пуша не должен звать router():
+// он бы молча подменил такой экран обычным видом обращения по тому же хешу.
+let inSubScreen = false;
 let autoOpenDiagsFor = null; // номер только что созданного обращения — сразу открыть диагностику
 let editingItemCode = null; // код работы в наряде, у которой сейчас открыта форма редактирования
 const repairOpenCodes = new Set(); // коды работ в ремонте, у которых сейчас открыта форма факта (было/не было, запчасти)
@@ -177,7 +182,7 @@ function adopt(next) {
   const before = JSON.stringify(DB);
   DB = normalizeDB(next);
   writeLocal();
-  if (JSON.stringify(DB) !== before && !location.hash.startsWith("#/orders/new")) router();
+  if (JSON.stringify(DB) !== before && !inSubScreen && !location.hash.startsWith("#/orders/new")) router();
 }
 
 async function syncFromServer() {
@@ -522,6 +527,7 @@ const routes = [
   [/^\/admin\/overrides$/, adminOnly(viewOverrides)],
 ];
 function router() {
+  inSubScreen = false; // хеш-навигация всегда уводит из любого экрана мимо router()
   if (!SESSION) return render(NEEDS_SETUP ? viewSetup() : viewLogin());
   const path = location.hash.replace(/^#/, "") || "/";
   for (const [re, fn] of routes) {
@@ -960,6 +966,11 @@ function viewNewOrder() {
 // ============================================================================
 
 function viewOrder(number) {
+  // Сюда возвращаются и через router() (уже сбросил флаг), и напрямую через
+  // refresh() из под-экранов (диагностика и т.п.) — сбрасываем и тут, иначе
+  // после refresh() флаг остаётся true и фоновые обновления больше никогда
+  // не подхватятся автоматически.
+  inSubScreen = false;
   const d = loadDB();
   const order = d.orders.find((o) => o.number === number);
   if (!order) return [bar(number, "/"), el("main", { class: "wrap" }, el("p", { class: "muted" }, "Не найдено"))];
@@ -1009,6 +1020,7 @@ function viewOrder(number) {
   // afterDone — что показать после диагностики вместо простого возврата
   // (по умолчанию refresh). Для «+ доп. работа» — экран уточнения усложнений.
   function openDiagnostics(afterDone) {
+    inSubScreen = true;
     const host = el("div", {});
     render([subBar("Диагностика"), host]);
     mountDiagnostics(host, {
@@ -1030,6 +1042,7 @@ function viewOrder(number) {
   // ремонта. Показывается после диагностики из «+ доп. работа», перед
   // возвратом к ремонту — чтобы к звонку клиенту уже была вилка цены.
   function assessNewWork() {
+    inSubScreen = true;
     // Не полагаемся на замыкание order — пока шла диагностика, фоновая
     // синхронизация с сервером могла пересобрать DB (adopt), и order тут
     // рискует смотреть на уже отвязанный снимок. Берём текущий заново.
@@ -1052,11 +1065,13 @@ function viewOrder(number) {
     redraw();
   }
   function openRunner(code) {
+    inSubScreen = true;
     const host = el("div", {});
     render([subBar(cat.byCode.get(code)?.name || code), host]);
     mountRunner(host, cat.byCode.get(code), { onDone: refresh });
   }
   function openPicker(onPick) {
+    inSubScreen = true;
     openWorkPicker({ existingItems: order.items, bikeKind: bike?.kind, onBack: refresh, onPick });
   }
 
@@ -1170,7 +1185,7 @@ function viewOrder(number) {
         if (pendingCard) body.append(pendingCard);
         order.items.filter((i) => i.agreed).forEach((it) => body.append(repairItem(it, stock, {
           onRun: () => openRunner(it.code),
-          onSave: (patch) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) Object.assign(x, patch, { done: true }); }); refresh(); },
+          onSave: (patch) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) Object.assign(x, patch); }); refresh(); },
           onQty: (qty) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) x.qty = qty; }); refresh(); },
           onRemove: removeItem,
           refresh,
@@ -1396,10 +1411,12 @@ function pendingAgreementCard(order, handlers) {
     ...pending.map((it) => pendingAgreementRow(it, handlers)));
 }
 
-// Нет отдельной кнопки «отметить/изменить/сохранить» — тап по самой работе
-// открывает/закрывает форму факта, а любое изменение в ней (было/не было,
-// запчасти) сохраняется сразу же, без подтверждения (см. onSave ниже:
-// вызывающий код и так проставляет done:true на каждый вызов).
+// Нет отдельной кнопки «отметить/изменить/сохранить»: тап по названию только
+// открывает/закрывает форму факта (посмотреть/поправить, без побочных
+// эффектов), а статус «готово» — отдельный тап по самому индикатору-«пилюле»,
+// который можно так же снять обратно, если открыли по ошибке или работа
+// оказалась не завершена. Любая правка в форме (было/не было, запчасти)
+// сохраняется сама, без подтверждения, и заодно считается завершением работы.
 function repairItem(it, stock, { onRun, onSave, onQty, onRemove, refresh }) {
   const isOpen = repairOpenCodes.has(it.code);
   // «неизвестно» — прогнозное состояние (по умолчанию у новой работы), тут
@@ -1408,21 +1425,19 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove, refresh }) {
   // а не точной суммой.
   const diffs = JSON.parse(JSON.stringify(it.difficulties || [])).map((d) => (d.state === "unknown" ? { ...d, state: "no" } : d));
   const pickedParts = [...(it.parts || [])];
-  const save = () => onSave({ parts: pickedParts, difficulties: diffs, doneBy: it.doneBy ?? SESSION?.name ?? undefined });
+  const save = () => onSave({ parts: pickedParts, difficulties: diffs, done: true, doneBy: it.doneBy ?? SESSION?.name ?? undefined });
 
   const box = el("div", { class: "assess" });
   const nameRow = el("div", {
     style: "display:flex;align-items:center;gap:8px;cursor:pointer",
-    onclick: () => {
-      if (isOpen) { repairOpenCodes.delete(it.code); refresh(); return; }
-      repairOpenCodes.add(it.code);
-      // Тап и есть «отметить» — форма открывается сразу с проставленным
-      // «готово» (значения по умолчанию — «не было», без запчастей).
-      if (it.done) refresh(); else save();
-    },
+    onclick: () => { isOpen ? repairOpenCodes.delete(it.code) : repairOpenCodes.add(it.code); refresh(); },
   },
     el("b", { style: "flex:1;min-width:0" }, it.name),
-    it.done ? el("span", { class: "pill" }, "готово") : null,
+    el("span", {
+      class: "pill",
+      style: it.done ? "" : "background:var(--fill);color:var(--muted)",
+      onclick: (e) => { e.stopPropagation(); it.done ? onSave({ done: false }) : save(); },
+    }, it.done ? "готово" : "отметить"),
     el("span", { style: `flex:0 0 auto;color:var(--line);font-size:19px;transform:rotate(${isOpen ? "90deg" : "0deg"});transition:transform .15s ease` }, "›"),
     onRemove
       ? el("button", {
@@ -1430,7 +1445,7 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove, refresh }) {
           onclick: (e) => { e.stopPropagation(); if (confirm(`Убрать «${it.name}» из наряда?`)) onRemove(it.code); },
         }, "✕")
       : null);
-  box.append(nameRow);
+  box.append(nameRow, el("div", { class: "small muted", style: "margin-top:2px" }, rangeText(itemRange(it))));
   if (it.multiple) box.append(el("div", { style: "margin-top:10px" }, qtyStepper(it.qty, onQty)));
   if (it.notes) box.append(el("p", { class: "small muted" }, it.notes));
   if (!isOpen) return box;
