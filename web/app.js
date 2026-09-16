@@ -398,17 +398,13 @@ function attachPhoneMask(input, onChange) {
 
 // Список работ для «+ работа»: обычные операции из каталога + неисправности,
 // заведённые админом вручную (catalog/repairs). Общий и для наряда, и для
-// диагностики при оформлении нового обращения. customOnly — только свои
-// неисправности, без полного сгенерированного из .proc каталога (для «+ доп.
-// работа» в уже идущем ремонте: там нужен тот же простой список с ценой,
-// которым пользуются на диагностике, а не поиск по сотням операций).
-async function loadWorkPool(bikeKind, customOnly) {
+// диагностики при оформлении нового обращения.
+async function loadWorkPool(bikeKind) {
   const repairs = await ensureRepairs();
   const custom = repairs.map((r) => ({
     code: `CF-${r.id}`, name: r.label, label: r.label, custom: true, id: r.id, group: r.group,
     price: r.price, minutes: r.minutes, complications: r.complications, multiple: r.multiple,
   }));
-  if (customOnly) return custom;
   return [
     ...billableOps
       .filter((p) => !OVERRIDES[p.code]?.hidden)
@@ -420,7 +416,7 @@ async function loadWorkPool(bikeKind, customOnly) {
 
 // onPick получает объект {code, name, custom, ...} — обычную операцию из
 // каталога или неисправность, заведённую админом вручную.
-function openWorkPicker({ existingItems, bikeKind, onBack, onPick, customOnly }) {
+function openWorkPicker({ existingItems, bikeKind, onBack, onPick }) {
   const header = () => el("header", { class: "bar" },
     el("button", { class: "back", style: "border:0;background:none", onclick: onBack }, "‹"),
     el("h1", {}, "Добавить работу"));
@@ -429,7 +425,7 @@ function openWorkPicker({ existingItems, bikeKind, onBack, onPick, customOnly })
   // (BLOCK_TITLES), «Прочее» последним. У своих неисправностей узел — group
   // (id блока), у обычных операций каталога — по префиксу кода (blockOf).
   const blockTitleOf = (p) => (p.group ? blockTitleById[p.group] || "Прочее" : blockOf(p.code));
-  loadWorkPool(bikeKind, customOnly).then((pool) => {
+  loadWorkPool(bikeKind).then((pool) => {
     const host = el("main", { class: "wrap" });
     const q = el("input", { type: "text", placeholder: "поиск по коду или названию" });
     const listBox = el("div", { style: "margin-top:10px" });
@@ -439,8 +435,7 @@ function openWorkPicker({ existingItems, bikeKind, onBack, onPick, customOnly })
         .filter((p) => !existingItems.some((i) => i.code === p.code))
         .filter((p) => !ql || p.code.toLowerCase().includes(ql) || p.name.toLowerCase().includes(ql));
       if (!rows.length) {
-        listBox.replaceChildren(el("p", { class: "muted small", style: "padding:13px 16px" },
-          customOnly ? "Пока нет своих неисправностей — их заводят на экране диагностики." : "Ничего не найдено."));
+        listBox.replaceChildren(el("p", { class: "muted small", style: "padding:13px 16px" }, "Ничего не найдено."));
         return;
       }
       const groups = groupBy(rows, blockTitleOf);
@@ -1017,8 +1012,8 @@ function viewOrder(number) {
     render([subBar(cat.byCode.get(code)?.name || code), host]);
     mountRunner(host, cat.byCode.get(code), { onDone: refresh });
   }
-  function openPicker(onPick, customOnly) {
-    openWorkPicker({ existingItems: order.items, bikeKind: bike?.kind, onBack: refresh, onPick, customOnly });
+  function openPicker(onPick) {
+    openWorkPicker({ existingItems: order.items, bikeKind: bike?.kind, onBack: refresh, onPick });
   }
 
   const range = orderRange(order);
@@ -1135,7 +1130,7 @@ function viewOrder(number) {
           onQty: (qty) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) x.qty = qty; }); refresh(); },
           onRemove: removeItem,
         })));
-        body.append(el("button", { onclick: () => openPicker((pick) => { addItem(pick); refresh(); }, true) }, "+ доп. работа"));
+        body.append(el("button", { onclick: () => openDiagnostics() }, "+ доп. работа"));
         body.append(el("button", { style: "margin-top:10px", onclick: leaveOrder }, "Выйти и освободить заявку"));
         const allDone = order.items.filter((i) => i.agreed).length > 0 && order.items.filter((i) => i.agreed).every((i) => i.done);
         if (allDone) body.append(el("button", { class: "btn-primary", style: "width:100%;margin-top:12px", onclick: () => setStatus("готово к выдаче", (o) => { o.finishedAt = new Date().toISOString(); o.occupiedBy = null; o.occupiedByName = ""; }) }, "Готово к выдаче"));
@@ -1365,68 +1360,74 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove }) {
       : null);
   const controls = el("div", { style: "display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px" });
   if (it.multiple) controls.append(qtyStepper(it.qty, onQty));
-  const btnRow = el("div", { class: "btn-row", style: "flex:1;min-width:180px" });
-  const form = el("div", { style: "margin-top:8px;display:none" });
-  let open = false;
-  const toggle = () => { open = !open; form.style.display = open ? "block" : "none"; };
-  if (!it.done) {
-    // «по шагам» временно скрыта — вернёмся к пошаговому раннеру позже.
-    btnRow.append(
-      el("button", { class: "btn-primary", onclick: toggle }, "отметить"));
-  } else {
-    btnRow.append(el("button", { onclick: toggle }, "изменить"));
-  }
+  // Одна кнопка на два шага: сначала открывает форму («отметить»/«изменить»),
+  // после открытия сама становится сохранением («Готово»/«Сохранить») —
+  // отдельная кнопка внизу формы только дублировала это же действие.
+  const mainBtn = el("button", {});
+  const btnRow = el("div", { class: "btn-row", style: "flex:1;min-width:180px" }, mainBtn);
   controls.append(btnRow);
   box.append(nameRow, controls);
   if (it.notes) box.append(el("p", { class: "small muted" }, it.notes));
-  {
-    const diffs = JSON.parse(JSON.stringify(it.difficulties || []));
-    const diffBox = el("div", {});
-    const drawDiffs = () => diffBox.replaceChildren(difficultyList(diffs,
-      (di, st) => { diffs[di].state = st; drawDiffs(); },
-      (di, qty) => { diffs[di].qty = qty; drawDiffs(); }));
-    drawDiffs();
-    const pickedParts = [...(it.parts || [])];
-    const partsChips = el("div", {});
-    const drawParts = () => {
-      partsChips.replaceChildren(...(pickedParts.length
-        ? [el("div", { style: "display:flex;flex-wrap:wrap;gap:6px;margin-top:6px" },
-            pickedParts.map((p, i) => el("span", { class: "pill" }, p, " ",
-              el("button", {
-                style: "border:0;background:none;color:inherit;cursor:pointer;padding:0;min-height:auto;font:inherit",
-                onclick: () => { pickedParts.splice(i, 1); drawParts(); },
-              }, "✕"))))]
-        : []));
-    };
-    drawParts();
-    const stockSelect = el("select", { style: "width:auto;flex:1" },
-      el("option", { value: "" }, stock.length ? "— выбрать деталь —" : "остатки пусты"),
-      stock.map((s) => el("option", { value: s.sku || s.name },
-        `${s.name}${s.sku ? " · " + s.sku : ""}${s.qty != null ? ` (${s.qty} ${s.unit || "шт"})` : ""}`)));
-    form.append(
-      diffs.length ? el("label", {}, "Усложнения по факту") : null,
-      diffBox,
-      el("label", {}, "Запчасти"),
-      el("div", { style: "display:flex;gap:8px" },
-        stockSelect,
-        el("button", {
-          style: "flex:0 0 auto",
-          onclick: () => {
-            const v = stockSelect.value;
-            if (!v) return;
-            const found = stock.find((s) => (s.sku || s.name) === v);
-            const label = found ? found.name : v;
-            if (!pickedParts.includes(label)) { pickedParts.push(label); drawParts(); }
-          },
-        }, "+ добавить")),
-      partsChips,
-      el("button", { class: "btn-ok", style: "width:100%;margin-top:10px", onclick: () => onSave({
-        parts: pickedParts,
-        difficulties: diffs,
-        doneBy: it.doneBy ?? SESSION?.name ?? undefined,
-      }) }, it.done ? "Сохранить" : "Готово"));
-    box.append(form);
-  }
+
+  const form = el("div", { style: "margin-top:8px;display:none" });
+  let open = false;
+  const diffs = JSON.parse(JSON.stringify(it.difficulties || []));
+  const diffBox = el("div", {});
+  const drawDiffs = () => diffBox.replaceChildren(difficultyList(diffs,
+    (di, st) => { diffs[di].state = st; drawDiffs(); },
+    (di, qty) => { diffs[di].qty = qty; drawDiffs(); }));
+  drawDiffs();
+  const pickedParts = [...(it.parts || [])];
+  const partsChips = el("div", {});
+  const drawParts = () => {
+    partsChips.replaceChildren(...(pickedParts.length
+      ? [el("div", { style: "display:flex;flex-wrap:wrap;gap:6px;margin-top:6px" },
+          pickedParts.map((p, i) => el("span", { class: "pill" }, p, " ",
+            el("button", {
+              style: "border:0;background:none;color:inherit;cursor:pointer;padding:0;min-height:auto;font:inherit",
+              onclick: () => { pickedParts.splice(i, 1); drawParts(); },
+            }, "✕"))))]
+      : []));
+  };
+  drawParts();
+  const stockSelect = el("select", { style: "width:auto;flex:1" },
+    el("option", { value: "" }, stock.length ? "— выбрать деталь —" : "остатки пусты"),
+    stock.map((s) => el("option", { value: s.sku || s.name },
+      `${s.name}${s.sku ? " · " + s.sku : ""}${s.qty != null ? ` (${s.qty} ${s.unit || "шт"})` : ""}`)));
+  if (diffs.length) form.append(el("label", {}, "Усложнения по факту"));
+  form.append(
+    diffBox,
+    el("label", {}, "Запчасти"),
+    el("div", { style: "display:flex;gap:8px" },
+      stockSelect,
+      el("button", {
+        style: "flex:0 0 auto",
+        onclick: () => {
+          const v = stockSelect.value;
+          if (!v) return;
+          const found = stock.find((s) => (s.sku || s.name) === v);
+          const label = found ? found.name : v;
+          if (!pickedParts.includes(label)) { pickedParts.push(label); drawParts(); }
+        },
+      }, "+ добавить")),
+    partsChips);
+  box.append(form);
+
+  const updateBtn = () => {
+    mainBtn.className = open ? "btn-ok" : "btn-primary";
+    mainBtn.textContent = open ? (it.done ? "Сохранить" : "Готово") : (it.done ? "изменить" : "отметить");
+  };
+  mainBtn.onclick = () => {
+    if (!open) { open = true; form.style.display = "block"; updateBtn(); return; }
+    // Работа считается готовой — по каждому усложнению уже должно быть
+    // известно, было оно или нет, «неизвестно» тут больше не вариант.
+    if (diffs.some((d) => d.state === "unknown")) {
+      alert("По каждому усложнению отметьте «будет» или «не будет» — «неизвестно» не годится для готовой работы.");
+      return;
+    }
+    onSave({ parts: pickedParts, difficulties: diffs, doneBy: it.doneBy ?? SESSION?.name ?? undefined });
+  };
+  updateBtn();
   return box;
 }
 
