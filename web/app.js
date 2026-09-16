@@ -1136,8 +1136,8 @@ function viewOrder(number) {
       el("div", { class: "card", style: "background:var(--bg);margin-top:12px" },
         el("span", { class: "muted small" }, "Итого"),
         el("div", { class: "total" }, rangeText(range)))));
-    main.append(stage("Повторная диагностика",
-      el("button", { class: "btn-primary", style: "width:100%", onclick: () => openDiagnostics() }, "Пройти повторную диагностику"),
+    main.append(stage("Что дальше",
+      el("button", { style: "width:100%", onclick: () => jumpToStage("взята в работу") }, "Добавить работу"),
       el("button", { class: "btn-ok", style: "width:100%;margin-top:10px", onclick: () => setStatus("выдан", (o) => (o.handedOverAt = new Date().toISOString())) }, "Выдать клиенту")));
   }
 
