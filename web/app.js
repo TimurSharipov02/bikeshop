@@ -924,6 +924,13 @@ function viewOrder(number) {
     editingItemCode = null;
     refresh();
   }
+  // Работа, добавленная после исходного согласования (доп. работа в ремонте,
+  // находка на повторной диагностике), ждёт явного подтверждения мастером —
+  // см. pendingAgreementCard.
+  const pendingHandlers = {
+    onAgree: (code) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x) x.agreed = true; }); refresh(); },
+    onRemove: (code) => { editOrder(number, (o) => { o.items = o.items.filter((i) => i.code !== code); }); refresh(); },
+  };
 
   // -- запуск диагностики / процедуры внутри обращения --
   function subBar(code) {
@@ -1050,12 +1057,14 @@ function viewOrder(number) {
       (async () => {
         const stock = await ensureStock();
         body.replaceChildren();
+        const pendingCard = pendingAgreementCard(order, pendingHandlers);
+        if (pendingCard) body.append(pendingCard);
         order.items.filter((i) => i.agreed).forEach((it) => body.append(repairItem(it, stock, {
           onRun: () => openRunner(it.code),
           onSave: (patch) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) Object.assign(x, patch, { done: true }); }); refresh(); },
           onQty: (qty) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) x.qty = qty; }); refresh(); },
         })));
-        body.append(el("button", { onclick: () => openPicker((pick) => { addItem(pick); editOrder(number, (o) => { const x = o.items.find((i) => i.code === pick.code); if (x) x.agreed = true; }); refresh(); }) }, "+ доп. работа"));
+        body.append(el("button", { onclick: () => openPicker((pick) => { addItem(pick); refresh(); }) }, "+ доп. работа"));
         body.append(el("button", { style: "margin-top:10px", onclick: leaveOrder }, "Завершить и выйти — освободить заявку"));
         const allDone = order.items.filter((i) => i.agreed).length > 0 && order.items.filter((i) => i.agreed).every((i) => i.done);
         if (allDone) body.append(el("button", { class: "btn-primary", style: "width:100%;margin-top:12px", onclick: () => setStatus("проверка", (o) => { o.finishedAt = new Date().toISOString(); o.occupiedBy = null; o.occupiedByName = ""; }) }, "На проверку"));
@@ -1065,6 +1074,8 @@ function viewOrder(number) {
   }
 
   if (order.status === "проверка") {
+    const pendingCard = pendingAgreementCard(order, pendingHandlers);
+    if (pendingCard) main.append(pendingCard);
     main.append(stage("Смета для звонка клиенту", itemList(order, true),
       el("div", { class: "card", style: "background:var(--bg);margin-top:12px" },
         el("span", { class: "muted small" }, "Итого"),
@@ -1075,6 +1086,8 @@ function viewOrder(number) {
   }
 
   if (order.status === "выдан") {
+    const pendingCard = pendingAgreementCard(order, pendingHandlers);
+    if (pendingCard) main.append(pendingCard);
     main.append(stage("Выдан", itemList(order, true),
       el("div", { class: "card", style: "background:var(--bg)" },
         el("span", { class: "muted small" }, "Итого"),
@@ -1230,6 +1243,32 @@ function assessItem(it, onSet, onParts, onQty) {
   if ((it.difficulties || []).length === 0) box.append(el("p", { class: "small muted" }, "Трудностей не ожидается."));
   else box.append(difficultyList(it.difficulties, onSet, (di, qty) => { if (it.difficulties[di]) it.difficulties[di].qty = qty; onSet(di, it.difficulties[di].state); }));
   return box;
+}
+
+// Работа, добавленная уже после исходного согласования (доп. работа в
+// ремонте, находка на повторной диагностике) — не считается в «Итого» и
+// не попадает в список ремонта, пока мастер явно не отметит «Согласовано»
+// (позвонив клиенту). Без этого шага работа просто предлагается молча —
+// то как «+ доп. работа», то как невидимая навсегда, — и тут явный шаг
+// нужен в обоих случаях одинаково.
+function pendingAgreementRow(it, { onAgree, onRemove }) {
+  const r = itemRange(it);
+  const box = el("div", { class: "assess" });
+  box.append(
+    el("div", {}, el("b", {}, it.name), it.multiple && (it.qty || 1) > 1 ? ` × ${it.qty}` : "",
+      el("br"), el("span", { class: "small muted" }, rangeText(r))),
+    el("div", { class: "btn-row", style: "margin-top:10px" },
+      el("button", { class: "btn-ok", onclick: () => onAgree(it.code) }, "Согласовано"),
+      el("button", { onclick: () => { if (confirm(`Убрать «${it.name}» из наряда?`)) onRemove(it.code); } }, "Убрать")));
+  return box;
+}
+function pendingAgreementCard(order, handlers) {
+  const pending = order.items.filter((i) => !i.agreed);
+  if (!pending.length) return null;
+  return el("div", { class: "card" },
+    el("h2", {}, "Ждёт согласования"),
+    el("p", { class: "small muted" }, "Добавлено сверх исходной сметы — позвоните клиенту и подтвердите, тогда работа попадёт в наряд и сумму."),
+    ...pending.map((it) => pendingAgreementRow(it, handlers)));
 }
 
 function repairItem(it, stock, { onRun, onSave, onQty }) {
