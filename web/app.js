@@ -1292,16 +1292,16 @@ function itemList(order, showFacts, edit) {
 
 // Список усложнений с выбором будет/не будет/неизвестно — используется и на
 // «Оценке» (прикидка для клиента), и при отметке работы готовой (по факту).
+const DIFFICULTY_STATE_LABELS = { yes: "будет", no: "не будет", unknown: "неизвестно" };
 function difficultyList(difficulties, onSet, onQty) {
   const box = el("div", {});
   (difficulties || []).forEach((d, di) => {
     box.append(el("div", { style: "margin-top:8px" },
       el("div", { class: "small" }, d.label, " ", el("span", { class: "muted" }, `(+${money(d.add)}${d.addMinutes ? `, +${d.addMinutes} мин` : ""})`)),
       el("div", { style: "display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:4px" },
-        el("div", { class: "tri" },
-          el("button", { class: d.state === "yes" ? "sel-yes" : "", onclick: () => onSet(di, "yes") }, "будет"),
-          el("button", { class: d.state === "no" ? "sel-no" : "", onclick: () => onSet(di, "no") }, "не будет"),
-          el("button", { class: d.state === "unknown" ? "sel-unk" : "", onclick: () => onSet(di, "unknown") }, "неизвестно")),
+        el("select", { class: "diff-state", onchange: (e) => onSet(di, e.target.value) },
+          ...Object.entries(DIFFICULTY_STATE_LABELS).map(([v, lbl]) =>
+            el("option", { value: v, selected: d.state === v }, lbl))),
         d.multiple && onQty && d.state !== "no" ? qtyStepper(d.qty, (qty) => onQty(di, qty)) : null)));
   });
   return box;

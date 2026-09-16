@@ -152,11 +152,7 @@ label { display:block; font-size:13px; color:var(--muted); margin:14px 0 5px; fo
   content:""; width:6px; height:10px; border:solid #fff; border-width:0 2px 2px 0; transform:rotate(45deg) translate(-1px,-1.5px);
 }
 .opt input[type="radio"]:checked::after { content:""; width:8px; height:8px; border-radius:50%; background:#fff; }
-.tri { display:flex; gap:6px; }
-.tri button { flex:1; padding:8px; font-size:13px; min-height:40px; }
-.tri button.sel-yes { background:var(--warn); color:#fff; border-color:var(--warn); }
-.tri button.sel-no  { background:var(--ok); color:#fff; border-color:var(--ok); }
-.tri button.sel-unk { background:var(--muted); color:#fff; border-color:var(--muted); }
+.diff-state { width:auto; min-width:140px; padding:8px 10px; font-size:14px; min-height:40px; }
 
 .check-item { padding:10px 0; border-bottom:.5px solid var(--line); }
 .hint-toggle { border:0; background:none; padding:4px 0; color:var(--accent); min-height:auto; }
