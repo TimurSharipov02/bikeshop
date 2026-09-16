@@ -1411,12 +1411,12 @@ function pendingAgreementCard(order, handlers) {
     ...pending.map((it) => pendingAgreementRow(it, handlers)));
 }
 
-// Нет отдельной кнопки «отметить/изменить/сохранить»: тап по названию только
+// Нет отдельной кнопки «отметить/изменить»: тап по названию только
 // открывает/закрывает форму факта (посмотреть/поправить, без побочных
-// эффектов), а статус «готово» — отдельный тап по самому индикатору-«пилюле»,
-// который можно так же снять обратно, если открыли по ошибке или работа
-// оказалась не завершена. Любая правка в форме (было/не было, запчасти)
-// сохраняется сама, без подтверждения, и заодно считается завершением работы.
+// эффектов). Правки в форме (было/не было, запчасти) сохраняются сами, без
+// подтверждения, но на статус «готово» не влияют — им управляет одна кнопка
+// внизу открытой формы: «Готово» либо «Отменить» (если готово поставили по
+// ошибке или работа оказалась не завершена), в обе стороны без ограничений.
 function repairItem(it, stock, { onRun, onSave, onQty, onRemove, refresh }) {
   const isOpen = repairOpenCodes.has(it.code);
   // «неизвестно» — прогнозное состояние (по умолчанию у новой работы), тут
@@ -1425,7 +1425,7 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove, refresh }) {
   // а не точной суммой.
   const diffs = JSON.parse(JSON.stringify(it.difficulties || [])).map((d) => (d.state === "unknown" ? { ...d, state: "no" } : d));
   const pickedParts = [...(it.parts || [])];
-  const save = () => onSave({ parts: pickedParts, difficulties: diffs, done: true, doneBy: it.doneBy ?? SESSION?.name ?? undefined });
+  const save = (extra) => onSave({ parts: pickedParts, difficulties: diffs, doneBy: it.doneBy ?? SESSION?.name ?? undefined, ...extra });
 
   const box = el("div", { class: "assess" });
   const nameRow = el("div", {
@@ -1433,11 +1433,7 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove, refresh }) {
     onclick: () => { isOpen ? repairOpenCodes.delete(it.code) : repairOpenCodes.add(it.code); refresh(); },
   },
     el("b", { style: "flex:1;min-width:0" }, it.name),
-    el("span", {
-      class: "pill",
-      style: it.done ? "" : "background:var(--fill);color:var(--muted)",
-      onclick: (e) => { e.stopPropagation(); it.done ? onSave({ done: false }) : save(); },
-    }, it.done ? "готово" : "отметить"),
+    it.done ? el("span", { class: "pill" }, "готово") : null,
     el("span", { style: `flex:0 0 auto;color:var(--line);font-size:19px;transform:rotate(${isOpen ? "90deg" : "0deg"});transition:transform .15s ease` }, "›"),
     onRemove
       ? el("button", {
@@ -1490,7 +1486,10 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove, refresh }) {
           if (!pickedParts.includes(label)) { pickedParts.push(label); drawParts(); save(); }
         },
       }, "+ добавить")),
-    partsChips);
+    partsChips,
+    it.done
+      ? el("button", { style: "width:100%;margin-top:12px", onclick: () => save({ done: false }) }, "Отменить")
+      : el("button", { class: "btn-ok", style: "width:100%;margin-top:12px", onclick: () => save({ done: true }) }, "Готово"));
   box.append(form);
   return box;
 }
