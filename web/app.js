@@ -81,6 +81,8 @@ let pushTimer = null;
 let dirty = false; // есть локальные правки, ещё не подтверждённые сервером
 let autoOpenDiagsFor = null; // номер только что созданного обращения — сразу открыть диагностику
 let editingItemCode = null; // код работы в наряде, у которой сейчас открыта форма редактирования
+let ordersSearch = ""; // архив «Обращения» — поиск по телефону клиента
+let ordersGroupBy = "created"; // архив «Обращения» — группировка: "created" | "handed"
 
 // ---------------------------- вход и сессия ---------------------------------
 //
@@ -530,10 +532,18 @@ function rowsList(nodes) {
   return el("div", { class: "rows" }, nodes);
 }
 
+function formatDateShort(iso) {
+  return iso ? new Date(iso).toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit", year: "2-digit" }) : null;
+}
+function formatDateGroup(iso) {
+  return iso ? new Date(iso).toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" }) : "Без даты";
+}
+
 // Строка обращения в списке — код, велосипед/клиент, статус. Общая для
-// главного экрана (активные) и полного списка «Обращения». onDelete, если
-// передан, включает свайп-удаление строки.
-function orderRow(o, d, onDelete) {
+// главного экрана (активные) и архива выданных. onDelete, если передан,
+// включает свайп-удаление строки. dateIso, если передан (createdAt или
+// handedOverAt архива), показывается рядом с именем клиента.
+function orderRow(o, d, onDelete, dateIso) {
   const bike = d.bikes.find((b) => b.number === o.bikeNumber);
   const client = d.clients.find((c) => c.phone === o.clientPhone);
   const row = el("a", { class: "row", href: `#/orders/${o.number}` },
@@ -542,7 +552,8 @@ function orderRow(o, d, onDelete) {
       el("br"), el("span", { class: "small muted" }, client?.name || o.clientPhone),
       o.status === "в работе"
         ? el("span", { class: "small muted" }, " · " + (o.occupiedByName ? "занята: " + o.occupiedByName : "свободна"))
-        : null),
+        : null,
+      dateIso ? el("span", { class: "small muted" }, " · " + formatDateShort(dateIso)) : null),
     statusTag(o.status));
   return onDelete ? swipeToDelete(row, () => onDelete(o)) : row;
 }
@@ -568,7 +579,7 @@ function viewHome() {
       active.length === 0
         ? el("p", { class: "muted small" }, "Активных обращений нет.")
         : rowsList(active.map((o) => orderRow(o, d, deleteOrderWithAlert))),
-      el("a", { href: "#/orders", class: "small", style: "display:inline-block;margin-top:4px" }, "Все обращения, включая выданные ›"),
+      el("a", { href: "#/orders", class: "small", style: "display:inline-block;margin-top:4px" }, "Архив выданных обращений ›"),
       el("p", { class: "muted small", style: "margin-top:16px" },
         (serverOK ? "Данные общие для всех устройств." : "Данные хранятся только в этом браузере.")
           + (BUILD_TIME ? ` · версия от ${BUILD_TIME}` : ""))),
@@ -607,16 +618,56 @@ function createDemoOrder() {
   go("/orders/" + number);
 }
 
+// Архив — только выданные (активные уже на главном экране). Поиск по
+// телефону и группировка по дате создания/выдачи живут тут же, с
+// перерисовкой только списка (не всего экрана), чтобы не терять фокус
+// в поле поиска на каждую нажатую клавишу — как в openWorkPicker.
 function viewOrders() {
   const d = loadDB();
-  const orders = [...d.orders]; // от старых к новым — работы по порядку поступления
+  const q = el("input", { type: "tel", placeholder: "Поиск по телефону клиента", value: ordersSearch });
+  const seg = el("div", { class: "segmented", style: "margin-top:10px" });
+  const listBox = el("div", { style: "margin-top:16px" });
+
+  const setGroupBy = (v) => { ordersGroupBy = v; drawSeg(); drawList(); };
+  const drawSeg = () => {
+    seg.replaceChildren(
+      el("button", { class: ordersGroupBy === "created" ? "active" : "", onclick: () => setGroupBy("created") }, "По дате создания"),
+      el("button", { class: ordersGroupBy === "handed" ? "active" : "", onclick: () => setGroupBy("handed") }, "По дате выдачи"));
+  };
+  const drawList = () => {
+    ordersSearch = q.value;
+    const qDigits = ordersSearch.replace(/\D/g, "");
+    let issued = d.orders.filter((o) => o.status === "выдан");
+    if (qDigits) issued = issued.filter((o) => (o.clientPhone || "").replace(/\D/g, "").includes(qDigits));
+    const field = ordersGroupBy === "handed" ? "handedOverAt" : "createdAt";
+    issued = [...issued].sort((a, b) => (b[field] || "").localeCompare(a[field] || ""));
+    const groups = [];
+    for (const o of issued) {
+      const label = formatDateGroup(o[field]);
+      let g = groups[groups.length - 1];
+      if (!g || g.label !== label) { g = { label, list: [] }; groups.push(g); }
+      g.list.push(o);
+    }
+    listBox.replaceChildren(
+      ...[
+        issued.length === 0
+          ? el("p", { class: "muted" }, ordersSearch ? "Ничего не найдено." : "Пока нет выданных обращений.")
+          : null,
+        ...groups.map((g) => el("div", { style: "margin-bottom:16px" },
+          el("p", { class: "small muted", style: "margin:0 0 4px;letter-spacing:.02em" }, g.label.toUpperCase()),
+          rowsList(g.list.map((o) => orderRow(o, d, deleteOrderWithAlert, o[field]))))),
+      ].filter(Boolean),
+    );
+  };
+  q.addEventListener("input", drawList);
+  drawSeg();
+  drawList();
+
   return [
-    bar("Обращения", "/", el("span", { class: "sub", style: "display:flex;gap:14px" },
+    bar("Архив", "/", el("span", { class: "sub", style: "display:flex;gap:14px" },
       el("button", { style: "border:0;background:none;color:inherit;font:inherit;cursor:pointer;padding:0", onclick: createDemoOrder }, "+ демо"),
       el("a", { href: "#/orders/new", style: "color:inherit" }, "+ новое"))),
-    el("main", { class: "wrap" },
-      orders.length === 0 ? el("p", { class: "muted" }, "Пока нет обращений.") : null,
-      rowsList(orders.map((o) => orderRow(o, d, deleteOrderWithAlert)))),
+    el("main", { class: "wrap" }, q, seg, listBox),
   ];
 }
 
@@ -786,7 +837,7 @@ function viewNewOrder() {
 function viewOrder(number) {
   const d = loadDB();
   const order = d.orders.find((o) => o.number === number);
-  if (!order) return [bar(number, "/orders"), el("main", { class: "wrap" }, el("p", { class: "muted" }, "Не найдено"))];
+  if (!order) return [bar(number, "/"), el("main", { class: "wrap" }, el("p", { class: "muted" }, "Не найдено"))];
   const bike = d.bikes.find((b) => b.number === order.bikeNumber);
   const client = d.clients.find((c) => c.phone === order.clientPhone);
   // keepScroll: мелкая правка (чекбокс, будет/не будет/неизвестно, ✎/✕ у работы)
@@ -926,7 +977,7 @@ function viewOrder(number) {
     };
     const leaveOrder = () => {
       editOrder(number, (o) => { o.occupiedBy = null; o.occupiedByName = ""; });
-      go("/orders");
+      go("/");
     };
 
     if (!order.occupiedBy) {
@@ -976,7 +1027,7 @@ function viewOrder(number) {
     autoOpenDiagsFor = null;
     queueMicrotask(openDiagnostics);
   }
-  return [bar(order.number, "/orders", el("span", { class: "sub" }, order.status)), main];
+  return [bar(order.number, order.status === "выдан" ? "/orders" : "/", el("span", { class: "sub" }, order.status)), main];
 }
 
 function stage(title, ...body) { return el("div", { class: "card" }, el("h2", {}, title), ...body); }
