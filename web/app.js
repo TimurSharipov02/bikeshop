@@ -70,8 +70,16 @@ const bar = (title, backHash, rightNode) =>
 
 const DB_KEY = "vella.db.v1";
 
+// Раньше «взята в работу» не было отдельным статусом order.status — занятость
+// мастером жила только в occupiedBy поверх статуса «в работе». Старые записи
+// с такой комбинацией переводим в настоящий статус при каждой загрузке;
+// исправление уедет на сервер со следующим же пушем (он шлёт всю DB целиком),
+// отдельная разовая миграция не нужна.
+const migrateOrders = (orders) =>
+  (orders || []).map((o) => (o.status === "в работе" && o.occupiedBy ? { ...o, status: "взята в работу" } : o));
+
 const normalizeDB = (d) => ({
-  clients: d?.clients || [], bikes: d?.bikes || [], orders: d?.orders || [],
+  clients: d?.clients || [], bikes: d?.bikes || [], orders: migrateOrders(d?.orders),
   counters: { order: 0, bike: 0, ...(d?.counters || {}) },
 });
 
@@ -432,11 +440,6 @@ const STATUS_TAG_CLASS = {
   "в работе": "tag-new", "взята в работу": "tag-progress", "проверка": "tag-check", "выдан": "tag-done",
 };
 const statusTag = (status) => el("span", { class: "tag " + (STATUS_TAG_CLASS[status] || "") }, status);
-// «в работе» в данных — один статус, но занятость мастером внутри него это по
-// сути отдельный шаг, который стоит видеть как статус, а не мелкий подтекст.
-// Само поле order.status трогать не стали (не нужна миграция старых записей) —
-// просто показываем «взята в работу» вместо «в работе», когда есть occupiedBy.
-const displayStatus = (o) => (o.status === "в работе" && o.occupiedBy ? "взята в работу" : o.status);
 
 // ============================================================================
 //  РОУТЕР
@@ -606,11 +609,11 @@ function orderRow(o, d, onDelete, dateIso) {
     el("span", { class: "code" }, o.number),
     el("span", { style: "flex:1;min-width:0" }, bike ? bikeLabel(bike) : o.bikeNumber,
       el("br"), el("span", { class: "small muted" }, client?.name || o.clientPhone),
-      // Занятость мастером — теперь сама по себе видна как статус
-      // («взята в работу», см. displayStatus), тут только его имя.
+      // Занятость мастером — теперь сама по себе статус («взята в работу»),
+      // тут только его имя.
       o.occupiedByName ? el("span", { class: "small muted" }, " · мастер: " + o.occupiedByName) : null,
       dateIso ? el("span", { class: "small muted" }, " · " + formatDateShort(dateIso)) : null),
-    statusTag(displayStatus(o)));
+    statusTag(o.status));
   return onDelete ? swipeToDelete(row, () => onDelete(o)) : row;
 }
 
@@ -1041,20 +1044,21 @@ function viewOrder(number) {
   }
 
   if (order.status === "в работе") {
-    const takeIntoWork = () => {
-      editOrder(number, (o) => { o.occupiedBy = SESSION?.id || null; o.occupiedByName = SESSION?.name || ""; });
-      refresh();
-    };
+    main.append(stage("Ремонт",
+      el("p", { class: "small muted" }, "Заявка в очереди — заберите в работу, чтобы увидеть список работ."),
+      el("button", {
+        class: "btn-primary", style: "width:100%",
+        onclick: () => setStatus("взята в работу", (o) => { o.occupiedBy = SESSION?.id || null; o.occupiedByName = SESSION?.name || ""; }),
+      }, "Взять в работу")));
+  }
+
+  if (order.status === "взята в работу") {
     const leaveOrder = () => {
-      editOrder(number, (o) => { o.occupiedBy = null; o.occupiedByName = ""; });
+      editOrder(number, (o) => { o.status = "в работе"; o.occupiedBy = null; o.occupiedByName = ""; });
       go("/");
     };
 
-    if (!order.occupiedBy) {
-      main.append(stage("Ремонт",
-        el("p", { class: "small muted" }, "Заявка свободна — заберите в работу, чтобы увидеть список работ."),
-        el("button", { class: "btn-primary", style: "width:100%", onclick: takeIntoWork }, "Взять в работу")));
-    } else if (order.occupiedBy !== SESSION?.id) {
+    if (order.occupiedBy !== SESSION?.id) {
       main.append(stage("Ремонт",
         el("p", { class: "small muted" }, `Заявку сейчас ведёт: ${order.occupiedByName || "другой мастер"}.`)));
     } else {
@@ -1103,7 +1107,7 @@ function viewOrder(number) {
     autoOpenDiagsFor = null;
     queueMicrotask(openDiagnostics);
   }
-  return [bar(order.number, order.status === "выдан" ? "/orders" : "/", el("span", { class: "sub" }, displayStatus(order))), main];
+  return [bar(order.number, order.status === "выдан" ? "/orders" : "/", el("span", { class: "sub" }, order.status)), main];
 }
 
 function stage(title, ...body) { return el("div", { class: "card" }, el("h2", {}, title), ...body); }
