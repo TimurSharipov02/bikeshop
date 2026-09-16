@@ -35,6 +35,17 @@ header.bar h1 { font-size:17px; margin:0; font-weight:600; letter-spacing:-.005e
 header.bar .sub { font-size:14px; color:var(--muted); margin-left:auto; }
 a.sub:active { opacity:.5; }
 
+/* Прогресс по стадиям обращения (принята → в работе → проверка → выдано) —
+   пройденные кликабельны, чтобы вернуться на стадию назад при ошибке. */
+.progress-steps { display:flex; align-items:center; gap:2px; padding:10px 16px; overflow-x:auto;
+  background:var(--card); border-bottom:.5px solid var(--line); font-size:13px; }
+.pstep { padding:5px 9px; border-radius:999px; white-space:nowrap; color:var(--line); flex:0 0 auto; }
+.pstep-done { color:var(--accent); cursor:pointer; touch-action:manipulation; }
+.pstep-done:active { opacity:.6; }
+.pstep-current { background:var(--accent-weak); color:var(--accent); font-weight:600; }
+.pstep-future { color:var(--muted); }
+.pstep-sep { color:var(--line); font-size:12px; flex:0 0 auto; }
+
 .card { background:var(--card); border:.5px solid var(--line); border-radius:var(--radius); padding:16px;
   margin-bottom:14px; box-shadow:var(--shadow-sm); }
 .card h2 { margin:0 0 10px; font-size:16px; font-weight:650; letter-spacing:-.005em; }
@@ -78,6 +89,11 @@ a.sub:active { opacity:.5; }
 .tag.tag-check   { background:var(--teal-weak); color:var(--teal); }
 .tag.tag-done    { background:var(--ok-weak); color:var(--ok); }
 
+/* Без этого быстрые повторные тапы (счётчик количества и т.п.) иногда
+   распознаются как двойной тап — браузер ждёт, не жест ли это масштабирования,
+   и либо теряет клик, либо реально зумит страницу. manipulation убирает эту
+   задержку и жест зума, оставляя обычный тап и скролл как есть. */
+button, .opt { touch-action: manipulation; }
 button { font:inherit; border:.5px solid var(--line); background:var(--card); color:var(--ink); border-radius:var(--radius-sm);
   padding:13px 16px; cursor:pointer; min-height:46px; transition:transform .1s ease, opacity .1s ease; }
 button:active { transform:scale(.98); opacity:.85; }

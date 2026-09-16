@@ -70,13 +70,13 @@ const bar = (title, backHash, rightNode) =>
 
 const DB_KEY = "vella.db.v1";
 
-// Раньше «взята в работу» не было отдельным статусом order.status — занятость
-// мастером жила только в occupiedBy поверх статуса «в работе». Старые записи
-// с такой комбинацией переводим в настоящий статус при каждой загрузке;
-// исправление уедет на сервер со следующим же пушем (он шлёт всю DB целиком),
-// отдельная разовая миграция не нужна.
+// Статус «в работе» переименован в «принята» (плюс раньше занятость мастером
+// жила отдельным полем occupiedBy поверх статуса «в работе», а не отдельным
+// статусом «взята в работу»). Старые записи приводим к новым статусам при
+// каждой загрузке; исправление уедет на сервер со следующим же пушем (он
+// шлёт всю DB целиком), отдельная разовая миграция не нужна.
 const migrateOrders = (orders) =>
-  (orders || []).map((o) => (o.status === "в работе" && o.occupiedBy ? { ...o, status: "взята в работу" } : o));
+  (orders || []).map((o) => (o.status === "в работе" ? { ...o, status: o.occupiedBy ? "взята в работу" : "принята" } : o));
 
 const normalizeDB = (d) => ({
   clients: d?.clients || [], bikes: d?.bikes || [], orders: migrateOrders(d?.orders),
@@ -392,40 +392,48 @@ function attachPhoneMask(input, onChange) {
 
 // Список работ для «+ работа»: обычные операции из каталога + неисправности,
 // заведённые админом вручную (catalog/repairs). Общий и для наряда, и для
-// диагностики при оформлении нового обращения.
-async function loadWorkPool(bikeKind) {
+// диагностики при оформлении нового обращения. customOnly — только свои
+// неисправности, без полного сгенерированного из .proc каталога (для «+ доп.
+// работа» в уже идущем ремонте: там нужен тот же простой список с ценой,
+// которым пользуются на диагностике, а не поиск по сотням операций).
+async function loadWorkPool(bikeKind, customOnly) {
   const repairs = await ensureRepairs();
+  const custom = repairs.map((r) => ({
+    code: `CF-${r.id}`, name: r.label, label: r.label, custom: true, id: r.id,
+    price: r.price, minutes: r.minutes, complications: r.complications, multiple: r.multiple,
+  }));
+  if (customOnly) return custom;
   return [
     ...billableOps
       .filter((p) => !OVERRIDES[p.code]?.hidden)
       .filter((p) => bikeKind !== "колесо" || WHEEL_ONLY_BLOCKS.includes(p.code.split("-")[0]))
       .map((p) => ({ code: p.code, name: OVERRIDES[p.code]?.name || p.name, custom: false })),
-    ...repairs.map((r) => ({
-      code: `CF-${r.id}`, name: r.label, label: r.label, custom: true, id: r.id,
-      price: r.price, minutes: r.minutes, complications: r.complications, multiple: r.multiple,
-    })),
+    ...custom,
   ];
 }
 
 // onPick получает объект {code, name, custom, ...} — обычную операцию из
 // каталога или неисправность, заведённую админом вручную.
-function openWorkPicker({ existingItems, bikeKind, onBack, onPick }) {
+function openWorkPicker({ existingItems, bikeKind, onBack, onPick, customOnly }) {
   const header = () => el("header", { class: "bar" },
     el("button", { class: "back", style: "border:0;background:none", onclick: onBack }, "‹"),
     el("h1", {}, "Добавить работу"));
   render([header(), el("main", { class: "wrap" }, el("p", { class: "muted" }, "Загрузка…"))]);
-  loadWorkPool(bikeKind).then((pool) => {
+  loadWorkPool(bikeKind, customOnly).then((pool) => {
     const host = el("main", { class: "wrap" });
     const q = el("input", { type: "text", placeholder: "поиск по коду или названию" });
     const listBox = el("div", { class: "rows", style: "margin-top:10px" });
     const draw = () => {
       const ql = q.value.trim().toLowerCase();
+      const rows = pool
+        .filter((p) => !existingItems.some((i) => i.code === p.code))
+        .filter((p) => !ql || p.code.toLowerCase().includes(ql) || p.name.toLowerCase().includes(ql));
       listBox.replaceChildren(
-        ...pool
-          .filter((p) => !existingItems.some((i) => i.code === p.code))
-          .filter((p) => !ql || p.code.toLowerCase().includes(ql) || p.name.toLowerCase().includes(ql))
-          .map((p) => el("button", { class: "row", onclick: () => onPick(p) },
-            el("span", { style: "flex:1" }, p.name), el("span", { class: "chev" }, "+"))),
+        ...(rows.length
+          ? rows.map((p) => el("button", { class: "row", onclick: () => onPick(p) },
+              el("span", { style: "flex:1" }, p.name), el("span", { class: "chev" }, "+")))
+          : [el("p", { class: "muted small", style: "padding:13px 16px" },
+              customOnly ? "Пока нет своих неисправностей — их заводят на экране диагностики." : "Ничего не найдено.")]),
       );
     };
     q.addEventListener("input", draw);
@@ -437,9 +445,34 @@ function openWorkPicker({ existingItems, bikeKind, onBack, onPick }) {
 
 const STATUS_TAG_CLASS = {
   "приём": "tag-new", "оценка": "tag-quote", "согласование": "tag-approve",
-  "в работе": "tag-new", "взята в работу": "tag-progress", "проверка": "tag-check", "выдан": "tag-done",
+  "принята": "tag-new", "взята в работу": "tag-progress", "проверка": "tag-check", "выдан": "tag-done",
 };
 const statusTag = (status) => el("span", { class: "tag " + (STATUS_TAG_CLASS[status] || "") }, status);
+
+// Реальный путь обращения — четыре стадии одной операции (легаси приём/
+// оценка/согласование сюда не входят, там прогресс не показываем). Пройденные
+// стадии кликабельны — можно вернуться назад, если мастер ошибся; будущие
+// нет — двигаться вперёд можно только кнопками на самой стадии.
+const ORDER_STAGES = [
+  { key: "принята", label: "Принята" },
+  { key: "взята в работу", label: "В работе" },
+  { key: "проверка", label: "Проверка" },
+  { key: "выдан", label: "Выдано" },
+];
+function orderProgressBar(status, onJump) {
+  const idx = ORDER_STAGES.findIndex((s) => s.key === status);
+  if (idx === -1) return null;
+  const out = [];
+  ORDER_STAGES.forEach((s, i) => {
+    if (i) out.push(el("span", { class: "pstep-sep" }, "›"));
+    const state = i < idx ? "done" : i === idx ? "current" : "future";
+    out.push(el("span", {
+      class: `pstep pstep-${state}`,
+      onclick: state === "done" ? () => onJump(s.key) : null,
+    }, s.label));
+  });
+  return el("div", { class: "progress-steps" }, out);
+}
 
 // ============================================================================
 //  РОУТЕР
@@ -884,7 +917,7 @@ function viewNewOrder() {
             const number = nextOrderNumber(d);
             d.orders.push({
               number, clientPhone: p, bikeNumber: bn, request: draft.request, diagnosticNotes: draft.diagnosticNotes,
-              status: "в работе", items: draft.items, createdAt: new Date().toISOString(),
+              status: "принята", items: draft.items, createdAt: new Date().toISOString(),
             });
           });
           go("/");
@@ -968,8 +1001,8 @@ function viewOrder(number) {
     render([subBar(cat.byCode.get(code)?.name || code), host]);
     mountRunner(host, cat.byCode.get(code), { onDone: refresh });
   }
-  function openPicker(onPick) {
-    openWorkPicker({ existingItems: order.items, bikeKind: bike?.kind, onBack: refresh, onPick });
+  function openPicker(onPick, customOnly) {
+    openWorkPicker({ existingItems: order.items, bikeKind: bike?.kind, onBack: refresh, onPick, customOnly });
   }
 
   const range = orderRange(order);
@@ -989,6 +1022,20 @@ function viewOrder(number) {
   const main = el("main", { class: "wrap" }, head);
   // Переход на новую стадию — это новый экран, тут скролл наверх уместен.
   const setStatus = (s, extra) => { editOrder(number, (o) => { o.status = s; if (extra) extra(o); }); render(viewOrder(number)); };
+  // Возврат на пройденную стадию из прогресс-бара — по ошибке ушли дальше,
+  // чем нужно. Сбрасываем поля, которые эта и более поздние стадии проставляют,
+  // чтобы состояние не противоречило статусу, на который вернулись.
+  const jumpToStage = (target) => {
+    const label = ORDER_STAGES.find((s) => s.key === target)?.label || target;
+    if (!confirm(`Вернуть обращение на стадию «${label}»?`)) return;
+    editOrder(number, (o) => {
+      o.status = target;
+      if (target === "принята") { o.occupiedBy = null; o.occupiedByName = ""; o.finishedAt = null; o.handedOverAt = null; }
+      else if (target === "взята в работу") { o.occupiedBy = SESSION?.id || null; o.occupiedByName = SESSION?.name || ""; o.finishedAt = null; o.handedOverAt = null; }
+      else if (target === "проверка") { o.occupiedBy = null; o.occupiedByName = ""; o.handedOverAt = null; }
+    });
+    render(viewOrder(number));
+  };
 
   if (order.status === "приём") {
     main.append(stage("Диагностика и список работ",
@@ -1039,11 +1086,11 @@ function viewOrder(number) {
         el("span", { class: "muted small" }, "Согласовано на"),
         el("div", { class: "price-range" }, rangeText(range)),
         minutesText(orderMinutes(order, true)) ? el("div", { class: "small muted", style: "margin-top:4px" }, minutesText(orderMinutes(order, true))) : null),
-      el("button", { class: "btn-primary", style: "width:100%", onclick: () => setStatus("в работе") }, "В работу"));
+      el("button", { class: "btn-primary", style: "width:100%", onclick: () => setStatus("принята") }, "В работу"));
     main.append(stage("Согласование с клиентом", body));
   }
 
-  if (order.status === "в работе") {
+  if (order.status === "принята") {
     main.append(stage("Ремонт",
       el("p", { class: "small muted" }, "Заявка в очереди — заберите в работу, чтобы увидеть список работ."),
       el("button", {
@@ -1054,7 +1101,7 @@ function viewOrder(number) {
 
   if (order.status === "взята в работу") {
     const leaveOrder = () => {
-      editOrder(number, (o) => { o.status = "в работе"; o.occupiedBy = null; o.occupiedByName = ""; });
+      editOrder(number, (o) => { o.status = "принята"; o.occupiedBy = null; o.occupiedByName = ""; });
       go("/");
     };
 
@@ -1073,8 +1120,8 @@ function viewOrder(number) {
           onSave: (patch) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) Object.assign(x, patch, { done: true }); }); refresh(); },
           onQty: (qty) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) x.qty = qty; }); refresh(); },
         })));
-        body.append(el("button", { onclick: () => openPicker((pick) => { addItem(pick); refresh(); }) }, "+ доп. работа"));
-        body.append(el("button", { style: "margin-top:10px", onclick: leaveOrder }, "Завершить и выйти — освободить заявку"));
+        body.append(el("button", { onclick: () => openPicker((pick) => { addItem(pick); refresh(); }, true) }, "+ доп. работа"));
+        body.append(el("button", { style: "margin-top:10px", onclick: leaveOrder }, "Выйти и освободить заявку"));
         const allDone = order.items.filter((i) => i.agreed).length > 0 && order.items.filter((i) => i.agreed).every((i) => i.done);
         if (allDone) body.append(el("button", { class: "btn-primary", style: "width:100%;margin-top:12px", onclick: () => setStatus("проверка", (o) => { o.finishedAt = new Date().toISOString(); o.occupiedBy = null; o.occupiedByName = ""; }) }, "На проверку"));
       })();
@@ -1107,7 +1154,11 @@ function viewOrder(number) {
     autoOpenDiagsFor = null;
     queueMicrotask(openDiagnostics);
   }
-  return [bar(order.number, order.status === "выдан" ? "/orders" : "/", el("span", { class: "sub" }, order.status)), main];
+  return [
+    bar(order.number, order.status === "выдан" ? "/orders" : "/", el("span", { class: "sub" }, order.status)),
+    orderProgressBar(order.status, jumpToStage),
+    main,
+  ];
 }
 
 function stage(title, ...body) { return el("div", { class: "card" }, el("h2", {}, title), ...body); }
