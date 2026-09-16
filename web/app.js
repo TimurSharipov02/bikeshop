@@ -31,6 +31,9 @@ const BLOCK_TITLES = [...diagBlocks.map((b) => b.title), "Мойка и конс
 const blockByPrefix = { WSH: "Мойка и консервация" };
 for (const b of diagBlocks) for (const pre of b.codes || []) blockByPrefix[pre] = b.title;
 const blockOf = (code) => blockByPrefix[String(code || "").split("-")[0]] || "Прочее";
+// Свои неисправности (catalog/repairs) привязаны к узлу напрямую через group
+// (id блока), а не через префикс кода — их так по коду не сгруппировать.
+const blockTitleById = Object.fromEntries(diagBlocks.map((b) => [b.id, b.title]));
 
 const app = document.getElementById("app");
 const money = (n) => `${Number(n || 0).toLocaleString("ru-RU")} ₽`;
@@ -402,7 +405,7 @@ function attachPhoneMask(input, onChange) {
 async function loadWorkPool(bikeKind, customOnly) {
   const repairs = await ensureRepairs();
   const custom = repairs.map((r) => ({
-    code: `CF-${r.id}`, name: r.label, label: r.label, custom: true, id: r.id,
+    code: `CF-${r.id}`, name: r.label, label: r.label, custom: true, id: r.id, group: r.group,
     price: r.price, minutes: r.minutes, complications: r.complications, multiple: r.multiple,
   }));
   if (customOnly) return custom;
@@ -422,22 +425,32 @@ function openWorkPicker({ existingItems, bikeKind, onBack, onPick, customOnly })
     el("button", { class: "back", style: "border:0;background:none", onclick: onBack }, "‹"),
     el("h1", {}, "Добавить работу"));
   render([header(), el("main", { class: "wrap" }, el("p", { class: "muted" }, "Загрузка…"))]);
+  // Группировка — как на диагностике: по узлу велосипеда, в том же порядке
+  // (BLOCK_TITLES), «Прочее» последним. У своих неисправностей узел — group
+  // (id блока), у обычных операций каталога — по префиксу кода (blockOf).
+  const blockTitleOf = (p) => (p.group ? blockTitleById[p.group] || "Прочее" : blockOf(p.code));
   loadWorkPool(bikeKind, customOnly).then((pool) => {
     const host = el("main", { class: "wrap" });
     const q = el("input", { type: "text", placeholder: "поиск по коду или названию" });
-    const listBox = el("div", { class: "rows", style: "margin-top:10px" });
+    const listBox = el("div", { style: "margin-top:10px" });
     const draw = () => {
       const ql = q.value.trim().toLowerCase();
       const rows = pool
         .filter((p) => !existingItems.some((i) => i.code === p.code))
         .filter((p) => !ql || p.code.toLowerCase().includes(ql) || p.name.toLowerCase().includes(ql));
-      listBox.replaceChildren(
-        ...(rows.length
-          ? rows.map((p) => el("button", { class: "row", onclick: () => onPick(p) },
-              el("span", { style: "flex:1" }, p.name), el("span", { class: "chev" }, "+")))
-          : [el("p", { class: "muted small", style: "padding:13px 16px" },
-              customOnly ? "Пока нет своих неисправностей — их заводят на экране диагностики." : "Ничего не найдено.")]),
-      );
+      if (!rows.length) {
+        listBox.replaceChildren(el("p", { class: "muted small", style: "padding:13px 16px" },
+          customOnly ? "Пока нет своих неисправностей — их заводят на экране диагностики." : "Ничего не найдено."));
+        return;
+      }
+      const groups = groupBy(rows, blockTitleOf);
+      const sections = [...BLOCK_TITLES, "Прочее"]
+        .filter((title) => groups.get(title)?.length)
+        .map((title) => el("div", { style: "margin-top:14px" },
+          el("p", { class: "small muted", style: "margin:0 0 4px;letter-spacing:.05em" }, title.toUpperCase()),
+          rowsList(groups.get(title).map((p) => el("button", { class: "row", onclick: () => onPick(p) },
+            el("span", { style: "flex:1" }, p.name), el("span", { class: "chev" }, "+"))))));
+      listBox.replaceChildren(...sections);
     };
     q.addEventListener("input", draw);
     host.append(q, listBox);
@@ -1120,6 +1133,7 @@ function viewOrder(number) {
           onRun: () => openRunner(it.code),
           onSave: (patch) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) Object.assign(x, patch, { done: true }); }); refresh(); },
           onQty: (qty) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) x.qty = qty; }); refresh(); },
+          onRemove: removeItem,
         })));
         body.append(el("button", { onclick: () => openPicker((pick) => { addItem(pick); refresh(); }, true) }, "+ доп. работа"));
         body.append(el("button", { style: "margin-top:10px", onclick: leaveOrder }, "Выйти и освободить заявку"));
@@ -1335,14 +1349,17 @@ function pendingAgreementCard(order, handlers) {
     ...pending.map((it) => pendingAgreementRow(it, handlers)));
 }
 
-function repairItem(it, stock, { onRun, onSave, onQty }) {
+function repairItem(it, stock, { onRun, onSave, onQty, onRemove }) {
   const box = el("div", { class: "assess" });
   // Имя всегда на своей строке (любой длины, без конкуренции с кнопками), а
   // кнопки — отдельной строкой через .btn-row, чтобы они всегда были
   // одинакового размера и в одном порядке, независимо от длины названия.
   const nameRow = el("div", { style: "display:flex;align-items:center;gap:8px" },
     el("b", { style: "flex:1;min-width:0" }, it.name),
-    it.done ? el("span", { class: "pill" }, "готово") : null);
+    it.done ? el("span", { class: "pill" }, "готово") : null,
+    onRemove
+      ? el("button", { style: iconBtnStyle, onclick: () => { if (confirm(`Убрать «${it.name}» из наряда?`)) onRemove(it.code); } }, "✕")
+      : null);
   const controls = el("div", { style: "display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px" });
   if (it.multiple) controls.append(qtyStepper(it.qty, onQty));
   const btnRow = el("div", { class: "btn-row", style: "flex:1;min-width:180px" });
@@ -1701,12 +1718,8 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
     wrap.append(el("div", { class: "card" },
       el("h2", {}, "Диагностика"),
       el("p", { class: "small muted" }, "Раскрой узел, если с ним есть проблема, и отметь неисправность в списке."),
-      ...DIAG_TOGGLES.map((t) => el("div", {},
-        el("label", { class: "small muted", style: "margin-top:10px" }, t.label),
-        el("div", { class: "segmented" },
-          t.options.map(([v, lbl]) =>
-            el("button", { class: toggles[t.param] === v ? "active" : "",
-              onclick: () => { toggles[t.param] = v; draw(); } }, lbl))))),
+      // DIAG_TOGGLES (гидравлика/механика и т.п.) пока скрыты — переключатели
+      // остаются в коде с дефолтными значениями, faultVisible ими и пользуется.
       onRequest ? el("label", { class: "small muted", style: "margin-top:10px" }, "Запрос клиента (со слов)") : null,
       onRequest ? el("textarea", { rows: 2, value: req, placeholder: "с чем пришёл",
         onchange: (e) => { req = e.target.value.trim(); onRequest(req); } }) : null));
