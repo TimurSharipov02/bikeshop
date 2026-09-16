@@ -990,7 +990,9 @@ function viewOrder(number) {
       el("button", { class: "back", style: "border:0;background:none", onclick: refresh }, "‹"),
       el("h1", {}, order.number), el("span", { class: "sub" }, code));
   }
-  function openDiagnostics() {
+  // afterDone — что показать после диагностики вместо простого возврата
+  // (по умолчанию refresh). Для «+ доп. работа» — экран уточнения усложнений.
+  function openDiagnostics(afterDone) {
     const host = el("div", {});
     render([subBar("Диагностика"), host]);
     mountDiagnostics(host, {
@@ -1000,12 +1002,35 @@ function viewOrder(number) {
       onEditItem: (code, patch) => editItemQuiet(code, patch),
       onDone: (notes) => {
         if (notes.length) editOrder(number, (o) => { o.diagnosticNotes = [...(o.diagnosticNotes || []), ...notes]; });
-        refresh();
+        (afterDone || refresh)();
       },
       request: order.request || "",
       onRequest: (v) => editOrder(number, (o) => (o.request = v)),
       onlyBlocks: bike?.kind === "колесо" ? ["WHL"] : null,
     });
+  }
+  // Экран уточнения усложнений для ещё не согласованных работ — как «Оценка»
+  // при оформлении обращения, только для того, что нашлось уже в процессе
+  // ремонта. Показывается после диагностики из «+ доп. работа», перед
+  // возвратом к ремонту — чтобы к звонку клиенту уже была вилка цены.
+  function assessNewWork() {
+    const redraw = () => render(build(), { keepScroll: true });
+    function build() {
+      // Не полагаемся на замыкание order — пока шла диагностика, фоновая
+      // синхронизация с сервером могла пересобрать DB (adopt), и order тут
+      // рискует смотреть на уже отвязанный снимок. Берём текущий заново.
+      const cur = loadDB().orders.find((o) => o.number === number) || order;
+      const pending = cur.items.filter((i) => !i.agreed);
+      const body = el("div", {});
+      if (pending.length === 0) body.append(el("p", { class: "muted small" }, "Новых работ нет."));
+      pending.forEach((it) => body.append(assessItem(it,
+        (di, st) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x?.difficulties?.[di]) x.difficulties[di].state = st; }); redraw(); },
+        (val) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) x.partsPrice = val; }); redraw(); },
+        (qty) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) x.qty = qty; }); redraw(); })));
+      body.append(el("button", { class: "btn-primary", style: "width:100%;margin-top:12px", onclick: refresh }, "Готово"));
+      return [subBar("Уточнение усложнений"), el("main", { class: "wrap" }, stage("Новая работа — что по усложнениям", body))];
+    }
+    redraw();
   }
   function openRunner(code) {
     const host = el("div", {});
@@ -1130,7 +1155,7 @@ function viewOrder(number) {
           onQty: (qty) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) x.qty = qty; }); refresh(); },
           onRemove: removeItem,
         })));
-        body.append(el("button", { onclick: () => openDiagnostics() }, "+ доп. работа"));
+        body.append(el("button", { onclick: () => openDiagnostics(assessNewWork) }, "+ доп. работа"));
         body.append(el("button", { style: "margin-top:10px", onclick: leaveOrder }, "Выйти и освободить заявку"));
         const allDone = order.items.filter((i) => i.agreed).length > 0 && order.items.filter((i) => i.agreed).every((i) => i.done);
         if (allDone) body.append(el("button", { class: "btn-primary", style: "width:100%;margin-top:12px", onclick: () => setStatus("готово к выдаче", (o) => { o.finishedAt = new Date().toISOString(); o.occupiedBy = null; o.occupiedByName = ""; }) }, "Готово к выдаче"));
@@ -1285,10 +1310,14 @@ function itemList(order, showFacts, edit) {
   return box;
 }
 
-// Список усложнений с выбором будет/не будет/неизвестно — используется и на
-// «Оценке» (прикидка для клиента), и при отметке работы готовой (по факту).
+// Список усложнений — на «Оценке» (прикидка для клиента, ещё не известно
+// наверняка) три варианта: будет/не будет/неизвестно. При отметке работы
+// готовой (fact=true) — уже по факту, там только было/не было, «неизвестно»
+// не бывает для завершённой работы.
 const DIFFICULTY_STATE_LABELS = { yes: "будет", no: "не будет", unknown: "неизвестно" };
-function difficultyList(difficulties, onSet, onQty) {
+const DIFFICULTY_FACT_LABELS = { yes: "было", no: "не было" };
+function difficultyList(difficulties, onSet, onQty, fact) {
+  const labels = fact ? DIFFICULTY_FACT_LABELS : DIFFICULTY_STATE_LABELS;
   const box = el("div", {});
   (difficulties || []).forEach((d, di) => {
     box.append(el("div", { style: "margin-top:8px" },
@@ -1298,7 +1327,7 @@ function difficultyList(difficulties, onSet, onQty) {
       // выпадающего списка. Счётчик количества — отдельной строкой ниже,
       // чтобы не тесниться с кнопками.
       el("div", { class: "segmented", style: "margin-top:4px" },
-        Object.entries(DIFFICULTY_STATE_LABELS).map(([v, lbl]) =>
+        Object.entries(labels).map(([v, lbl]) =>
           el("button", { class: d.state === v ? `active sel-${v}` : "", onclick: () => onSet(di, v) }, lbl))),
       d.multiple && onQty && d.state !== "no" ? el("div", { style: "margin-top:6px" }, qtyStepper(d.qty, (qty) => onQty(di, qty))) : null));
   });
@@ -1373,9 +1402,11 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove }) {
   let open = false;
   const diffs = JSON.parse(JSON.stringify(it.difficulties || []));
   const diffBox = el("div", {});
+  // Тут уже не прогноз, а факт — работа сделана, известно точно, было
+  // усложнение или нет. Третий вариант («неизвестно») тут ни к чему.
   const drawDiffs = () => diffBox.replaceChildren(difficultyList(diffs,
     (di, st) => { diffs[di].state = st; drawDiffs(); },
-    (di, qty) => { diffs[di].qty = qty; drawDiffs(); }));
+    (di, qty) => { diffs[di].qty = qty; drawDiffs(); }, true));
   drawDiffs();
   const pickedParts = [...(it.parts || [])];
   const partsChips = el("div", {});
@@ -1419,12 +1450,6 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove }) {
   };
   mainBtn.onclick = () => {
     if (!open) { open = true; form.style.display = "block"; updateBtn(); return; }
-    // Работа считается готовой — по каждому усложнению уже должно быть
-    // известно, было оно или нет, «неизвестно» тут больше не вариант.
-    if (diffs.some((d) => d.state === "unknown")) {
-      alert("По каждому усложнению отметьте «будет» или «не будет» — «неизвестно» не годится для готовой работы.");
-      return;
-    }
     onSave({ parts: pickedParts, difficulties: diffs, doneBy: it.doneBy ?? SESSION?.name ?? undefined });
   };
   updateBtn();
