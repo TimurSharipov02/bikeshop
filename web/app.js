@@ -601,8 +601,10 @@ function orderRow(o, d, onDelete, dateIso) {
     el("span", { class: "code" }, o.number),
     el("span", { style: "flex:1;min-width:0" }, bike ? bikeLabel(bike) : o.bikeNumber,
       el("br"), el("span", { class: "small muted" }, client?.name || o.clientPhone),
+      // «Свободна» рядом с тегом «в работе» читалась как противоречие —
+      // это не статус заявки, а того, взял ли её кто-то из мастеров.
       o.status === "в работе"
-        ? el("span", { class: "small muted" }, " · " + (o.occupiedByName ? "занята: " + o.occupiedByName : "свободна"))
+        ? el("span", { class: "small muted" }, " · " + (o.occupiedByName ? "мастер: " + o.occupiedByName : "не взята в работу"))
         : null,
       dateIso ? el("span", { class: "small muted" }, " · " + formatDateShort(dateIso)) : null),
     statusTag(o.status));
