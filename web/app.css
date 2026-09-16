@@ -145,15 +145,15 @@ label { display:block; font-size:13px; color:var(--muted); margin:14px 0 5px; fo
 .opt:has(input:checked) { border-color:var(--accent); background:var(--accent-weak); }
 /* Свой чекбокс/радио вместо голого системного — квадрат со скруглением или
    кружок, заливка акцентом и белая галочка/точка при выборе. */
-.opt input[type="checkbox"], .opt input[type="radio"] {
+.opt input[type="checkbox"], .opt input[type="radio"], input.chk {
   appearance:none; -webkit-appearance:none; margin:0; flex:0 0 auto; width:22px; height:22px;
   border:1.5px solid var(--line); background:var(--card); display:grid; place-content:center;
   transition:background .12s ease, border-color .12s ease;
 }
-.opt input[type="checkbox"] { border-radius:6px; }
+.opt input[type="checkbox"], input.chk { border-radius:6px; }
 .opt input[type="radio"] { border-radius:50%; }
-.opt input[type="checkbox"]:checked, .opt input[type="radio"]:checked { background:var(--accent); border-color:var(--accent); }
-.opt input[type="checkbox"]:checked::after {
+.opt input[type="checkbox"]:checked, .opt input[type="radio"]:checked, input.chk:checked { background:var(--accent); border-color:var(--accent); }
+.opt input[type="checkbox"]:checked::after, input.chk:checked::after {
   content:""; width:6px; height:10px; border:solid #fff; border-width:0 2px 2px 0; transform:rotate(45deg) translate(-1px,-1.5px);
 }
 .opt input[type="radio"]:checked::after { content:""; width:8px; height:8px; border-radius:50%; background:#fff; }

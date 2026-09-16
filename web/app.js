@@ -845,7 +845,7 @@ function viewNewOrder() {
           onclick: () => { isOpen ? openCodes.delete(it.code) : openCodes.add(it.code); redraw(); },
         },
           el("input", {
-            type: "checkbox", checked: it.agreed, style: "width:20px;height:20px;flex:0 0 auto;padding:0",
+            type: "checkbox", class: "chk", checked: it.agreed,
             onclick: (e) => e.stopPropagation(),
             onchange: (e) => { it.agreed = e.target.checked; redraw(); },
           }),
@@ -871,13 +871,7 @@ function viewNewOrder() {
         body.append(row);
       });
       body.append(
-        el("button", { onclick: () => openWorkPicker({
-          existingItems: draft.items, bikeKind: null, onBack: redraw,
-          onPick: (pick) => {
-            if (!draft.items.some((i) => i.code === pick.code)) draft.items.push(pick.custom ? makeCustomItem(pick) : makeItem(pick.code));
-            redraw();
-          },
-        }) }, "+ работа"),
+        el("button", { onclick: () => stepDiagnostics() }, "+ доп. работа"),
         el("div", { class: "card", style: "background:var(--bg)" },
           el("span", { class: "muted small" }, "Согласовано на"),
           el("div", { class: "price-range" }, rangeText(orderRange({ items: draft.items }))),
