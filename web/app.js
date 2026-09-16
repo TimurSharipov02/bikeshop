@@ -330,6 +330,50 @@ function isValidPhone(s) {
   const d = (s || "").replace(/\D/g, "");
   return d.length === 10 || (d.length === 11 && (d[0] === "7" || d[0] === "8"));
 }
+// 10 цифр номера без кода страны — общий вид для сравнения телефонов, не
+// зависящий от того, как они введены/отформатированы (+7, 8, пробелы, тире).
+// Так "+7 996 606 12 00" и "+79966061200" (и старые записи вроде "8 996...")
+// считаются одним и тем же номером.
+function phoneDigits(s) {
+  let d = (s || "").replace(/\D/g, "");
+  if (d.length === 11 && (d[0] === "7" || d[0] === "8")) d = d.slice(1);
+  return d;
+}
+function findClientByPhone(clients, phone) {
+  const digits = phoneDigits(phone);
+  return digits.length === 10 ? clients.find((c) => phoneDigits(c.phone) === digits) || null : null;
+}
+// Маска номера: всегда +7, дальше цифры группами 3-3-2-2 — «+7 996 606 12 00».
+function applyPhoneMask(raw) {
+  let d = (raw || "").replace(/\D/g, "");
+  if (d[0] === "7" || d[0] === "8") d = d.slice(1);
+  d = d.slice(0, 10);
+  let value = "+7";
+  if (d.length) value += " " + d.slice(0, 3);
+  if (d.length > 3) value += " " + d.slice(3, 6);
+  if (d.length > 6) value += " " + d.slice(6, 8);
+  if (d.length > 8) value += " " + d.slice(8, 10);
+  return value;
+}
+// Привязывает маску к текстовому полю: реформатирует значение по мере ввода
+// и сохраняет позицию курсора относительно уже введённых цифр (не просто
+// прыгает в конец, чтобы можно было спокойно поправить середину номера).
+function attachPhoneMask(input, onChange) {
+  input.addEventListener("input", () => {
+    const before = input.value;
+    const caret = input.selectionStart ?? before.length;
+    const digitsBeforeCaret = before.slice(0, caret).replace(/\D/g, "").length;
+    const value = applyPhoneMask(before);
+    input.value = value;
+    let seen = 0, pos = value.length;
+    for (let i = 0; i < value.length; i++) {
+      if (/\d/.test(value[i]) && ++seen === digitsBeforeCaret) { pos = i + 1; break; }
+    }
+    if (digitsBeforeCaret === 0) pos = 2; // сразу после «+7»
+    input.setSelectionRange(pos, pos);
+    onChange(value);
+  });
+}
 
 // Список работ для «+ работа»: обычные операции из каталога + неисправности,
 // заведённые админом вручную (catalog/repairs). Общий и для наряда, и для
@@ -597,7 +641,7 @@ function groupBy(list, keyFn) {
 
 // Пресет для быстрой проверки: создаёт готовое обращение одним кликом.
 const DEMO_PRESET = {
-  phone: "+7 900 000-00-00", name: "Тест Тестов", kind: "шоссе",
+  phone: applyPhoneMask("9000000000"), name: "Тест Тестов", kind: "шоссе",
   brand: "Canyon", model: "Endurace",
   request: "переключается плохо, щёлкает сзади; готовлю к сезону",
 };
@@ -624,7 +668,8 @@ function createDemoOrder() {
 // в поле поиска на каждую нажатую клавишу — как в openWorkPicker.
 function viewOrders() {
   const d = loadDB();
-  const q = el("input", { type: "tel", placeholder: "Поиск по телефону клиента", value: ordersSearch });
+  const q = el("input", { type: "tel", value: applyPhoneMask(ordersSearch) });
+  attachPhoneMask(q, (v) => { ordersSearch = v; drawList(); });
   const seg = el("div", { class: "segmented", style: "margin-top:10px" });
   const listBox = el("div", { style: "margin-top:16px" });
 
@@ -635,10 +680,9 @@ function viewOrders() {
       el("button", { class: ordersGroupBy === "handed" ? "active" : "", onclick: () => setGroupBy("handed") }, "По дате выдачи"));
   };
   const drawList = () => {
-    ordersSearch = q.value;
-    const qDigits = ordersSearch.replace(/\D/g, "");
+    const qDigits = phoneDigits(ordersSearch);
     let issued = d.orders.filter((o) => o.status === "выдан");
-    if (qDigits) issued = issued.filter((o) => (o.clientPhone || "").replace(/\D/g, "").includes(qDigits));
+    if (qDigits) issued = issued.filter((o) => phoneDigits(o.clientPhone).includes(qDigits));
     const field = ordersGroupBy === "handed" ? "handedOverAt" : "createdAt";
     issued = [...issued].sort((a, b) => (b[field] || "").localeCompare(a[field] || ""));
     const groups = [];
@@ -651,7 +695,7 @@ function viewOrders() {
     listBox.replaceChildren(
       ...[
         issued.length === 0
-          ? el("p", { class: "muted" }, ordersSearch ? "Ничего не найдено." : "Пока нет выданных обращений.")
+          ? el("p", { class: "muted" }, qDigits ? "Ничего не найдено." : "Пока нет выданных обращений.")
           : null,
         ...groups.map((g) => el("div", { style: "margin-bottom:16px" },
           el("p", { class: "small muted", style: "margin:0 0 4px;letter-spacing:.02em" }, g.label.toUpperCase()),
@@ -659,7 +703,6 @@ function viewOrders() {
       ].filter(Boolean),
     );
   };
-  q.addEventListener("input", drawList);
   drawSeg();
   drawList();
 
@@ -667,7 +710,8 @@ function viewOrders() {
     bar("Архив", "/", el("span", { class: "sub", style: "display:flex;gap:14px" },
       el("button", { style: "border:0;background:none;color:inherit;font:inherit;cursor:pointer;padding:0", onclick: createDemoOrder }, "+ демо"),
       el("a", { href: "#/orders/new", style: "color:inherit" }, "+ новое"))),
-    el("main", { class: "wrap" }, q, seg, listBox),
+    el("main", { class: "wrap" },
+      el("label", { class: "small muted" }, "Поиск по телефону клиента"), q, seg, listBox),
   ];
 }
 
@@ -752,14 +796,14 @@ function viewNewOrder() {
   }
 
   function stepClient() {
-    const f = { phone: "+7 ", name: "", bike: "new", brand: "" };
+    const f = { phone: applyPhoneMask(""), name: "", bike: "new", brand: "" };
 
     const clientSlot = el("div", {});
     const bikeSlot = el("div", { class: "card" }, el("h2", {}, "Велосипед"));
     const bikeFields = el("div", {});
 
     function drawClient() {
-      const ec = loadDB().clients.find((c) => c.phone === f.phone.trim());
+      const ec = findClientByPhone(loadDB().clients, f.phone);
       clientSlot.replaceChildren(
         ec
           ? el("p", { class: "small muted" }, "Найден: " + (ec.name || ec.phone))
@@ -771,7 +815,7 @@ function viewNewOrder() {
     }
 
     function drawBike() {
-      const ec = loadDB().clients.find((c) => c.phone === f.phone.trim());
+      const ec = findClientByPhone(loadDB().clients, f.phone);
       const owned = ec ? loadDB().bikes.filter((b) => b.ownerPhone === ec.phone) : [];
       if (!owned.some((b) => b.number === f.bike)) f.bike = "new";
       bikeSlot.replaceChildren(el("h2", {}, "Велосипед"));
@@ -792,11 +836,14 @@ function viewNewOrder() {
       bikeSlot.append(bikeFields);
     }
 
+    const phoneInput = el("input", { type: "tel", value: f.phone });
+    attachPhoneMask(phoneInput, (v) => { f.phone = v; drawClient(); });
+
     const wrap = el("main", { class: "wrap" },
       draft.items.length ? el("p", { class: "small muted" }, `Согласовано работ: ${draft.items.filter((i) => i.agreed).length} из ${draft.items.length}.`) : null,
       el("div", { class: "card" }, el("h2", {}, "Клиент"),
         el("label", {}, "Телефон"),
-        el("input", { type: "tel", value: f.phone, placeholder: "900 000-00-00", oninput: (e) => { f.phone = e.target.value; drawClient(); } }),
+        phoneInput,
         clientSlot),
       bikeSlot);
     drawClient();
@@ -806,10 +853,14 @@ function viewNewOrder() {
       wrap,
       el("div", { class: "actions" }, el("div", { class: "actions-inner" },
         el("button", { class: "btn-primary", onclick: () => {
-          const p = f.phone.trim();
-          if (!isValidPhone(p)) return alert("Проверьте номер телефона");
+          if (!isValidPhone(f.phone)) return alert("Проверьте номер телефона");
           editDB((d) => {
-            if (!d.clients.some((c) => c.phone === p)) d.clients.push({ phone: p, name: f.name.trim() });
+            // Клиент уже мог быть заведён с другим форматированием номера —
+            // сравниваем по цифрам и, если нашли, используем именно его
+            // сохранённый phone как ключ, чтобы не завести дубликат.
+            const existing = findClientByPhone(d.clients, f.phone);
+            const p = existing ? existing.phone : f.phone;
+            if (!existing) d.clients.push({ phone: p, name: f.name.trim() });
             let bn = f.bike;
             if (bn === "new" || !d.bikes.some((b) => b.number === bn)) {
               bn = nextBikeKey(d, p);
