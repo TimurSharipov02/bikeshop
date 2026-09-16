@@ -77,11 +77,25 @@ const DB_KEY = "vella.db.v1";
 // → «готово к выдаче»). Старые записи приводим к новым статусам при каждой
 // загрузке; исправление уедет на сервер со следующим же пушем (он шлёт всю DB
 // целиком), отдельная разовая миграция не нужна.
+// Для завершённой работы (done:true) усложнение не может оставаться в
+// состоянии «неизвестно» — это прогнозное значение, для факта его больше
+// не предлагают (см. difficultyList с fact:true), но в старых данных оно
+// могло остаться нетронутым. Без него itemRange считает такую работу
+// диапазоном, а не точной ценой, хотя по факту она уже сделана.
+const fixDoneDifficulties = (items) =>
+  (items || []).map((it) => {
+    if (!it.done || !(it.difficulties || []).some((d) => d.state === "unknown")) return it;
+    return { ...it, difficulties: it.difficulties.map((d) => (d.state === "unknown" ? { ...d, state: "no" } : d)) };
+  });
+
 const migrateOrders = (orders) =>
   (orders || []).map((o) => {
-    if (o.status === "в работе") return { ...o, status: o.occupiedBy ? "взята в работу" : "принята" };
-    if (o.status === "проверка") return { ...o, status: "готово к выдаче" };
-    return o;
+    let next = o;
+    if (next.status === "в работе") next = { ...next, status: next.occupiedBy ? "взята в работу" : "принята" };
+    if (next.status === "проверка") next = { ...next, status: "готово к выдаче" };
+    const items = fixDoneDifficulties(next.items);
+    if (items !== next.items) next = { ...next, items };
+    return next;
   });
 
 const normalizeDB = (d) => ({
@@ -1167,7 +1181,7 @@ function viewOrder(number) {
   if (order.status === "готово к выдаче") {
     const pendingCard = pendingAgreementCard(order, pendingHandlers);
     if (pendingCard) main.append(pendingCard);
-    main.append(stage("Смета для звонка клиенту", itemList(order, true),
+    main.append(stage("Смета для звонка клиенту", itemList({ items: order.items.filter((i) => i.agreed) }, true),
       el("div", { class: "card", style: "background:var(--bg);margin-top:12px" },
         el("span", { class: "muted small" }, "Итого"),
         el("div", { class: "total" }, rangeText(range)))));
@@ -1182,7 +1196,7 @@ function viewOrder(number) {
   if (order.status === "выдан") {
     const pendingCard = pendingAgreementCard(order, pendingHandlers);
     if (pendingCard) main.append(pendingCard);
-    main.append(stage("Выдан", itemList(order, true),
+    main.append(stage("Выдан", itemList({ items: order.items.filter((i) => i.agreed) }, true),
       el("div", { class: "card", style: "background:var(--bg)" },
         el("span", { class: "muted small" }, "Итого"),
         el("div", { class: "total" }, rangeText(range)))));
@@ -1400,7 +1414,11 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove }) {
 
   const form = el("div", { style: "margin-top:8px;display:none" });
   let open = false;
-  const diffs = JSON.parse(JSON.stringify(it.difficulties || []));
+  // «неизвестно» — прогнозное состояние (по умолчанию у новой работы), тут
+  // такого выбора нет (см. fact:true ниже) — приводим к «не было», иначе
+  // контрол открывается без выбранной кнопки, а при сохранении без клика
+  // работа остаётся с диапазоном цены вместо точной, хотя уже выполнена.
+  const diffs = JSON.parse(JSON.stringify(it.difficulties || [])).map((d) => (d.state === "unknown" ? { ...d, state: "no" } : d));
   const diffBox = el("div", {});
   // Тут уже не прогноз, а факт — работа сделана, известно точно, было
   // усложнение или нет. Третий вариант («неизвестно») тут ни к чему.
