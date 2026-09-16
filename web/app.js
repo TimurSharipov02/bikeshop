@@ -429,9 +429,14 @@ function openWorkPicker({ existingItems, bikeKind, onBack, onPick }) {
 
 const STATUS_TAG_CLASS = {
   "приём": "tag-new", "оценка": "tag-quote", "согласование": "tag-approve",
-  "в работе": "tag-progress", "проверка": "tag-check", "выдан": "tag-done",
+  "в работе": "tag-new", "взята в работу": "tag-progress", "проверка": "tag-check", "выдан": "tag-done",
 };
 const statusTag = (status) => el("span", { class: "tag " + (STATUS_TAG_CLASS[status] || "") }, status);
+// «в работе» в данных — один статус, но занятость мастером внутри него это по
+// сути отдельный шаг, который стоит видеть как статус, а не мелкий подтекст.
+// Само поле order.status трогать не стали (не нужна миграция старых записей) —
+// просто показываем «взята в работу» вместо «в работе», когда есть occupiedBy.
+const displayStatus = (o) => (o.status === "в работе" && o.occupiedBy ? "взята в работу" : o.status);
 
 // ============================================================================
 //  РОУТЕР
@@ -601,13 +606,11 @@ function orderRow(o, d, onDelete, dateIso) {
     el("span", { class: "code" }, o.number),
     el("span", { style: "flex:1;min-width:0" }, bike ? bikeLabel(bike) : o.bikeNumber,
       el("br"), el("span", { class: "small muted" }, client?.name || o.clientPhone),
-      // «Свободна» рядом с тегом «в работе» читалась как противоречие —
-      // это не статус заявки, а того, взял ли её кто-то из мастеров.
-      o.status === "в работе"
-        ? el("span", { class: "small muted" }, " · " + (o.occupiedByName ? "мастер: " + o.occupiedByName : "не взята в работу"))
-        : null,
+      // Занятость мастером — теперь сама по себе видна как статус
+      // («взята в работу», см. displayStatus), тут только его имя.
+      o.occupiedByName ? el("span", { class: "small muted" }, " · мастер: " + o.occupiedByName) : null,
       dateIso ? el("span", { class: "small muted" }, " · " + formatDateShort(dateIso)) : null),
-    statusTag(o.status));
+    statusTag(displayStatus(o)));
   return onDelete ? swipeToDelete(row, () => onDelete(o)) : row;
 }
 
@@ -1100,7 +1103,7 @@ function viewOrder(number) {
     autoOpenDiagsFor = null;
     queueMicrotask(openDiagnostics);
   }
-  return [bar(order.number, order.status === "выдан" ? "/orders" : "/", el("span", { class: "sub" }, order.status)), main];
+  return [bar(order.number, order.status === "выдан" ? "/orders" : "/", el("span", { class: "sub" }, displayStatus(order))), main];
 }
 
 function stage(title, ...body) { return el("div", { class: "card" }, el("h2", {}, title), ...body); }
