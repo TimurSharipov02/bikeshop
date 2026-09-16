@@ -1024,10 +1024,20 @@ function viewOrder(number) {
     onRemove: (code) => { editOrder(number, (o) => { o.items = o.items.filter((i) => i.code !== code); }); pendingOpenCodes.delete(code); refresh(); },
     onSet: (code, di, st) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x?.difficulties?.[di]) x.difficulties[di].state = st; }); refresh(); },
     onDiffQty: (code, di, qty) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x?.difficulties?.[di]) x.difficulties[di].qty = qty; }); refresh(); },
-    onParts: (code, val) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x) x.partsPrice = val; }); refresh(); },
+    onParts: (code, parts) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x) x.parts = parts; }); refresh(); },
     onQty: (code, qty) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x) x.qty = qty; }); refresh(); },
     refresh,
   };
+  // «Ждёт согласования» на стадиях без уже загруженных остатков (готово к
+  // выдаче/выдан) — подгружаем отдельно, тем же кэшем, что и в ремонте.
+  function pendingCardHost() {
+    const host = el("div", {});
+    (async () => {
+      const card = pendingAgreementCard(order, pendingHandlers, await ensureStock());
+      host.replaceChildren(...(card ? [card] : []));
+    })();
+    return host;
+  }
 
   // -- запуск диагностики / процедуры внутри обращения --
   function subBar(code) {
@@ -1174,7 +1184,7 @@ function viewOrder(number) {
       (async () => {
         const stock = await ensureStock();
         body.replaceChildren();
-        const pendingCard = pendingAgreementCard(order, pendingHandlers);
+        const pendingCard = pendingAgreementCard(order, pendingHandlers, stock);
         if (pendingCard) body.append(pendingCard);
         order.items.filter((i) => i.agreed).forEach((it) => body.append(repairItem(it, stock, {
           onRun: () => openRunner(it.code),
@@ -1193,8 +1203,7 @@ function viewOrder(number) {
   }
 
   if (order.status === "готово к выдаче") {
-    const pendingCard = pendingAgreementCard(order, pendingHandlers);
-    if (pendingCard) main.append(pendingCard);
+    main.append(pendingCardHost());
     main.append(stage("Смета для звонка клиенту", itemList({ items: order.items.filter((i) => i.agreed) }, true),
       el("div", { class: "card", style: "background:var(--bg);margin-top:12px" },
         el("span", { class: "muted small" }, "Итого"),
@@ -1208,8 +1217,7 @@ function viewOrder(number) {
   }
 
   if (order.status === "выдан") {
-    const pendingCard = pendingAgreementCard(order, pendingHandlers);
-    if (pendingCard) main.append(pendingCard);
+    main.append(pendingCardHost());
     main.append(stage("Выдан", itemList({ items: order.items.filter((i) => i.agreed) }, true),
       el("div", { class: "card", style: "background:var(--bg)" },
         el("span", { class: "muted small" }, "Итого"),
@@ -1384,7 +1392,7 @@ function assessItem(it, onSet, onParts, onQty) {
 // (позвонив клиенту). Без этого шага работа просто предлагается молча —
 // то как «+ доп. работа», то как невидимая навсегда, — и тут явный шаг
 // нужен в обоих случаях одинаково.
-function pendingAgreementRow(it, { onAgree, onRemove, onSet, onDiffQty, onParts, onQty, refresh }) {
+function pendingAgreementRow(it, { onAgree, onRemove, onSet, onDiffQty, onParts, onQty, refresh }, stock) {
   const isOpen = pendingOpenCodes.has(it.code);
   const r = itemRange(it);
   const box = el("div", { class: "assess" });
@@ -1401,24 +1409,53 @@ function pendingAgreementRow(it, { onAgree, onRemove, onSet, onDiffQty, onParts,
     else box.append(el("div", { style: "margin-top:8px" }, difficultyList(it.difficulties,
       (di, st) => onSet(it.code, di, st),
       (di, qty) => onDiffQty(it.code, di, qty))));
-    box.append(el("div", { style: "display:flex;gap:8px;align-items:center;margin-top:10px" },
-      el("span", { class: "small muted", style: "flex:1" }, "Запчасти (детали) в счёт"),
-      el("input", { type: "number", value: it.partsPrice || 0, style: "width:96px;text-align:right",
-        onchange: (e) => onParts(it.code, +e.target.value || 0) }),
-      el("span", { class: "muted small" }, "₽")));
+    // Тот же список запчастей, что и у согласованной работы («в работе») —
+    // выбор из остатков + «+ добавить», а не отдельная оценка суммой.
+    const pickedParts = [...(it.parts || [])];
+    const partsChips = el("div", {});
+    const drawParts = () => {
+      partsChips.replaceChildren(...(pickedParts.length
+        ? [el("div", { style: "display:flex;flex-wrap:wrap;gap:6px;margin-top:6px" },
+            pickedParts.map((p, i) => el("span", { class: "pill" }, p, " ",
+              el("button", {
+                style: "border:0;background:none;color:inherit;cursor:pointer;padding:0;min-height:auto;font:inherit",
+                onclick: () => { pickedParts.splice(i, 1); drawParts(); onParts(it.code, pickedParts); },
+              }, "✕"))))]
+        : []));
+    };
+    drawParts();
+    const stockSelect = el("select", { style: "width:auto;flex:1" },
+      el("option", { value: "" }, stock.length ? "— выбрать деталь —" : "остатки пусты"),
+      stock.map((s) => el("option", { value: s.sku || s.name },
+        `${s.name}${s.sku ? " · " + s.sku : ""}${s.qty != null ? ` (${s.qty} ${s.unit || "шт"})` : ""}`)));
+    box.append(
+      el("label", { style: "margin-top:10px" }, "Запчасти"),
+      el("div", { style: "display:flex;gap:8px" },
+        stockSelect,
+        el("button", {
+          style: "flex:0 0 auto",
+          onclick: () => {
+            const v = stockSelect.value;
+            if (!v) return;
+            const found = stock.find((s) => (s.sku || s.name) === v);
+            const label = found ? found.name : v;
+            if (!pickedParts.includes(label)) { pickedParts.push(label); drawParts(); onParts(it.code, pickedParts); }
+          },
+        }, "+ добавить")),
+      partsChips);
   }
   box.append(el("div", { class: "btn-row", style: "margin-top:10px" },
     el("button", { class: "btn-ok", onclick: () => onAgree(it.code) }, "Согласовано"),
     el("button", { onclick: () => { if (confirm(`Убрать «${it.name}» из наряда?`)) onRemove(it.code); } }, "Убрать")));
   return box;
 }
-function pendingAgreementCard(order, handlers) {
+function pendingAgreementCard(order, handlers, stock) {
   const pending = order.items.filter((i) => !i.agreed);
   if (!pending.length) return null;
   return el("div", { class: "card" },
     el("h2", {}, "Ждёт согласования"),
     el("p", { class: "small muted" }, "Добавлено сверх исходной сметы — позвоните клиенту и подтвердите, тогда работа попадёт в наряд и сумму."),
-    ...pending.map((it) => pendingAgreementRow(it, handlers)));
+    ...pending.map((it) => pendingAgreementRow(it, handlers, stock)));
 }
 
 // Нет отдельной кнопки «отметить/изменить»: тап по названию только
