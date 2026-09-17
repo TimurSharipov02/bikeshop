@@ -1063,7 +1063,7 @@ function viewNewOrder() {
         // слева и справа, а не одна под другой в конце карточки.
         el("div", { class: "actions" }, el("div", { class: "actions-inner" },
           el("button", { onclick: () => stepDiagnostics() }, "+ доп. работа"),
-          el("button", { class: "btn-primary", onclick: () => stepClient() }, "Дальше — данные клиента"))),
+          el("button", { class: "btn-primary", onclick: () => stepClient() }, "Далее"))),
       ];
     }
     redraw();
@@ -1272,9 +1272,11 @@ function viewOrder(number) {
     // только тип и номер обращения (для сверки).
     el("h2", {}, [bike?.kind, order.number].filter(Boolean).join(" · ")),
     // Вся строка — ссылка tel:, а не только номер: на телефоне так проще
-    // попасть пальцем, а 📞 сразу подсказывает, что тут можно позвонить.
-    el("a", { href: `tel:${order.clientPhone.replace(/[^\d+]/g, "")}`, class: "small muted", style: "display:flex;align-items:center;gap:6px;width:fit-content" },
-      `${client?.name || "—"} · ${order.clientPhone}`, el("span", {}, "📞")),
+    // попасть пальцем, а 📞 справа, покрупнее, сразу подсказывает, что тут
+    // можно позвонить (не теряется мелким значком сразу после текста).
+    el("a", { href: `tel:${order.clientPhone.replace(/[^\d+]/g, "")}`, class: "small muted", style: "display:flex;align-items:center;gap:6px" },
+      el("span", { style: "flex:1" }, `${client?.name || "—"} · ${order.clientPhone}`),
+      el("span", { style: "font-size:22px;flex:0 0 auto" }, "📞")),
     order.request ? el("p", { class: "small" }, "Запрос клиента: " + order.request) : null);
 
   if ((order.diagnosticNotes || []).length) {
@@ -1395,7 +1397,7 @@ function viewOrder(number) {
           onQty: (qty) => { claim(); editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) x.qty = qty; }); refresh(); },
           onRemove: (code) => { claim(); removeItem(code); },
         })));
-        b.append(el("button", { onclick: () => { claim(); openDiagnostics(); } }, "+ доп. работа"));
+        b.append(el("button", { style: "margin-top:14px", onclick: () => { claim(); openDiagnostics(); } }, "+ доп. работа"));
         return b;
       };
       const body = stockCache ? buildBody(stockCache) : el("div", {}, skeletonRows(2));
@@ -1493,18 +1495,20 @@ function partsEditor(parts, stock, onChange, blockId) {
     list.replaceChildren(...parts.map((p, i) => el("div", { class: "row", style: "cursor:default" },
       el("span", { style: "flex:1" }, p.name, p.price ? el("span", { class: "small muted" }, ` · ${money(p.price)}`) : null),
       qtyStepper(p.qty, (qty) => { p.qty = qty; drawList(); onChange(); }, p.maxQty,
-        () => { parts.splice(i, 1); drawList(); onChange(); }))));
+        () => { parts.splice(i, 1); drawList(); drawResults(); onChange(); }))));
   };
   drawList();
 
   // maxQty — необязательный потолок у складской позиции (спицы можно взять
   // 64, а цепь — только одну); переносим на саму запчасть в наряде, чтобы
   // qtyStepper мог его учитывать и после того, как список остатков закрыт.
+  const isAdded = (s) => parts.some((p) => p.name === s.name && p.price === (s.price || 0));
   const addPart = (s) => {
     const existing = parts.find((p) => p.name === s.name && p.price === (s.price || 0));
     if (existing) existing.qty = Math.min((existing.qty || 1) + 1, existing.maxQty || Infinity);
     else parts.push({ name: s.name, price: s.price || 0, qty: 1, maxQty: s.maxQty || 0 });
     drawList();
+    drawResults();
     onChange();
     toast(`Добавлено: ${s.name}`);
   };
@@ -1517,6 +1521,10 @@ function partsEditor(parts, stock, onChange, blockId) {
   // пункт) — сразу ищем по всем остаткам, сужать нечем.
   let wide = !blockId;
   const q = el("input", { type: "text", placeholder: "Поиск детали по названию" });
+  const clearBtn = el("button", {
+    type: "button", class: "search-clear", html: ICON_CLOSE, style: "display:none",
+    onclick: () => { q.value = ""; clearBtn.style.display = "none"; drawResults(); q.focus(); },
+  });
   const results = el("div", { class: "rows", style: "max-height:260px;overflow-y:auto;margin-top:8px" });
   const widenLink = el("p", { class: "small", style: "margin-top:2px" },
     el("a", { href: "#", onclick: (e) => { e.preventDefault(); wide = true; drawResults(); } }, "Искать среди всех остатков →"));
@@ -1528,7 +1536,9 @@ function partsEditor(parts, stock, onChange, blockId) {
     results.style.display = "";
     if (!stock.length) { results.replaceChildren(el("p", { class: "small muted", style: "padding:10px 0" }, "Остатки пусты.")); return; }
     const scoped = wide ? stock : stock.filter((s) => s.group === blockId);
-    const matched = scoped.filter((s) => s.name.toLowerCase().includes(query) || (s.sku || "").toLowerCase().includes(query)).slice(0, 40);
+    // Уже добавленное не повторяем в результатах — и так видно ниже, в
+    // «Добавлено», где у него есть свой счётчик количества с «+».
+    const matched = scoped.filter((s) => !isAdded(s) && (s.name.toLowerCase().includes(query) || (s.sku || "").toLowerCase().includes(query))).slice(0, 40);
     const rows = matched.map((s) => el("div", {
       class: "row", style: "cursor:pointer",
       onclick: () => addPart(s),
@@ -1539,10 +1549,10 @@ function partsEditor(parts, stock, onChange, blockId) {
     if (!wide) rows.push(widenLink);
     results.replaceChildren(...rows);
   };
-  q.addEventListener("input", drawResults);
+  q.addEventListener("input", () => { clearBtn.style.display = q.value ? "" : "none"; drawResults(); });
   drawResults();
 
-  return el("div", {}, q, results, listLabel, list);
+  return el("div", {}, el("div", { class: "search-wrap" }, q, clearBtn), results, listLabel, list);
 }
 
 function itemRow(it, showFacts) {
@@ -1691,14 +1701,21 @@ function costLines(it) {
   return lines;
 }
 
+// Та же вёрстка, что у repairItem («В работе») — только без клика на форму
+// (тут карточка для сверки перед звонком клиенту/выдачей, редактировать
+// нечего): имя+статус «готово» одной строкой, сумма отдельной строкой
+// покрупнее, разбивка по составляющим ниже. Раньше была своя, более сжатая
+// вёрстка — то же самое выглядело по-разному в двух соседних стадиях.
 function detailedItemRow(it) {
   const r = itemRange(it);
-  return el("div", { class: "row", style: "cursor:default;align-items:flex-start;flex-direction:column" },
-    el("div", { style: "display:flex;width:100%;gap:8px" },
-      el("span", { style: "flex:1" }, it.name, it.multiple && (it.qty || 1) > 1 ? el("span", { class: "small muted" }, ` × ${it.qty}`) : null),
-      el("span", { class: "price-tag", style: "font-size:17px" }, rangeText(r))),
-    it.notes ? el("p", { class: "small muted", style: "margin:2px 0 0" }, it.notes) : null,
-    el("div", { class: "small muted", style: "margin-top:4px" }, costLines(it).map((l) => el("div", {}, "– " + l))));
+  const nameRow = el("div", { style: "display:flex;align-items:center;gap:8px" },
+    el("b", { style: "flex:1;min-width:0" }, it.name, it.multiple && (it.qty || 1) > 1 ? el("span", { class: "small muted" }, ` × ${it.qty}`) : null),
+    it.done ? el("span", { class: "pill" }, "готово") : null);
+  return el("div", { class: "assess" },
+    nameRow,
+    el("div", { class: "price-tag", style: "margin-top:2px" }, rangeText(r)),
+    el("div", { class: "small muted", style: "margin-top:4px" }, costLines(it).map((l) => el("div", {}, "– " + l))),
+    it.notes ? el("p", { class: "small muted", style: "margin-top:4px" }, it.notes) : null);
 }
 
 // Список усложнений — на «Оценке» (прикидка для клиента, ещё не известно
