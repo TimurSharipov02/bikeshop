@@ -7,7 +7,7 @@ import { redis, readBody, requireUser, requireAdmin, hashPassword } from "./_lib
 
 const KEY = "vella:users";
 const loadUsers = async (r) => (await r.get(KEY)) || { users: [] };
-const publicUser = (u) => ({ id: u.id, login: u.login, name: u.name, role: u.role, active: u.active, createdAt: u.createdAt });
+const publicUser = (u) => ({ id: u.id, login: u.login, name: u.name, role: u.role, active: u.active, createdAt: u.createdAt, commissionPercent: u.commissionPercent || 0 });
 const activeAdmins = (users) => users.filter((x) => x.role === "admin" && x.active);
 
 export default async function handler(req, res) {
@@ -32,8 +32,9 @@ export default async function handler(req, res) {
     const store = await loadUsers(r);
     if (store.users.some((u) => u.login === login))
       return res.status(409).json({ error: "такой логин уже есть" });
+    const commissionPercent = Math.min(100, Math.max(0, Number(body.commissionPercent) || 0));
     const user = {
-      id: `${login}-${Date.now().toString(36)}`, login, name, role, active: true,
+      id: `${login}-${Date.now().toString(36)}`, login, name, role, active: true, commissionPercent,
       pwd: hashPassword(password), createdAt: new Date().toISOString(),
     };
     store.users.push(user);
@@ -49,6 +50,7 @@ export default async function handler(req, res) {
     if (!u) return res.status(404).json({ error: "не найден" });
 
     if (body.name) u.name = String(body.name).trim();
+    if (body.commissionPercent != null) u.commissionPercent = Math.min(100, Math.max(0, Number(body.commissionPercent) || 0));
 
     if (body.role === "admin" || body.role === "master") {
       if (u.role === "admin" && body.role === "master" && activeAdmins(store.users).length <= 1)

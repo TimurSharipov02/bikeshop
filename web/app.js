@@ -174,6 +174,18 @@ const fixPartsShape = (items) =>
     return { ...it, parts: it.parts.map((p) => (typeof p === "string" ? { name: p, price: 0, qty: 1 } : p)) };
   });
 
+// Раньше «кто сделал» — просто имя строкой (doneBy), одно на весь пункт.
+// Теперь completions — список {masterId, masterName, qty, at}, чтобы можно
+// было отметить, кто сколько из размноженного пункта сделал. Старые
+// завершённые пункты без completions получают один синтетический элемент
+// (masterId неизвестен — это было до разделения по мастерам).
+const fixCompletions = (items) =>
+  (items || []).map((it) => {
+    if (!it.done || (it.completions || []).length) return it;
+    const qty = it.multiple ? it.qty || 1 : 1;
+    return { ...it, completions: [{ masterId: null, masterName: it.doneBy || "—", qty, at: null }] };
+  });
+
 const migrateOrders = (orders) =>
   (orders || []).map((o) => {
     let next = o;
@@ -188,6 +200,7 @@ const migrateOrders = (orders) =>
     if (next.status === "готово к выдаче") next = { ...next, status: "взята в работу" };
     let items = fixDoneDifficulties(next.items);
     items = fixPartsShape(items);
+    items = fixCompletions(items);
     if (items !== next.items) next = { ...next, items };
     return next;
   });
@@ -266,6 +279,20 @@ async function ensureRepairs() {
     repairsCache = r.ok ? j.items || [] : [];
   } catch { repairsCache = []; }
   return repairsCache;
+}
+
+// Список мастеров (имя/роль/процент) — нужен отчётам о выработке (кто
+// сколько заработал), не только админке. Сбрасывается при любой правке
+// мастера (см. usersApi), чтобы отчёт не показывал устаревший процент.
+let usersCache = null;
+async function ensureUsers() {
+  if (usersCache) return usersCache;
+  try {
+    const r = await fetch("/api/users", { cache: "no-store" });
+    const j = await r.json();
+    usersCache = r.ok ? j.users || [] : [];
+  } catch { usersCache = []; }
+  return usersCache;
 }
 
 function safeParse(s) { try { return JSON.parse(s || "{}"); } catch { return {}; } }
@@ -402,6 +429,30 @@ const orderRange = (o) =>
 const orderAllDone = (o) => {
   const agreed = o.items.filter((i) => i.agreed);
   return agreed.length > 0 && agreed.every((i) => i.done);
+};
+// Работу мог сделать не один мастер сразу, а по частям, если пункт
+// «размножен» (multiple, qty > 1) — каждый застолбил свою долю в
+// it.completions: [{masterId, masterName, qty, at}]. Для обычного пункта
+// (qty 1) это просто один элемент. it.done по-прежнему хранимый булев флаг
+// (не пересчитывается на лету по всему приложению) — обновляется в одном
+// месте вместе с completions (см. openRepairSheet, markItemProgress).
+const itemNeedsQty = (it) => (it.multiple ? it.qty || 1 : 1);
+const totalCompletedQty = (it) => (it.completions || []).reduce((s, c) => s + (c.qty || 0), 0);
+// Стоимость самой работы (без запчастей) — то, на что начисляется процент
+// мастера: цена работы за все качественные единицы плюс подтвердившиеся
+// усложнения. Запчасти — расходники, в доход мастера не идут.
+const itemWorkValue = (it) => {
+  let v = (it.workPrice || 0) * (it.qty || 1);
+  for (const d of it.difficulties || []) if (d.state === "yes") v += (d.add || 0) * (d.qty || 1);
+  return v;
+};
+// «Тимур» — если всё сделал один мастер целиком, «Тимур ×2, Даня ×1» —
+// если размноженный пункт поделили.
+const completionsSummary = (it) => {
+  const list = it.completions || [];
+  if (!list.length) return "";
+  if (list.length === 1 && (list[0].qty || 1) >= itemNeedsQty(it)) return list[0].masterName;
+  return list.map((c) => `${c.masterName} ×${c.qty || 1}`).join(", ");
 };
 // До согласования ничего ещё не отмечено agreed — считаем по всему списку целиком.
 const orderRangeAll = (o) =>
@@ -610,8 +661,10 @@ const routes = [
   [/^\/orders\/([^/]+)$/, (m) => viewOrder(m[1])],
   [/^\/orders$/, viewOrders],
   [/^\/profile$/, viewProfile],
+  [/^\/profile\/report$/, () => masterReportScreen(SESSION?.id, "/profile")],
   [/^\/admin$/, adminOnly(viewAdmin)],
   [/^\/admin\/masters$/, adminOnly(viewMasters)],
+  [/^\/admin\/reports\/([^/]+)$/, adminOnly((m) => masterReportScreen(m[1], "/admin/masters"))],
   [/^\/admin\/stock$/, adminOnly(viewStock)],
   [/^\/admin\/overrides$/, adminOnly(viewOverrides)],
 ];
@@ -701,6 +754,7 @@ const ICONS = {
   profile: ICON_SVG('<circle cx="12" cy="9" r="3"/><path d="M6 19c1.2-3 3.6-4.5 6-4.5s4.8 1.5 6 4.5"/>'),
   masters: ICON_SVG('<circle cx="9" cy="8" r="2.5"/><path d="M4 19c.8-2.6 2.6-4 5-4s4.2 1.4 5 4"/><circle cx="17" cy="9" r="2"/><path d="M15.5 12c1.9.4 3 1.6 3.5 3.2"/>'),
   stock: ICON_SVG('<path d="M3.5 7.5 12 3l8.5 4.5V16L12 20.5 3.5 16V7.5Z"/><path d="M3.5 7.5 12 12l8.5-4.5M12 12v8.5"/>'),
+  report: ICON_SVG('<path d="M4 20V10"/><path d="M11 20V4"/><path d="M18 20v-7"/>'),
 };
 const EMPTY_ICON_BOX = ICON_SVG('<path d="M3.5 7.5 12 3l8.5 4.5V16L12 20.5 3.5 16V7.5Z"/><path d="M3.5 7.5 12 12l8.5-4.5M12 12v8.5"/>');
 const EMPTY_ICON_SEARCH = ICON_SVG('<circle cx="10" cy="10" r="6"/><path d="M20 20l-4.35-4.35"/>');
@@ -1599,8 +1653,8 @@ function itemRow(it, showFacts) {
       it.multiple && (it.qty || 1) > 1 ? el("span", { class: "small muted" }, ` × ${it.qty}`) : null,
       showFacts && !it.agreed ? el("span", { class: "pill", style: "background:var(--fill);color:var(--muted)" }, "не согласовано") : null,
       it.notes ? el("span", { class: "small muted" }, el("br"), it.notes) : null,
-      showFacts && it.done && (it.parts.length || it.doneBy) ? el("span", { class: "small muted" }, el("br"),
-        [it.parts.length ? it.parts.map(partLabel).join(", ") : null, it.doneBy].filter(Boolean).join(" · ")) : null),
+      showFacts && it.done && (it.parts.length || it.completions?.length) ? el("span", { class: "small muted" }, el("br"),
+        [it.parts.length ? it.parts.map(partLabel).join(", ") : null, completionsSummary(it)].filter(Boolean).join(" · ")) : null),
     el("span", { class: "price-tag" }, rangeText(r)));
 }
 
@@ -1921,7 +1975,7 @@ function openRepairSheet(it, stock, onSave) {
   // а не точной суммой.
   const diffs = JSON.parse(JSON.stringify(it.difficulties || [])).map((d) => (d.state === "unknown" ? { ...d, state: "no" } : d));
   const pickedParts = (it.parts || []).map((p) => ({ ...p }));
-  const save = (extra) => onSave({ parts: pickedParts, difficulties: diffs, doneBy: it.doneBy ?? SESSION?.name ?? undefined, ...extra });
+  const save = (extra) => onSave({ parts: pickedParts, difficulties: diffs, ...extra });
   const hasDiffs = diffs.length > 0;
   let tab = hasDiffs ? "diff" : "parts";
 
@@ -1934,14 +1988,53 @@ function openRepairSheet(it, stock, onSave) {
       (di, st) => { diffs[di].state = st; drawDiffs(); save(); },
       (di, qty) => { diffs[di].qty = qty; drawDiffs(); save(); }, true));
     drawDiffs();
+    // needQty > 1 — «можно несколько раз», и разные единицы мог сделать не
+    // один мастер (например, оба тормоза, но по одному на брата). Каждый
+    // отмечает «сколько из N сделал я» — список того, кто сколько застолбил,
+    // плюс поле на остаток. needQty == 1 — обычный пункт, тумблер как раньше.
+    const needQty = itemNeedsQty(it);
+    const doneQty = totalCompletedQty(it);
+    const remaining = needQty - doneQty;
+    const removeCompletion = (i) => {
+      it.completions = it.completions.filter((_, idx) => idx !== i);
+      it.done = totalCompletedQty(it) >= needQty;
+      save({ completions: it.completions, done: it.done });
+      draw();
+    };
+    const addCompletion = (qty) => {
+      it.completions = [...(it.completions || []), { masterId: SESSION?.id || null, masterName: SESSION?.name || "—", qty, at: new Date().toISOString() }];
+      it.done = totalCompletedQty(it) >= needQty;
+      save({ completions: it.completions, done: it.done });
+      toast(it.done ? "Отмечено готово" : `Отмечено ${qty} из ${needQty}`);
+      if (it.done) sheet.close(); else draw();
+    };
+    let doneBlock;
+    if (needQty <= 1) {
+      doneBlock = it.done
+        ? el("button", { style: "width:100%;margin-top:16px", onclick: () => removeCompletion(0) }, "Снять отметку «готово»")
+        : el("button", { class: "btn-ok", style: "width:100%;margin-top:16px", onclick: () => addCompletion(1) }, "Отметить готово");
+    } else {
+      let qtyInput;
+      doneBlock = el("div", { style: "margin-top:16px" },
+        (it.completions || []).length ? el("div", { class: "rows" },
+          it.completions.map((c, i) => el("div", { class: "row", style: "cursor:default" },
+            el("span", { style: "flex:1" }, c.masterName, ` — ${c.qty} из ${needQty}`),
+            el("button", { style: iconBtnStyle, onclick: () => removeCompletion(i) }, "✕")))) : null,
+        remaining > 0
+          ? el("div", { style: "display:flex;gap:8px;align-items:center;margin-top:10px" },
+              qtyInput = el("input", { type: "number", value: remaining, min: 1, max: remaining, style: "width:70px" }),
+              el("button", {
+                class: "btn-ok", style: "flex:1",
+                onclick: () => addCompletion(Math.max(1, Math.min(remaining, +qtyInput.value || remaining))),
+              }, "Отметить готово"))
+          : el("p", { class: "small", style: "color:var(--ok);margin-top:4px" }, "Всё сделано"));
+    }
     content.replaceChildren(...[
       hasDiffs ? el("div", { class: "segmented", style: "margin-bottom:14px" },
         el("button", { class: tab === "diff" ? "active" : "", onclick: () => { tab = "diff"; draw(); } }, "Усложнения"),
         el("button", { class: tab === "parts" ? "active" : "", onclick: () => { tab = "parts"; draw(); } }, "Запчасти")) : null,
       tab === "diff" ? diffBox : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(pickedParts, stock, save, partBlockIdOf(it))),
-      it.done
-        ? el("button", { style: "width:100%;margin-top:16px", onclick: () => { save({ done: false }); toast("Отметка «готово» снята"); sheet.close(); } }, "Снять отметку «готово»")
-        : el("button", { class: "btn-ok", style: "width:100%;margin-top:16px", onclick: () => { save({ done: true }); toast("Отмечено готово"); sheet.close(); } }, "Отметить готово"),
+      doneBlock,
     ].filter(Boolean));
   }
   draw();
@@ -2481,7 +2574,9 @@ function viewProfile() {
       el("div", { class: "card" },
         el("div", {}, SESSION?.name), el("div", { class: "small muted" }, SESSION?.login,
           SESSION?.role === "admin" ? el("span", { class: "pill" }, "администратор") : el("span", { class: "pill" }, "мастер"))),
-      SESSION?.role === "admin" ? el("div", { class: "rows", style: "margin-bottom:12px" }, homeLink("Админка", "/admin", ICONS.admin)) : null,
+      el("div", { class: "rows", style: "margin-bottom:12px" },
+        homeLink("Отчёт по выработке", "/profile/report", ICONS.report),
+        SESSION?.role === "admin" ? homeLink("Админка", "/admin", ICONS.admin) : null),
       formCard("Сменить пароль", null,
         [...field("Текущий пароль", "current", "password", "current-password"),
          ...field("Новый пароль", "next", "password", "new-password")],
@@ -2493,6 +2588,136 @@ function viewProfile() {
         }, "Сохранить"),
       el("button", { style: "margin-top:16px;border:0;background:none;color:var(--muted);text-decoration:underline;padding:0", onclick: logout }, "Выйти")),
   ];
+}
+
+// ============================================================================
+//  ОТЧЁТ ПО ВЫРАБОТКЕ МАСТЕРА
+// ============================================================================
+// Один и тот же экран — и «мой отчёт» в профиле, и то, что видит админ по
+// любому мастеру. Источник — сама DB (уже вся загружена на клиенте, как и
+// весь остальной наряд), отдельный API не нужен: идём по всем обращениям,
+// по всем пунктам, по completions с этим masterId.
+
+// Одна запись — доля одного пункта наряда, которую сделал этот мастер
+// (qty из completion, не всего пункта — см. itemNeedsQty/totalCompletedQty).
+function masterWorkLog(masterId) {
+  const d = loadDB();
+  const out = [];
+  for (const o of d.orders) {
+    for (const it of o.items) {
+      for (const c of it.completions || []) {
+        if (c.masterId !== masterId || !c.at) continue;
+        out.push({ order: o, item: it, completion: c, at: new Date(c.at) });
+      }
+    }
+  }
+  return out;
+}
+// Заработок мастера с одной такой записи — доля пункта (qty/needQty) от
+// стоимости работы (без запчастей), умноженная на процент.
+function entryEarned(e, percent) {
+  const share = (e.completion.qty || 0) / itemNeedsQty(e.item);
+  return share * itemWorkValue(e.item) * (percent / 100);
+}
+// День/неделя(пн–вс)/месяц — последние 14/8/6 отрезков, включая текущий.
+function reportBuckets(kind) {
+  const now = new Date();
+  const buckets = [];
+  if (kind === "day") {
+    for (let i = 13; i >= 0; i--) {
+      const from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+      const to = new Date(from.getFullYear(), from.getMonth(), from.getDate() + 1);
+      buckets.push({ label: from.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" }), from, to });
+    }
+  } else if (kind === "week") {
+    const dow = now.getDay();
+    const thisMonday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (dow === 0 ? 6 : dow - 1));
+    for (let i = 7; i >= 0; i--) {
+      const from = new Date(thisMonday.getFullYear(), thisMonday.getMonth(), thisMonday.getDate() - i * 7);
+      const to = new Date(from.getFullYear(), from.getMonth(), from.getDate() + 7);
+      buckets.push({ label: from.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" }), from, to });
+    }
+  } else {
+    for (let i = 5; i >= 0; i--) {
+      const from = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const to = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
+      buckets.push({ label: from.toLocaleDateString("ru-RU", { month: "short", year: "2-digit" }), from, to });
+    }
+  }
+  return buckets;
+}
+// Простой столбиковый график на голых div — без сторонних библиотек, тем же
+// подходом, что и весь остальной интерфейс. Столбец — доход за отрезок,
+// подпись под ним; тап по столбцу показывает сумму (title, для настольного
+// использования — на телефоне просто виден масштаб).
+function reportBarChart(buckets) {
+  const max = Math.max(1, ...buckets.map((b) => b.earned));
+  return el("div", { style: "display:flex;align-items:flex-end;gap:4px;height:120px;margin-top:14px" },
+    buckets.map((b) => el("div", { style: "flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:4px;height:100%;justify-content:flex-end" },
+      el("div", { title: money(b.earned), style: `width:100%;max-width:26px;height:${Math.max(2, Math.round((b.earned / max) * 96))}px;background:var(--accent);border-radius:3px 3px 0 0` }),
+      el("span", { class: "small muted", style: "font-size:10px;white-space:nowrap" }, b.label))));
+}
+function masterHistory(masterId, percent) {
+  const d = loadDB();
+  const byOrder = new Map();
+  for (const o of d.orders) {
+    const bike = d.bikes.find((b) => b.number === o.bikeNumber);
+    for (const it of o.items) {
+      for (const c of it.completions || []) {
+        if (c.masterId !== masterId || !c.at) continue;
+        if (!byOrder.has(o.number)) byOrder.set(o.number, { order: o, bike, lines: [], earned: 0, latest: c.at });
+        const rec = byOrder.get(o.number);
+        const earned = entryEarned({ item: it, completion: c }, percent);
+        rec.lines.push({ name: it.name, qty: c.qty, needQty: itemNeedsQty(it), earned });
+        rec.earned += earned;
+        if (c.at > rec.latest) rec.latest = c.at;
+      }
+    }
+  }
+  return [...byOrder.values()].sort((a, b) => (b.latest || "").localeCompare(a.latest || ""));
+}
+
+function masterReportScreen(masterId, backHash) {
+  const host = el("main", { class: "wrap" }, skeletonRows());
+  const onScreen = () => location.hash === "#" + (backHash === "/profile" ? "/profile/report" : `/admin/reports/${masterId}`);
+  ensureUsers().then((users) => {
+    if (!onScreen()) return;
+    const master = users.find((u) => u.id === masterId) || { id: masterId, name: "—", commissionPercent: 0 };
+    let period = "day";
+    const redraw = () => {
+      const percent = master.commissionPercent || 0;
+      const log = masterWorkLog(masterId);
+      const buckets = reportBuckets(period).map((b) => {
+        const entries = log.filter((e) => e.at >= b.from && e.at < b.to);
+        return { ...b, earned: entries.reduce((s, e) => s + entryEarned(e, percent), 0), count: entries.reduce((s, e) => s + (e.completion.qty || 0), 0) };
+      });
+      const totalEarned = buckets.reduce((s, b) => s + b.earned, 0);
+      const totalCount = buckets.reduce((s, b) => s + b.count, 0);
+      const history = masterHistory(masterId, percent);
+      host.replaceChildren(
+        el("div", { class: "card" },
+          el("div", {}, master.name, el("span", { class: "small muted" }, ` · ${percent}% от работы`)),
+          el("div", { class: "segmented", style: "margin-top:10px" },
+            ["day", "week", "month"].map((k) => el("button", {
+              class: period === k ? "active" : "", onclick: () => { period = k; redraw(); },
+            }, k === "day" ? "По дням" : k === "week" ? "По неделям" : "По месяцам"))),
+          el("div", { class: "price-range", style: "margin-top:14px" }, money(totalEarned)),
+          el("div", { class: "small muted" }, `${totalCount} работ · за показанный период`),
+          reportBarChart(buckets)),
+        el("p", { class: "small muted", style: "margin:16px 0 4px" }, "ИСТОРИЯ ВЫПОЛНЕННЫХ ОБРАЩЕНИЙ"),
+        history.length === 0
+          ? emptyState("Пока ничего не выполнено.")
+          : el("div", { class: "list", style: "gap:10px" }, history.map((rec) => el("div", { class: "card" },
+              el("div", { style: "display:flex;justify-content:space-between;gap:8px" },
+                el("div", {}, el("b", {}, rec.bike ? bikeLabel(rec.bike) : rec.order.number),
+                  el("div", { class: "small muted" }, rec.order.number, rec.latest ? " · " + formatDateShort(rec.latest) : "")),
+                el("div", { class: "price-tag" }, money(rec.earned))),
+              el("div", { class: "small muted", style: "margin-top:6px" },
+                rec.lines.map((l) => el("div", {}, l.name, l.needQty > 1 ? ` ×${l.qty} из ${l.needQty}` : "", " — ", money(l.earned))))))));
+    };
+    redraw();
+  });
+  return [bar("Отчёт по выработке", backHash), host];
 }
 
 // ============================================================================
@@ -2583,6 +2808,7 @@ async function usersApi(method, body) {
   const r = await fetch("/api/users", { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) { alert(j.error || "ошибка"); return null; }
+  usersCache = null; // список мастеров/процентов изменился — отчётам нужен свежий
   return j;
 }
 
@@ -2592,7 +2818,7 @@ function mastersScreen(list, error) {
       ev.preventDefault();
       const ok = await usersApi("POST", {
         name: ev.target.name.value.trim(), login: ev.target.login.value.trim().toLowerCase(),
-        password: ev.target.password.value, role: ev.target.role.value,
+        password: ev.target.password.value, role: ev.target.role.value, commissionPercent: ev.target.commissionPercent.value,
       });
       if (ok) { ev.target.reset(); loadMasters(); }
     },
@@ -2601,6 +2827,8 @@ function mastersScreen(list, error) {
     ...field("Имя", "name"), ...field("Логин", "login"), ...field("Пароль", "password", "password", "new-password"),
     el("label", {}, "Роль"),
     el("select", { name: "role" }, el("option", { value: "master" }, "мастер"), el("option", { value: "admin" }, "администратор")),
+    el("label", { style: "margin-top:8px" }, "Процент от стоимости работы"),
+    el("input", { name: "commissionPercent", type: "number", min: 0, max: 100, value: 0 }),
     el("div", { class: "btn-row", style: "margin-top:12px" }, el("button", { class: "btn-primary", type: "submit" }, "Добавить")));
 
   const rows = list.map((u) => {
@@ -2608,7 +2836,8 @@ function mastersScreen(list, error) {
       el("div", {}, u.name,
         u.role === "admin" ? el("span", { class: "pill" }, "админ") : null,
         !u.active ? el("span", { class: "pill" }, "отключён") : null),
-      el("div", { class: "small muted" }, u.login));
+      el("div", { class: "small muted" }, u.login),
+      el("a", { class: "small", href: `#/admin/reports/${u.id}`, style: "display:inline-block;margin-top:6px" }, "Отчёт по выработке ›"));
 
     card.append(el("form", {
       style: "display:flex;gap:8px;margin-top:10px", onsubmit: async (ev) => {
@@ -2620,6 +2849,16 @@ function mastersScreen(list, error) {
     },
       el("input", { name: "password", type: "password", placeholder: "новый пароль", style: "flex:1", autocomplete: "new-password" }),
       el("button", { type: "submit" }, "Сменить")));
+
+    card.append(el("form", {
+      style: "display:flex;gap:8px;align-items:center;margin-top:10px", onsubmit: async (ev) => {
+        ev.preventDefault();
+        if (await usersApi("PUT", { id: u.id, commissionPercent: ev.target.commissionPercent.value })) { loadMasters(); toast("Процент обновлён"); }
+      },
+    },
+      el("label", { class: "small muted", style: "flex:0 0 auto" }, "Процент от работы"),
+      el("input", { name: "commissionPercent", type: "number", min: 0, max: 100, value: u.commissionPercent || 0, style: "width:70px" }),
+      el("button", { type: "submit" }, "Сохранить")));
 
     card.append(el("div", { class: "btn-row", style: "margin-top:10px" },
       el("button", { onclick: async () => { if (await usersApi("PUT", { id: u.id, active: !u.active })) loadMasters(); } },
