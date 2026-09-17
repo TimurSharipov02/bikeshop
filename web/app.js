@@ -1378,8 +1378,18 @@ function viewOrder(number) {
     };
 
     if (order.occupiedBy && order.occupiedBy !== SESSION?.id) {
+      // Заявку ведёт другой мастер — смотреть можно (тот же список работ и
+      // итог, что и в обычном виде), редактировать и отмечать готовым нельзя:
+      // detailedItemRow (через itemList c edit=null) не кликабельна и не
+      // даёт ни открыть форму, ни поменять статус — ровно то же самое, что
+      // и на «выдан», где список тоже только для просмотра.
+      const agreedItems = order.items.filter((i) => i.agreed);
       main.append(stage("Ремонт",
-        el("p", { class: "small muted" }, `Заявку сейчас ведёт: ${order.occupiedByName || "другой мастер"}.`)));
+        el("p", { class: "small muted" }, `Заявку сейчас ведёт: ${order.occupiedByName || "другой мастер"}.`),
+        itemList({ items: agreedItems }, true, null, true, false),
+        agreedItems.length ? el("div", { class: "card", style: "background:var(--bg);margin-top:12px" },
+          el("span", { class: "muted small" }, "Итого"),
+          el("div", { class: "total" }, rangeText(range))) : null));
     } else {
       // Склад почти всегда уже в кэше (его подтягивали раньше на этом же
       // экране) — строим список сразу, без заглушек-скелетонов: иначе каждое
