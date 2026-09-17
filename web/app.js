@@ -992,12 +992,12 @@ function viewNewOrder() {
         body.append(row);
       });
       body.append(
-        el("button", { onclick: () => stepDiagnostics() }, "+ доп. работа"),
         el("div", { class: "card", style: "background:var(--bg)" },
           el("span", { class: "muted small" }, "Согласовано на"),
           el("div", { class: "price-range" }, rangeText(orderRange({ items: draft.items }))),
           minutesText(orderMinutes({ items: draft.items }, true)) ? el("div", { class: "small muted", style: "margin-top:4px" }, minutesText(orderMinutes({ items: draft.items }, true))) : null),
-        el("button", { class: "btn-primary", style: "width:100%;margin-top:12px", onclick: () => stepClient() }, "Дальше — данные клиента"));
+        el("button", { style: "width:100%;margin-top:12px", onclick: () => stepDiagnostics() }, "+ доп. работа"),
+        el("button", { class: "btn-primary", style: "width:100%;margin-top:10px", onclick: () => stepClient() }, "Дальше — данные клиента"));
       return [bar("Новое обращение", "/"), el("main", { class: "wrap" }, stage("Оценка усложнений и стоимости", body))];
     }
     redraw();
@@ -2064,8 +2064,7 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
     const wrap = el("main", { class: "wrap" });
 
     wrap.append(el("div", { class: "card" },
-      el("h2", {}, "Диагностика"),
-      el("p", { class: "small muted" }, "Раскрой узел, если с ним есть проблема, и отметь неисправность в списке."),
+      el("h2", {}, "Запрос клиента"),
       // DIAG_TOGGLES (гидравлика/механика и т.п.) пока скрыты — переключатели
       // остаются в коде с дефолтными значениями, faultVisible ими и пользуется.
       onRequest ? el("label", { class: "small muted", style: "margin-top:10px" }, "Запрос клиента (со слов)") : null,
