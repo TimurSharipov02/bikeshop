@@ -38,6 +38,64 @@ const blockTitleById = Object.fromEntries(diagBlocks.map((b) => [b.id, b.title])
 const app = document.getElementById("app");
 const money = (n) => `${Number(n || 0).toLocaleString("ru-RU")} ₽`;
 
+// Тост — короткое подтверждение действия (добавил/убрал/сохранил), которое
+// не привязано к дереву app и переживает полную перерисовку экрана: сама app
+// вычищается на каждый render(), а тост живёт своим элементом на body.
+let toastTimer = null;
+function toast(text) {
+  let node = document.getElementById("toast");
+  if (!node) {
+    node = document.createElement("div");
+    node.id = "toast";
+    node.className = "toast";
+    document.body.appendChild(node);
+  }
+  node.textContent = text;
+  node.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => node.classList.remove("show"), 1600);
+}
+
+// Модальная панель снизу экрана — для форм, которые не должны раздувать
+// список под собой (усложнения+запчасти у работы и т.п.), как в большинстве
+// современных приложений. Живёт на body, а не в дереве app — переживает
+// render() экрана позади себя, пока форма открыта. Закрывается тапом по
+// фону, крестиком или свайпом вниз по шапке.
+function openSheet(title, bodyNode) {
+  const backdrop = el("div", { class: "sheet-backdrop", onclick: () => close() });
+  const sheet = el("div", { class: "sheet" },
+    el("div", { class: "sheet-handle" }),
+    el("div", { class: "sheet-header" }, el("h2", {}, title),
+      el("button", { style: iconBtnStyle, onclick: () => close() }, "✕")),
+    el("div", { class: "sheet-body" }, bodyNode));
+  let closed = false;
+  function close() {
+    if (closed) return;
+    closed = true;
+    backdrop.classList.remove("show");
+    sheet.classList.remove("show");
+    setTimeout(() => { backdrop.remove(); sheet.remove(); }, 220);
+  }
+  // Свайп вниз по шапке — тот же жест, что закрывает системные bottom sheet.
+  let startY = null;
+  const handleArea = sheet.firstChild;
+  handleArea.addEventListener("touchstart", (e) => { startY = e.touches[0].clientY; }, { passive: true });
+  handleArea.addEventListener("touchmove", (e) => {
+    if (startY == null) return;
+    const dy = e.touches[0].clientY - startY;
+    if (dy > 0) sheet.style.transform = `translateY(${dy}px)`;
+  }, { passive: true });
+  handleArea.addEventListener("touchend", (e) => {
+    const dy = (e.changedTouches[0]?.clientY ?? startY) - startY;
+    startY = null;
+    if (dy > 60) close();
+    else sheet.style.transform = "";
+  }, { passive: true });
+  document.body.append(backdrop, sheet);
+  requestAnimationFrame(() => { backdrop.classList.add("show"); sheet.classList.add("show"); });
+  return { close };
+}
+
 /** Создать элемент: el("div", {class:"card", onclick:fn}, "текст", childNode, [array]) */
 function el(tag, attrs, ...kids) {
   const n = document.createElement(tag);
@@ -124,8 +182,6 @@ let dirty = false; // есть локальные правки, ещё не по
 let inSubScreen = false;
 let autoOpenDiagsFor = null; // номер только что созданного обращения — сразу открыть диагностику
 let editingItemCode = null; // код работы в наряде, у которой сейчас открыта форма редактирования
-const repairOpenCodes = new Set(); // коды работ в ремонте, у которых сейчас открыта форма факта (было/не было, запчасти)
-const pendingOpenCodes = new Set(); // коды работ «Ждёт согласования», у которых сейчас развёрнуты усложнения/запчасти
 let ordersSearch = ""; // архив «Обращения» — поиск по телефону клиента
 let ordersGroupBy = "created"; // архив «Обращения» — группировка: "created" | "handed"
 
@@ -452,7 +508,7 @@ function openWorkPicker({ existingItems, bikeKind, onBack, onPick }) {
   const header = () => el("header", { class: "bar" },
     el("button", { class: "back", style: "border:0;background:none", onclick: onBack }, "‹"),
     el("h1", {}, "Добавить работу"));
-  render([header(), el("main", { class: "wrap" }, el("p", { class: "muted" }, "Загрузка…"))]);
+  render([header(), el("main", { class: "wrap" }, skeletonRows())]);
   // Группировка — как на диагностике: по узлу велосипеда, в том же порядке
   // (BLOCK_TITLES), «Прочее» последним. У своих неисправностей узел — group
   // (id блока), у обычных операций каталога — по префиксу кода (blockOf).
@@ -467,7 +523,7 @@ function openWorkPicker({ existingItems, bikeKind, onBack, onPick }) {
         .filter((p) => !existingItems.some((i) => i.code === p.code))
         .filter((p) => !ql || p.code.toLowerCase().includes(ql) || p.name.toLowerCase().includes(ql));
       if (!rows.length) {
-        listBox.replaceChildren(el("p", { class: "muted small", style: "padding:13px 16px" }, "Ничего не найдено."));
+        listBox.replaceChildren(emptyState("Ничего не найдено.", EMPTY_ICON_SEARCH));
         return;
       }
       const groups = groupBy(rows, blockTitleOf);
@@ -558,6 +614,47 @@ function render(nodes, { keepScroll } = {}) {
   window.scrollTo(0, keepScroll ? y : 0);
 }
 window.addEventListener("hashchange", () => { router(); if (SESSION) syncFromServer(); });
+
+// Потянуть вниз от самого верха экрана — принудительно подтянуть свежие
+// данные с сервера (заявку мог тем временем поменять другой мастер).
+// Работает где угодно в приложении, отдельного подключения на экран не надо.
+(function setupPullToRefresh() {
+  const indicator = el("div", { class: "ptr-indicator" }, el("span", { class: "ptr-icon" }, "↓"));
+  document.body.appendChild(indicator);
+  const setY = (px) => { indicator.style.transform = `translateX(-50%) translateY(${px}px)`; };
+  const THRESHOLD = 70;
+  let startY = null, pulling = false, ready = false, refreshing = false;
+  window.addEventListener("touchstart", (e) => {
+    if (window.scrollY > 0 || refreshing || !SESSION) { startY = null; pulling = false; return; }
+    startY = e.touches[0].clientY;
+    pulling = true;
+  }, { passive: true });
+  window.addEventListener("touchmove", (e) => {
+    if (!pulling || startY == null) return;
+    const dy = e.touches[0].clientY - startY;
+    if (dy <= 0) { indicator.style.transform = ""; ready = false; return; }
+    const pull = Math.min(dy * 0.5, 90);
+    setY(pull - 60);
+    ready = pull > THRESHOLD * 0.6;
+    indicator.classList.toggle("ptr-ready", ready);
+  }, { passive: true });
+  window.addEventListener("touchend", async () => {
+    if (!pulling) return;
+    pulling = false;
+    if (!ready) { indicator.style.transform = ""; return; }
+    ready = false;
+    indicator.classList.remove("ptr-ready");
+    refreshing = true;
+    indicator.classList.add("ptr-spin");
+    setY(24);
+    await syncFromServer();
+    indicator.classList.remove("ptr-spin");
+    indicator.style.transform = "";
+    refreshing = false;
+    toast("Обновлено");
+  }, { passive: true });
+})();
+
 (async () => {
   await loadSession();
   if (SESSION) await loadOverrides();
@@ -578,6 +675,20 @@ const ICONS = {
   masters: ICON_SVG('<circle cx="9" cy="8" r="2.5"/><path d="M4 19c.8-2.6 2.6-4 5-4s4.2 1.4 5 4"/><circle cx="17" cy="9" r="2"/><path d="M15.5 12c1.9.4 3 1.6 3.5 3.2"/>'),
   stock: ICON_SVG('<path d="M3.5 7.5 12 3l8.5 4.5V16L12 20.5 3.5 16V7.5Z"/><path d="M3.5 7.5 12 12l8.5-4.5M12 12v8.5"/>'),
 };
+const EMPTY_ICON_BOX = ICON_SVG('<path d="M3.5 7.5 12 3l8.5 4.5V16L12 20.5 3.5 16V7.5Z"/><path d="M3.5 7.5 12 12l8.5-4.5M12 12v8.5"/>');
+const EMPTY_ICON_SEARCH = ICON_SVG('<circle cx="10" cy="10" r="6"/><path d="M20 20l-4.35-4.35"/>');
+// Пустое состояние — иконка + текст вместо голой строки, чуть меньше «сыро».
+function emptyState(text, icon) {
+  return el("div", { class: "empty-state" },
+    el("span", { class: "empty-state-icon", html: icon || EMPTY_ICON_BOX }),
+    el("p", { class: "muted small" }, text));
+}
+
+// Заглушка-силуэт на время подгрузки (остатки, каталог и т.п.) вместо
+// голого текста «Загрузка…» — меньше ощущается пауза.
+function skeletonRows(n = 3) {
+  return el("div", { class: "skeleton" }, Array.from({ length: n }, () => el("div", { class: "skeleton-row" })));
+}
 
 function homeLink(text, hash, icon) {
   return el("a", { class: "row", href: "#" + hash },
@@ -682,7 +793,11 @@ function formatDateGroup(iso) {
 function orderRow(o, d, onDelete, dateIso) {
   const bike = d.bikes.find((b) => b.number === o.bikeNumber);
   const client = d.clients.find((c) => c.phone === o.clientPhone);
-  const row = el("a", { class: "row", href: `#/orders/${o.number}` },
+  // Готово к выдаче больше двух суток и клиент всё ещё не забрал — отмечаем
+  // полоской сбоку, чтобы такие заявки сразу бросались в глаза в списке.
+  const overdue = o.status === "готово к выдаче" && o.finishedAt
+    && Date.now() - new Date(o.finishedAt).getTime() > 48 * 3600 * 1000;
+  const row = el("a", { class: "row" + (overdue ? " row-overdue" : ""), href: `#/orders/${o.number}` },
     el("span", { class: "code" }, o.number),
     el("span", { style: "flex:1;min-width:0" }, bike ? bikeLabel(bike) : o.bikeNumber,
       el("br"), el("span", { class: "small muted" }, client?.name || o.clientPhone),
@@ -713,7 +828,7 @@ function viewHome() {
     el("main", { class: "wrap" },
       el("h2", { class: "small muted", style: "margin:0 0 8px;font-weight:600;letter-spacing:.02em" }, "АКТИВНЫЕ ОБРАЩЕНИЯ"),
       active.length === 0
-        ? el("p", { class: "muted small" }, "Активных обращений нет.")
+        ? emptyState("Активных обращений нет.")
         : rowsList(active.map((o) => orderRow(o, d, deleteOrderWithAlert))),
       el("a", { href: "#/orders", class: "small", style: "display:inline-block;margin-top:4px" }, "Архив выданных обращений ›"),
       el("p", { class: "muted small", style: "margin-top:16px" },
@@ -787,7 +902,7 @@ function viewOrders() {
     listBox.replaceChildren(
       ...[
         issued.length === 0
-          ? el("p", { class: "muted" }, qDigits ? "Ничего не найдено." : "Пока нет выданных обращений.")
+          ? emptyState(qDigits ? "Ничего не найдено." : "Пока нет выданных обращений.", qDigits ? EMPTY_ICON_SEARCH : EMPTY_ICON_BOX)
           : null,
         ...groups.map((g) => el("div", { style: "margin-bottom:16px" },
           el("p", { class: "small muted", style: "margin:0 0 4px;letter-spacing:.02em" }, g.label.toUpperCase()),
@@ -843,19 +958,17 @@ function viewNewOrder() {
   // согласовано или нет. Единственная разница — тут ещё нет клиента и
   // велосипеда, так что шапка с ними не показывается.
   function stepAssess() {
-    const openCodes = new Set();
     let stock = stockCache || [];
     const redraw = () => render(build(), { keepScroll: true });
     if (!stockCache) ensureStock().then((s) => { stock = s; redraw(); });
     function build() {
       const body = el("div", {});
-      if (draft.items.length === 0) body.append(el("p", { class: "muted small" }, "Работ пока нет."));
+      if (draft.items.length === 0) body.append(emptyState("Работ пока нет."));
       draft.items.forEach((it) => {
-        const isOpen = openCodes.has(it.code);
         const row = el("div", { class: "assess" });
         const nameRow = el("div", {
           style: "display:flex;align-items:center;gap:8px;cursor:pointer",
-          onclick: () => { isOpen ? openCodes.delete(it.code) : openCodes.add(it.code); redraw(); },
+          onclick: () => openAssessSheet(it, stock, redraw),
         },
           el("input", {
             type: "checkbox", class: "chk", checked: it.agreed,
@@ -863,22 +976,12 @@ function viewNewOrder() {
             onchange: (e) => { it.agreed = e.target.checked; redraw(); },
           }),
           el("b", { style: "flex:1;min-width:0" }, it.name, it.multiple && (it.qty || 1) > 1 ? el("span", { class: "small muted" }, ` × ${it.qty}`) : null),
-          el("span", { style: `flex:0 0 auto;color:var(--line);font-size:19px;transform:rotate(${isOpen ? "90deg" : "0deg"});transition:transform .15s ease` }, "›"),
+          el("span", { style: "flex:0 0 auto;color:var(--line);font-size:19px" }, "›"),
           el("button", {
             style: iconBtnStyle,
             onclick: (e) => { e.stopPropagation(); draft.items = draft.items.filter((x) => x.code !== it.code); redraw(); },
           }, "✕"));
-        row.append(nameRow, el("div", { class: "small muted", style: "margin-top:2px" }, rangeText(itemRange(it))));
-        if (isOpen) {
-          if (it.multiple) row.append(el("div", { style: "margin-top:10px" }, qtyStepper(it.qty, (qty) => { it.qty = qty; redraw(); })));
-          if ((it.difficulties || []).length === 0) row.append(el("p", { class: "small muted", style: "margin-top:8px" }, "Трудностей не ожидается."));
-          else row.append(el("div", { style: "margin-top:8px" }, difficultyList(it.difficulties,
-            (di, st) => { it.difficulties[di].state = st; redraw(); },
-            (di, qty) => { if (it.difficulties[di]) it.difficulties[di].qty = qty; redraw(); })));
-          row.append(
-            el("label", { style: "margin-top:10px" }, "Запчасти"),
-            partsEditor(it.parts, stock, redraw));
-        }
+        row.append(nameRow, el("div", { class: "price-tag", style: "margin-top:2px" }, rangeText(itemRange(it))));
         body.append(row);
       });
       body.append(
@@ -1013,8 +1116,8 @@ function viewOrder(number) {
   function removeItem(code) {
     removeItemQuiet(code);
     if (editingItemCode === code) editingItemCode = null;
-    repairOpenCodes.delete(code);
     refresh();
+    toast("Работа убрана из наряда");
   }
   function saveItemEdit(code, patch) {
     editItemQuiet(code, patch);
@@ -1025,8 +1128,8 @@ function viewOrder(number) {
   // находка на повторной диагностике), ждёт явного подтверждения мастером —
   // см. pendingAgreementCard.
   const pendingHandlers = {
-    onAgree: (code) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x) x.agreed = true; }); pendingOpenCodes.delete(code); refresh(); },
-    onRemove: (code) => { editOrder(number, (o) => { o.items = o.items.filter((i) => i.code !== code); }); pendingOpenCodes.delete(code); refresh(); },
+    onAgree: (code) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x) x.agreed = true; }); refresh(); toast("Согласовано"); },
+    onRemove: (code) => { editOrder(number, (o) => { o.items = o.items.filter((i) => i.code !== code); }); refresh(); },
     onSet: (code, di, st) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x?.difficulties?.[di]) x.difficulties[di].state = st; }); refresh(); },
     onDiffQty: (code, di, qty) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x?.difficulties?.[di]) x.difficulties[di].qty = qty; }); refresh(); },
     onParts: (code, parts) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x) x.parts = parts; }); refresh(); },
@@ -1185,7 +1288,7 @@ function viewOrder(number) {
       main.append(stage("Ремонт",
         el("p", { class: "small muted" }, `Заявку сейчас ведёт: ${order.occupiedByName || "другой мастер"}.`)));
     } else {
-      const body = el("div", {}, el("p", { class: "small muted" }, "Загрузка…"));
+      const body = el("div", {}, skeletonRows(2));
       (async () => {
         const stock = await ensureStock();
         body.replaceChildren();
@@ -1196,7 +1299,6 @@ function viewOrder(number) {
           onSave: (patch) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) Object.assign(x, patch); }); refresh(); },
           onQty: (qty) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) x.qty = qty; }); refresh(); },
           onRemove: removeItem,
-          refresh,
         })));
         body.append(el("button", { onclick: () => openDiagnostics() }, "+ доп. работа"));
         body.append(el("button", { style: "margin-top:10px", onclick: leaveOrder }, "Выйти и освободить заявку"));
@@ -1233,11 +1335,22 @@ function viewOrder(number) {
     autoOpenDiagsFor = null;
     queueMicrotask(openDiagnostics);
   }
+  // Список работ длинный — «Итого» внизу карточки может уйти за экран, пока
+  // листаешь. Закреплённая мини-сумма снизу экрана держит её на виду.
+  const agreedCount = order.items.filter((i) => i.agreed).length;
+  const showStickyTotal = ["готово к выдаче", "выдан"].includes(order.status) && agreedCount > 3;
   return [
     bar(order.number, order.status === "выдан" ? "/orders" : "/", el("span", { class: "sub" }, order.status)),
     orderProgressBar(order.status, jumpToStage),
     main,
+    showStickyTotal ? stickyTotal(range) : null,
   ];
+}
+
+function stickyTotal(range) {
+  return el("div", { class: "sticky-total" },
+    el("span", { class: "muted small" }, "Итого"),
+    el("span", { class: "amount" }, rangeText(range)));
 }
 
 function stage(title, ...body) { return el("div", { class: "card" }, el("h2", {}, title), ...body); }
@@ -1283,6 +1396,7 @@ function partsEditor(parts, stock, onChange) {
           stockSelect.value = "";
           drawList();
           onChange();
+          toast(`Добавлено: ${name}`);
         },
       }, "+ добавить")),
     list);
@@ -1297,10 +1411,12 @@ function itemRow(it, showFacts) {
       it.notes ? el("span", { class: "small muted" }, el("br"), it.notes) : null,
       showFacts && it.done && (it.parts.length || it.doneBy) ? el("span", { class: "small muted" }, el("br"),
         [it.parts.length ? it.parts.map(partLabel).join(", ") : null, it.doneBy].filter(Boolean).join(" · ")) : null),
-    el("span", { class: "small muted" }, rangeText(r)));
+    el("span", { class: "price-tag" }, rangeText(r)));
 }
 
-const iconBtnStyle = "border:0;background:none;color:var(--muted);cursor:pointer;padding:0 2px;min-height:auto;font:inherit";
+// min-width/height 44px — минимальная зона тапа по HIG/WCAG, даже когда сама
+// иконка визуально мельче: без этого ✕/+/− ловятся неточно, особенно на ходу.
+const iconBtnStyle = "border:0;background:none;color:var(--muted);cursor:pointer;padding:0;min-width:44px;min-height:44px;display:inline-flex;align-items:center;justify-content:center;font:inherit";
 
 // Счётчик количества (сколько раз сделана работа/усложнение — два колеса,
 // несколько спиц и т.п.). Показывается только когда у работы или усложнения
@@ -1351,7 +1467,7 @@ function editableItemRow(it, { onRemove, onSave, refresh }) {
     el("span", { style: "width:100%" }, it.name, it.notes ? el("span", { class: "small muted" }, el("br"), it.notes) : null),
     el("div", { style: "display:flex;align-items:center;gap:10px;width:100%" },
       it.multiple ? qtyStepper(it.qty, (qty) => onSave(it.code, { qty })) : null,
-      el("span", { class: "small muted", style: "flex:1" }, rangeText(r)),
+      el("span", { class: "price-tag", style: "flex:1" }, rangeText(r)),
       el("button", { style: iconBtnStyle, onclick: () => { editingItemCode = isEditing ? null : it.code; refresh(); } }, "✎"),
       el("button", { style: iconBtnStyle, onclick: () => { if (confirm(`Убрать «${it.name}» из наряда?`)) onRemove(it.code); } }, "✕")));
   if (!isEditing) return header;
@@ -1383,8 +1499,13 @@ function editableItemRow(it, { onRemove, onSave, refresh }) {
 // Наряд сгруппирован по узлам велосипеда (блоки диагностики), порядок — как в diagnostics.json.
 // edit — {onRemove, onSave, refresh}: если передан, работы на стадии «приём»
 // можно убрать или изменить прямо в списке.
-function itemList(order, showFacts, edit, detailed) {
-  if (order.items.length === 0) return el("p", { class: "muted small" }, "Работ пока нет.");
+// grouped=false — плоский список без заголовков по узлам (КОЛЁСА, ПРОЧЕЕ…),
+// просто список работ; так, например, показан уже добавленный в наряд
+// список прямо на диагностике — там это не нужно, там и так одна тема.
+function itemList(order, showFacts, edit, detailed, grouped = true) {
+  if (order.items.length === 0) return emptyState("Работ пока нет.");
+  const row = (it) => (edit ? editableItemRow(it, edit) : detailed ? detailedItemRow(it) : itemRow(it, showFacts));
+  if (!grouped) return el("div", { class: "rows", style: "margin-top:8px" }, order.items.map(row));
   const groups = groupBy(order.items, (it) => blockOf(it.code));
   const box = el("div", { style: "margin-top:8px" });
   for (const title of [...BLOCK_TITLES, "Прочее"]) {
@@ -1392,7 +1513,7 @@ function itemList(order, showFacts, edit, detailed) {
     if (!list || !list.length) continue;
     box.append(
       el("p", { class: "small muted", style: "margin:14px 0 4px;letter-spacing:.05em" }, title.toUpperCase()),
-      el("div", { class: "rows" }, list.map((it) => edit ? editableItemRow(it, edit) : detailed ? detailedItemRow(it) : itemRow(it, showFacts))));
+      el("div", { class: "rows" }, list.map(row)));
   }
   return box;
 }
@@ -1412,7 +1533,7 @@ function detailedItemRow(it) {
   return el("div", { class: "row", style: "cursor:default;align-items:flex-start;flex-direction:column" },
     el("div", { style: "display:flex;width:100%;gap:8px" },
       el("span", { style: "flex:1" }, it.name, it.multiple && (it.qty || 1) > 1 ? el("span", { class: "small muted" }, ` × ${it.qty}`) : null),
-      el("span", {}, rangeText(r))),
+      el("span", { class: "price-tag", style: "font-size:17px" }, rangeText(r))),
     it.notes ? el("p", { class: "small muted", style: "margin:2px 0 0" }, it.notes) : null,
     el("div", { class: "small muted", style: "margin-top:4px" }, lines.map((l) => el("div", {}, "– " + l))));
 }
@@ -1463,35 +1584,69 @@ function assessItem(it, onSet, onParts, onQty) {
 // (позвонив клиенту). Без этого шага работа просто предлагается молча —
 // то как «+ доп. работа», то как невидимая навсегда, — и тут явный шаг
 // нужен в обоих случаях одинаково.
-function pendingAgreementRow(it, { onAgree, onRemove, onSet, onDiffQty, onParts, onQty, refresh }, stock) {
-  const isOpen = pendingOpenCodes.has(it.code);
+function pendingAgreementRow(it, { onAgree, onRemove, onSet, onDiffQty, onParts, onQty }, stock) {
   const r = itemRange(it);
   const box = el("div", { class: "assess" });
   const nameRow = el("div", {
     style: "display:flex;align-items:center;gap:8px;cursor:pointer",
-    onclick: () => { isOpen ? pendingOpenCodes.delete(it.code) : pendingOpenCodes.add(it.code); refresh(); },
+    onclick: () => openPendingSheet(it, stock, { onSet, onDiffQty, onParts, onQty }),
   },
     el("b", { style: "flex:1;min-width:0" }, it.name, it.multiple && (it.qty || 1) > 1 ? el("span", { class: "small muted" }, ` × ${it.qty}`) : null),
-    el("span", { style: `flex:0 0 auto;color:var(--line);font-size:19px;transform:rotate(${isOpen ? "90deg" : "0deg"});transition:transform .15s ease` }, "›"));
-  box.append(nameRow, el("div", { class: "small muted", style: "margin-top:2px" }, rangeText(r)));
-  if (isOpen) {
-    if (it.multiple) box.append(el("div", { style: "margin-top:10px" }, qtyStepper(it.qty, (qty) => onQty(it.code, qty))));
-    if ((it.difficulties || []).length === 0) box.append(el("p", { class: "small muted", style: "margin-top:8px" }, "Трудностей не ожидается."));
-    else box.append(el("div", { style: "margin-top:8px" }, difficultyList(it.difficulties,
-      (di, st) => onSet(it.code, di, st),
-      (di, qty) => onDiffQty(it.code, di, qty))));
-    // Тот же список запчастей, что и у согласованной работы («в работе») —
-    // выбор из остатков + «+ добавить», а не отдельная оценка суммой.
-    const pickedParts = (it.parts || []).map((p) => ({ ...p }));
-    box.append(
-      el("label", { style: "margin-top:10px" }, "Запчасти"),
-      partsEditor(pickedParts, stock, () => onParts(it.code, pickedParts)));
-  }
+    el("span", { style: "flex:0 0 auto;color:var(--line);font-size:19px" }, "›"));
+  box.append(nameRow, el("div", { class: "price-tag", style: "margin-top:2px" }, rangeText(r)));
+  // «Согласовано»/«Убрать» — основное действие для этой карточки, оставляем
+  // видимым сразу на строке, не прячем за открытием формы деталей.
   box.append(el("div", { class: "btn-row", style: "margin-top:10px" },
     el("button", { class: "btn-ok", onclick: () => onAgree(it.code) }, "Согласовано"),
     el("button", { onclick: () => { if (confirm(`Убрать «${it.name}» из наряда?`)) onRemove(it.code); } }, "Убрать")));
   return box;
 }
+
+// Форма деталей для «Ждёт согласования» — усложнения (прогноз) и запчасти
+// на вкладках, тем же bottom sheet, что и у согласованной работы.
+function openPendingSheet(it, stock, { onSet, onDiffQty, onParts, onQty }) {
+  const hasDiffs = (it.difficulties || []).length > 0;
+  let tab = hasDiffs ? "diff" : "parts";
+  const content = el("div", {});
+  function draw() {
+    content.replaceChildren(
+      it.multiple ? el("div", { style: "margin-bottom:14px" }, qtyStepper(it.qty, (qty) => { onQty(it.code, qty); draw(); })) : null,
+      hasDiffs ? el("div", { class: "segmented", style: "margin-bottom:14px" },
+        el("button", { class: tab === "diff" ? "active" : "", onclick: () => { tab = "diff"; draw(); } }, "Усложнения"),
+        el("button", { class: tab === "parts" ? "active" : "", onclick: () => { tab = "parts"; draw(); } }, "Запчасти")) : null,
+      tab === "diff"
+        ? (hasDiffs ? difficultyList(it.difficulties, (di, st) => { onSet(it.code, di, st); draw(); }, (di, qty) => { onDiffQty(it.code, di, qty); draw(); })
+          : el("p", { class: "small muted" }, "Трудностей не ожидается."))
+        : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(it.parts, stock, () => { onParts(it.code, it.parts); draw(); })));
+  }
+  draw();
+  openSheet(it.name, content);
+}
+
+// Та же форма деталей — на «Оценке усложнений и стоимости» при создании
+// обращения, до появления самого наряда: правки идут прямо в draft.items,
+// onChange — просто перерисовать список работ позади.
+function openAssessSheet(it, stock, onChange) {
+  const hasDiffs = (it.difficulties || []).length > 0;
+  let tab = hasDiffs ? "diff" : "parts";
+  const content = el("div", {});
+  function draw() {
+    content.replaceChildren(
+      it.multiple ? el("div", { style: "margin-bottom:14px" }, qtyStepper(it.qty, (qty) => { it.qty = qty; draw(); onChange(); })) : null,
+      hasDiffs ? el("div", { class: "segmented", style: "margin-bottom:14px" },
+        el("button", { class: tab === "diff" ? "active" : "", onclick: () => { tab = "diff"; draw(); } }, "Усложнения"),
+        el("button", { class: tab === "parts" ? "active" : "", onclick: () => { tab = "parts"; draw(); } }, "Запчасти")) : null,
+      tab === "diff"
+        ? (hasDiffs ? difficultyList(it.difficulties,
+            (di, st) => { it.difficulties[di].state = st; draw(); onChange(); },
+            (di, qty) => { if (it.difficulties[di]) it.difficulties[di].qty = qty; draw(); onChange(); })
+          : el("p", { class: "small muted" }, "Трудностей не ожидается."))
+        : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(it.parts, stock, () => { draw(); onChange(); })));
+  }
+  draw();
+  openSheet(it.name, content);
+}
+
 function pendingAgreementCard(order, handlers, stock) {
   const pending = order.items.filter((i) => !i.agreed);
   if (!pending.length) return null;
@@ -1501,14 +1656,31 @@ function pendingAgreementCard(order, handlers, stock) {
     ...pending.map((it) => pendingAgreementRow(it, handlers, stock)));
 }
 
-// Нет отдельной кнопки «отметить/изменить»: тап по названию только
-// открывает/закрывает форму факта (посмотреть/поправить, без побочных
-// эффектов). Правки в форме (было/не было, запчасти) сохраняются сами, без
+// Нет отдельной кнопки «отметить/изменить»: тап по работе открывает форму
+// факта снизу экрана (bottom sheet) — список работ под ней остаётся на
+// месте, не раздувается. Убрать работу — свайп влево, как заявки в архиве.
+// Правки в форме (было/не было, запчасти) сохраняются сами, без
 // подтверждения, но на статус «готово» не влияют — им управляет одна кнопка
-// внизу открытой формы: «Готово» либо «Отменить» (если готово поставили по
-// ошибке или работа оказалась не завершена), в обе стороны без ограничений.
-function repairItem(it, stock, { onRun, onSave, onQty, onRemove, refresh }) {
-  const isOpen = repairOpenCodes.has(it.code);
+// внизу формы: «Готово» либо «Отменить», в обе стороны без ограничений.
+function repairItem(it, stock, { onRun, onSave, onQty, onRemove }) {
+  const box = el("div", { class: "assess" });
+  const nameRow = el("div", {
+    style: "display:flex;align-items:center;gap:8px;cursor:pointer",
+    onclick: () => openRepairSheet(it, stock, onSave),
+  },
+    el("b", { style: "flex:1;min-width:0" }, it.name),
+    it.done ? el("span", { class: "pill" }, "готово") : null,
+    el("span", { style: "flex:0 0 auto;color:var(--line);font-size:19px" }, "›"));
+  box.append(nameRow, el("div", { class: "price-tag", style: "margin-top:2px" }, rangeText(itemRange(it))));
+  if (it.multiple) box.append(el("div", { style: "margin-top:10px" }, qtyStepper(it.qty, onQty)));
+  if (it.notes) box.append(el("p", { class: "small muted" }, it.notes));
+  return onRemove ? swipeToDelete(box, () => { onRemove(it.code); return true; }) : box;
+}
+
+// Содержимое bottom sheet для repairItem — усложнения/запчасти на вкладках
+// (одна вкладка, если запчастям нечего показывать усложнения, и наоборот),
+// «Готово»/«Отменить» внизу закрывает форму — с ней покончено.
+function openRepairSheet(it, stock, onSave) {
   // «неизвестно» — прогнозное состояние (по умолчанию у новой работы), тут
   // такого выбора нет (см. fact:true ниже) — приводим к «не было», иначе
   // помеченная «готово» работа продолжала бы считаться диапазоном цены,
@@ -1516,44 +1688,29 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove, refresh }) {
   const diffs = JSON.parse(JSON.stringify(it.difficulties || [])).map((d) => (d.state === "unknown" ? { ...d, state: "no" } : d));
   const pickedParts = (it.parts || []).map((p) => ({ ...p }));
   const save = (extra) => onSave({ parts: pickedParts, difficulties: diffs, doneBy: it.doneBy ?? SESSION?.name ?? undefined, ...extra });
+  const hasDiffs = diffs.length > 0;
+  let tab = hasDiffs ? "diff" : "parts";
 
-  const box = el("div", { class: "assess" });
-  const nameRow = el("div", {
-    style: "display:flex;align-items:center;gap:8px;cursor:pointer",
-    onclick: () => { isOpen ? repairOpenCodes.delete(it.code) : repairOpenCodes.add(it.code); refresh(); },
-  },
-    el("b", { style: "flex:1;min-width:0" }, it.name),
-    it.done ? el("span", { class: "pill" }, "готово") : null,
-    el("span", { style: `flex:0 0 auto;color:var(--line);font-size:19px;transform:rotate(${isOpen ? "90deg" : "0deg"});transition:transform .15s ease` }, "›"),
-    onRemove
-      ? el("button", {
-          style: iconBtnStyle,
-          onclick: (e) => { e.stopPropagation(); if (confirm(`Убрать «${it.name}» из наряда?`)) onRemove(it.code); },
-        }, "✕")
-      : null);
-  box.append(nameRow, el("div", { class: "small muted", style: "margin-top:2px" }, rangeText(itemRange(it))));
-  if (it.multiple) box.append(el("div", { style: "margin-top:10px" }, qtyStepper(it.qty, onQty)));
-  if (it.notes) box.append(el("p", { class: "small muted" }, it.notes));
-  if (!isOpen) return box;
-
-  const form = el("div", { style: "margin-top:8px" });
-  const diffBox = el("div", {});
-  // Тут уже не прогноз, а факт — работа сделана, известно точно, было
-  // усложнение или нет. Третий вариант («неизвестно») тут ни к чему.
-  const drawDiffs = () => diffBox.replaceChildren(difficultyList(diffs,
-    (di, st) => { diffs[di].state = st; drawDiffs(); save(); },
-    (di, qty) => { diffs[di].qty = qty; drawDiffs(); save(); }, true));
-  drawDiffs();
-  if (diffs.length) form.append(el("label", {}, "Усложнения по факту"));
-  form.append(
-    diffBox,
-    el("label", {}, "Запчасти"),
-    partsEditor(pickedParts, stock, save),
-    it.done
-      ? el("button", { style: "width:100%;margin-top:12px", onclick: () => { repairOpenCodes.delete(it.code); save({ done: false }); } }, "Отменить")
-      : el("button", { class: "btn-ok", style: "width:100%;margin-top:12px", onclick: () => { repairOpenCodes.delete(it.code); save({ done: true }); } }, "Готово"));
-  box.append(form);
-  return box;
+  const content = el("div", {});
+  function draw() {
+    const diffBox = el("div", {});
+    // Тут уже не прогноз, а факт — работа сделана, известно точно, было
+    // усложнение или нет. Третий вариант («неизвестно») тут ни к чему.
+    const drawDiffs = () => diffBox.replaceChildren(difficultyList(diffs,
+      (di, st) => { diffs[di].state = st; drawDiffs(); save(); },
+      (di, qty) => { diffs[di].qty = qty; drawDiffs(); save(); }, true));
+    drawDiffs();
+    content.replaceChildren(
+      hasDiffs ? el("div", { class: "segmented", style: "margin-bottom:14px" },
+        el("button", { class: tab === "diff" ? "active" : "", onclick: () => { tab = "diff"; draw(); } }, "Усложнения"),
+        el("button", { class: tab === "parts" ? "active" : "", onclick: () => { tab = "parts"; draw(); } }, "Запчасти")) : null,
+      tab === "diff" ? diffBox : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(pickedParts, stock, save)),
+      it.done
+        ? el("button", { style: "width:100%;margin-top:16px", onclick: () => { save({ done: false }); toast("Статус снят"); sheet.close(); } }, "Отменить")
+        : el("button", { class: "btn-ok", style: "width:100%;margin-top:16px", onclick: () => { save({ done: true }); toast("Отмечено готово"); sheet.close(); } }, "Готово"));
+  }
+  draw();
+  const sheet = openSheet(it.name, content);
 }
 
 // ============================================================================
@@ -1861,7 +2018,7 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
           onRemove: (code) => { onUncheck({ code }); uncheckByCode(code); draw(); },
           onSave: (code, patch) => { onEditItem(code, patch); draw(); },
           refresh: draw,
-        })));
+        }, false, false)));
     }
 
     for (const inst of list) {
@@ -1906,13 +2063,13 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
                   f.custom ? el("span", { class: "pill" }, rangeText(customFaultRange(f))) : null)),
               isAdmin
                 ? el("button", {
-                    style: "border:0;background:none;color:var(--muted);cursor:pointer;padding:0;min-height:auto;font:inherit",
+                    style: iconBtnStyle,
                     onclick: () => { editingThis ? editOverrideFor.delete(editKey) : editOverrideFor.add(editKey); draw(); },
                   }, "✎")
                 : null,
               isAdmin
                 ? el("button", {
-                    style: "border:0;background:none;color:var(--muted);cursor:pointer;padding:0;min-height:auto;font:inherit",
+                    style: iconBtnStyle,
                     onclick: async () => {
                       if (!confirm(`Убрать «${f.label}» из списка совсем?`)) return;
                       const wasChecked = s.faults.has(i);
@@ -1981,7 +2138,7 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
     onDone(notes);
   }
 
-  host.replaceChildren(el("main", { class: "wrap" }, el("p", { class: "muted" }, "Загрузка…")));
+  host.replaceChildren(el("main", { class: "wrap" }, skeletonRows()));
   ensureRepairs().then((r) => { repairs = r; draw(); });
 }
 
@@ -2120,7 +2277,7 @@ async function loadOverridesScreen() {
 }
 function viewOverrides() {
   loadOverridesScreen();
-  return [bar("Переопределения работ", "/admin"), el("main", { class: "wrap" }, el("p", { class: "muted" }, "Загрузка…"))];
+  return [bar("Переопределения работ", "/admin"), el("main", { class: "wrap" }, skeletonRows())];
 }
 
 function overridesScreen(byCode, error) {
@@ -2169,7 +2326,7 @@ async function loadMasters() {
 }
 function viewMasters() {
   loadMasters();
-  return [bar("Мастера", "/admin"), el("main", { class: "wrap" }, el("p", { class: "muted" }, "Загрузка…"))];
+  return [bar("Мастера", "/admin"), el("main", { class: "wrap" }, skeletonRows())];
 }
 
 async function usersApi(method, body) {
@@ -2251,7 +2408,7 @@ async function loadStock() {
 }
 function viewStock() {
   loadStock();
-  return [bar("Остатки по запчастям", "/admin"), el("main", { class: "wrap" }, el("p", { class: "muted" }, "Загрузка…"))];
+  return [bar("Остатки по запчастям", "/admin"), el("main", { class: "wrap" }, skeletonRows())];
 }
 
 async function saveStockItems(items) {
@@ -2281,7 +2438,7 @@ function stockScreen(data, error) {
       error ? el("p", { class: "small", style: "color:var(--warn)" }, error) : null,
       updated ? el("p", { class: "small muted" }, "Обновлено: " + updated) : null,
       el("div", { class: "card" },
-        rows.length ? el("div", { class: "list" }, rows) : el("p", { class: "muted small" }, "Пока пусто."),
+        rows.length ? el("div", { class: "list" }, rows) : emptyState("Пока пусто."),
         el("button", { style: "margin-top:10px", onclick: () => { items.push({ sku: "", name: "", qty: 0, unit: "шт", price: 0 }); render(stockScreen({ items, updatedAt: data.updatedAt }, "")); } }, "+ строка"),
         el("div", { class: "btn-row", style: "margin-top:12px" },
           el("button", { class: "btn-primary", onclick: () => saveStockItems(items) }, "Сохранить"))),
