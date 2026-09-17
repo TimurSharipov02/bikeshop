@@ -31,6 +31,11 @@ const BLOCK_TITLES = [...diagBlocks.map((b) => b.title), "Мойка и конс
 const blockByPrefix = { WSH: "Мойка и консервация" };
 for (const b of diagBlocks) for (const pre of b.codes || []) blockByPrefix[pre] = b.title;
 const blockOf = (code) => blockByPrefix[String(code || "").split("-")[0]] || "Прочее";
+// То же самое, но id блока (WHL/BRK/...), а не название — для группировки
+// запчастей по узлу: у какой работы какие детали предлагать первыми.
+const blockIdByPrefix = {};
+for (const b of diagBlocks) for (const pre of b.codes || []) blockIdByPrefix[pre] = b.id;
+const blockIdOf = (code) => blockIdByPrefix[String(code || "").split("-")[0]] || "";
 // Свои неисправности (catalog/repairs) привязаны к узлу напрямую через group
 // (id блока), а не через префикс кода — их так по коду не сгруппировать.
 const blockTitleById = Object.fromEntries(diagBlocks.map((b) => [b.id, b.title]));
@@ -1358,12 +1363,16 @@ function stage(title, ...body) { return el("div", { class: "card" }, el("h2", {}
 // Название запчасти с количеством, если больше одной штуки — «Ротор × 2».
 const partLabel = (p) => p.name + ((p.qty || 1) > 1 ? ` × ${p.qty}` : "");
 
-// Список запчастей у работы — выбираешь деталь из остатков, она появляется
-// строкой ниже со своим счётчиком количества (плюс/минус), без повторного
-// похода в выпадающий список ради второй штуки. Общее для ремонта («в
-// работе»), «Ждёт согласования» и оценки при создании обращения — мутирует
-// parts на месте, onChange зовёт сохранение и перерисовку у вызывающего.
-function partsEditor(parts, stock, onChange) {
+// Список запчастей у работы — поиск по названию/артикулу вместо длинного
+// выпадающего списка (в остатках их могут быть тысячи); пока не набрано
+// ничего в поиске, показаны детали узла этой работы (blockId — id блока
+// диагностики, WHL/BRK/...), чтобы не листать весь каталог ради тормозного
+// троса на ремонте тормоза. Тап по найденной детали сразу добавляет её —
+// строкой со своим счётчиком количества (плюс/минус). Общее для ремонта
+// («в работе»), «Ждёт согласования» и оценки при создании обращения —
+// мутирует parts на месте, onChange зовёт сохранение и перерисовку у
+// вызывающего.
+function partsEditor(parts, stock, onChange, blockId) {
   const list = el("div", {});
   const drawList = () => {
     list.replaceChildren(...parts.map((p, i) => el("div", { style: "display:flex;align-items:center;gap:10px;margin-top:6px" },
@@ -1375,31 +1384,40 @@ function partsEditor(parts, stock, onChange) {
       }, "✕"))));
   };
   drawList();
-  const stockSelect = el("select", { style: "width:auto;flex:1" },
-    el("option", { value: "" }, stock.length ? "— выбрать деталь —" : "остатки пусты"),
-    stock.map((s) => el("option", { value: s.sku || s.name },
-      `${s.name}${s.sku ? " · " + s.sku : ""}${s.price ? ` · ${money(s.price)}` : ""}`)));
-  return el("div", {},
-    el("div", { style: "display:flex;gap:8px" },
-      stockSelect,
-      el("button", {
-        style: "flex:0 0 auto",
-        onclick: () => {
-          const v = stockSelect.value;
-          if (!v) return;
-          const found = stock.find((s) => (s.sku || s.name) === v);
-          const name = found ? found.name : v;
-          const price = found?.price || 0;
-          const existing = parts.find((p) => p.name === name && p.price === price);
-          if (existing) existing.qty = (existing.qty || 1) + 1;
-          else parts.push({ name, price, qty: 1 });
-          stockSelect.value = "";
-          drawList();
-          onChange();
-          toast(`Добавлено: ${name}`);
-        },
-      }, "+ добавить")),
-    list);
+
+  const addPart = (s) => {
+    const existing = parts.find((p) => p.name === s.name && p.price === (s.price || 0));
+    if (existing) existing.qty = (existing.qty || 1) + 1;
+    else parts.push({ name: s.name, price: s.price || 0, qty: 1 });
+    drawList();
+    onChange();
+    toast(`Добавлено: ${s.name}`);
+  };
+
+  const q = el("input", { type: "text", placeholder: "Поиск детали по названию или артикулу" });
+  const results = el("div", { class: "rows", style: "max-height:260px;overflow-y:auto;margin-top:8px" });
+  const drawResults = () => {
+    if (!stock.length) { results.replaceChildren(el("p", { class: "small muted", style: "padding:10px 0" }, "Остатки пусты.")); return; }
+    const query = q.value.trim().toLowerCase();
+    const items = query
+      ? stock.filter((s) => s.name.toLowerCase().includes(query) || (s.sku || "").toLowerCase().includes(query)).slice(0, 40)
+      : (blockId ? stock.filter((s) => s.group === blockId) : []).slice(0, 20);
+    if (!items.length) {
+      results.replaceChildren(el("p", { class: "small muted", style: "padding:10px 0" },
+        query ? "Ничего не найдено." : "Начните вводить название или артикул."));
+      return;
+    }
+    results.replaceChildren(...items.map((s) => el("div", {
+      class: "row", style: "cursor:pointer",
+      onclick: () => addPart(s),
+    },
+      el("span", { style: "flex:1" }, s.name, s.sku ? el("span", { class: "small muted" }, " · " + s.sku) : null),
+      el("span", { class: "small muted" }, s.price ? money(s.price) : ""))));
+  };
+  q.addEventListener("input", drawResults);
+  drawResults();
+
+  return el("div", {}, q, results, list);
 }
 
 function itemRow(it, showFacts) {
@@ -1617,7 +1635,7 @@ function openPendingSheet(it, stock, { onSet, onDiffQty, onParts, onQty }) {
       tab === "diff"
         ? (hasDiffs ? difficultyList(it.difficulties, (di, st) => { onSet(it.code, di, st); draw(); }, (di, qty) => { onDiffQty(it.code, di, qty); draw(); })
           : el("p", { class: "small muted" }, "Трудностей не ожидается."))
-        : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(it.parts, stock, () => { onParts(it.code, it.parts); draw(); })));
+        : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(it.parts, stock, () => { onParts(it.code, it.parts); draw(); }, blockIdOf(it.code))));
   }
   draw();
   openSheet(it.name, content);
@@ -1641,7 +1659,7 @@ function openAssessSheet(it, stock, onChange) {
             (di, st) => { it.difficulties[di].state = st; draw(); onChange(); },
             (di, qty) => { if (it.difficulties[di]) it.difficulties[di].qty = qty; draw(); onChange(); })
           : el("p", { class: "small muted" }, "Трудностей не ожидается."))
-        : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(it.parts, stock, () => { draw(); onChange(); })));
+        : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(it.parts, stock, () => { draw(); onChange(); }, blockIdOf(it.code))));
   }
   draw();
   openSheet(it.name, content);
@@ -1704,7 +1722,7 @@ function openRepairSheet(it, stock, onSave) {
       hasDiffs ? el("div", { class: "segmented", style: "margin-bottom:14px" },
         el("button", { class: tab === "diff" ? "active" : "", onclick: () => { tab = "diff"; draw(); } }, "Усложнения"),
         el("button", { class: tab === "parts" ? "active" : "", onclick: () => { tab = "parts"; draw(); } }, "Запчасти")) : null,
-      tab === "diff" ? diffBox : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(pickedParts, stock, save)),
+      tab === "diff" ? diffBox : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(pickedParts, stock, save, blockIdOf(it.code))),
       it.done
         ? el("button", { style: "width:100%;margin-top:16px", onclick: () => { save({ done: false }); toast("Статус снят"); sheet.close(); } }, "Отменить")
         : el("button", { class: "btn-ok", style: "width:100%;margin-top:16px", onclick: () => { save({ done: true }); toast("Отмечено готово"); sheet.close(); } }, "Готово"));
@@ -2419,17 +2437,44 @@ async function saveStockItems(items) {
   render(stockScreen(j, ""));
 }
 
+// Группы остатков — те же узлы, что и в диагностике (WHL/BRK/...), плюс
+// мойка; по ним потом фильтруется подбор запчасти к конкретной работе.
+const STOCK_GROUPS = [...diagBlocks.map((b) => ({ id: b.id, title: b.title })), { id: "WSH", title: "Мойка и консервация" }];
+
 function stockScreen(data, error) {
   const items = (data.items || []).map((it) => ({ ...it }));
   const updated = data.updatedAt ? new Date(data.updatedAt).toLocaleString("ru-RU") : null;
+  let q = "";
 
-  const rows = items.map((it, i) => el("div", { class: "price-row", style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" },
-    el("input", { value: it.sku, style: "width:90px", placeholder: "артикул", onchange: (ev) => { items[i].sku = ev.target.value; } }),
-    el("input", { value: it.name, style: "flex:1;min-width:120px", placeholder: "название", onchange: (ev) => { items[i].name = ev.target.value; } }),
-    el("input", { type: "number", value: it.qty, style: "width:70px;text-align:right", placeholder: "остаток", onchange: (ev) => { items[i].qty = +ev.target.value || 0; } }),
-    el("input", { value: it.unit, style: "width:60px", placeholder: "ед.", onchange: (ev) => { items[i].unit = ev.target.value; } }),
-    el("input", { type: "number", value: it.price || 0, style: "width:80px;text-align:right", placeholder: "цена", onchange: (ev) => { items[i].price = +ev.target.value || 0; } }),
-    el("button", { onclick: () => saveStockItems(items.filter((_, j2) => j2 !== i)) }, "✕")));
+  // Остатков может быть тысячи (реальная выгрузка из 1С) — рендерить сразу
+  // все строки-с-полями браузер не потянет, поэтому редактор построчно
+  // показывает только то, что нашлось по поиску.
+  const searchInput = el("input", { type: "text", placeholder: "Поиск по названию или артикулу, чтобы отредактировать позицию" });
+  const rowsBox = el("div", { class: "list" });
+  const drawRows = () => {
+    const ql = q.trim().toLowerCase();
+    if (!ql) {
+      rowsBox.replaceChildren(el("p", { class: "muted small" }, `Всего позиций: ${items.length}. Введите поиск, чтобы найти и отредактировать конкретную.`));
+      return;
+    }
+    const matchedIdx = items
+      .map((it, i) => ({ it, i }))
+      .filter(({ it }) => it.name.toLowerCase().includes(ql) || (it.sku || "").toLowerCase().includes(ql))
+      .slice(0, 60);
+    if (!matchedIdx.length) { rowsBox.replaceChildren(emptyState("Ничего не найдено.", EMPTY_ICON_SEARCH)); return; }
+    rowsBox.replaceChildren(...matchedIdx.map(({ it, i }) => el("div", { class: "price-row", style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" },
+      el("input", { value: it.sku, style: "width:90px", placeholder: "артикул", onchange: (ev) => { items[i].sku = ev.target.value; } }),
+      el("input", { value: it.name, style: "flex:1;min-width:120px", placeholder: "название", onchange: (ev) => { items[i].name = ev.target.value; } }),
+      el("input", { type: "number", value: it.qty, style: "width:70px;text-align:right", placeholder: "остаток", onchange: (ev) => { items[i].qty = +ev.target.value || 0; } }),
+      el("input", { value: it.unit, style: "width:60px", placeholder: "ед.", onchange: (ev) => { items[i].unit = ev.target.value; } }),
+      el("input", { type: "number", value: it.price || 0, style: "width:80px;text-align:right", placeholder: "цена", onchange: (ev) => { items[i].price = +ev.target.value || 0; } }),
+      el("select", { style: "width:auto", onchange: (ev) => { items[i].group = ev.target.value; } },
+        el("option", { value: "", selected: !it.group }, "без узла"),
+        STOCK_GROUPS.map((g) => el("option", { value: g.id, selected: it.group === g.id }, g.title))),
+      el("button", { onclick: () => { items.splice(i, 1); drawRows(); } }, "✕"))));
+  };
+  drawRows();
+  searchInput.addEventListener("input", (e) => { q = e.target.value; drawRows(); });
 
   const importArea = el("textarea", { rows: 4 });
   return [
@@ -2438,20 +2483,21 @@ function stockScreen(data, error) {
       error ? el("p", { class: "small", style: "color:var(--warn)" }, error) : null,
       updated ? el("p", { class: "small muted" }, "Обновлено: " + updated) : null,
       el("div", { class: "card" },
-        rows.length ? el("div", { class: "list" }, rows) : emptyState("Пока пусто."),
-        el("button", { style: "margin-top:10px", onclick: () => { items.push({ sku: "", name: "", qty: 0, unit: "шт", price: 0 }); render(stockScreen({ items, updatedAt: data.updatedAt }, "")); } }, "+ строка"),
+        searchInput,
+        el("div", { style: "margin-top:10px" }, rowsBox),
+        el("button", { style: "margin-top:10px", onclick: () => { items.push({ sku: "", name: "", qty: 0, unit: "шт", price: 0, group: "" }); render(stockScreen({ items, updatedAt: data.updatedAt }, "")); } }, "+ строка"),
         el("div", { class: "btn-row", style: "margin-top:12px" },
           el("button", { class: "btn-primary", onclick: () => saveStockItems(items) }, "Сохранить"))),
       el("div", { class: "card" },
         el("h2", {}, "Импорт списком"),
-        el("p", { class: "small muted" }, "Пока без прямой связи с 1С — вставьте выгрузку сюда, каждая позиция с новой строки: артикул;название;остаток;единица;цена. Полностью заменит список выше."),
+        el("p", { class: "small muted" }, "Пока без прямой связи с 1С — вставьте выгрузку сюда, каждая позиция с новой строки: артикул;название;остаток;единица;цена;узел (WHL/BRK/BB/STR/FRM/DRV/WSH, можно пусто). Полностью заменит список выше."),
         importArea,
         el("div", { class: "btn-row", style: "margin-top:10px" },
           el("button", {
             onclick: () => {
               const parsed = importArea.value.split("\n").map((line) => line.split(";").map((s) => s.trim()))
                 .filter((p) => p[0] || p[1])
-                .map(([sku, name, qty, unit, price]) => ({ sku: sku || "", name: name || "", qty: Number(qty) || 0, unit: unit || "шт", price: Number(price) || 0 }));
+                .map(([sku, name, qty, unit, price, group]) => ({ sku: sku || "", name: name || "", qty: Number(qty) || 0, unit: unit || "шт", price: Number(price) || 0, group: group || "" }));
               if (parsed.length) saveStockItems(parsed);
             },
           }, "Импортировать (заменит список)")))),
