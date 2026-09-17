@@ -1293,23 +1293,29 @@ function viewOrder(number) {
       main.append(stage("Ремонт",
         el("p", { class: "small muted" }, `Заявку сейчас ведёт: ${order.occupiedByName || "другой мастер"}.`)));
     } else {
-      const body = el("div", {}, skeletonRows(2));
-      (async () => {
-        const stock = await ensureStock();
-        body.replaceChildren();
+      // Склад почти всегда уже в кэше (его подтягивали раньше на этом же
+      // экране) — строим список сразу, без заглушек-скелетонов: иначе каждое
+      // «Готово»/«Отменить» дёргает refresh() → viewOrder() заново, и список
+      // на миг мигает пустыми полосками вместо того, чтобы просто остаться
+      // на месте с обновлённым пунктом.
+      const buildBody = (stock) => {
+        const b = el("div", {});
         const pendingCard = pendingAgreementCard(order, pendingHandlers, stock);
-        if (pendingCard) body.append(pendingCard);
-        order.items.filter((i) => i.agreed).forEach((it) => body.append(repairItem(it, stock, {
+        if (pendingCard) b.append(pendingCard);
+        order.items.filter((i) => i.agreed).forEach((it) => b.append(repairItem(it, stock, {
           onRun: () => openRunner(it.code),
           onSave: (patch) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) Object.assign(x, patch); }); refresh(); },
           onQty: (qty) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) x.qty = qty; }); refresh(); },
           onRemove: removeItem,
         })));
-        body.append(el("button", { onclick: () => openDiagnostics() }, "+ доп. работа"));
-        body.append(el("button", { style: "margin-top:10px", onclick: leaveOrder }, "Выйти и освободить заявку"));
+        b.append(el("button", { onclick: () => openDiagnostics() }, "+ доп. работа"));
+        b.append(el("button", { style: "margin-top:10px", onclick: leaveOrder }, "Выйти и освободить заявку"));
         const allDone = order.items.filter((i) => i.agreed).length > 0 && order.items.filter((i) => i.agreed).every((i) => i.done);
-        if (allDone) body.append(el("button", { class: "btn-primary", style: "width:100%;margin-top:12px", onclick: () => setStatus("готово к выдаче", (o) => { o.finishedAt = new Date().toISOString(); o.occupiedBy = null; o.occupiedByName = ""; }) }, "Готово к выдаче"));
-      })();
+        if (allDone) b.append(el("button", { class: "btn-primary", style: "width:100%;margin-top:12px", onclick: () => setStatus("готово к выдаче", (o) => { o.finishedAt = new Date().toISOString(); o.occupiedBy = null; o.occupiedByName = ""; }) }, "Готово к выдаче"));
+        return b;
+      };
+      const body = stockCache ? buildBody(stockCache) : el("div", {}, skeletonRows(2));
+      if (!stockCache) ensureStock().then((s) => body.replaceChildren(...buildBody(s).childNodes));
       main.append(stage("Ремонт", body));
     }
   }
@@ -1394,25 +1400,32 @@ function partsEditor(parts, stock, onChange, blockId) {
     toast(`Добавлено: ${s.name}`);
   };
 
-  const q = el("input", { type: "text", placeholder: "Поиск детали по названию или артикулу" });
+  // Пока не расширили поиск вручную — показываем только детали узла этой
+  // работы (тормоз чиним — тормозные и предлагаем), не весь склад. Если
+  // работа не привязана ни к какому узлу (свой/старый пункт) — сразу ищем
+  // по всем остаткам, сужать нечем.
+  let wide = !blockId;
+  const q = el("input", { type: "text", placeholder: "Поиск детали по названию" });
   const results = el("div", { class: "rows", style: "max-height:260px;overflow-y:auto;margin-top:8px" });
+  const widenLink = el("p", { class: "small", style: "margin-top:2px" },
+    el("a", { href: "#", onclick: (e) => { e.preventDefault(); wide = true; drawResults(); } }, "Искать среди всех остатков →"));
   const drawResults = () => {
     if (!stock.length) { results.replaceChildren(el("p", { class: "small muted", style: "padding:10px 0" }, "Остатки пусты.")); return; }
     const query = q.value.trim().toLowerCase();
-    const items = query
-      ? stock.filter((s) => s.name.toLowerCase().includes(query) || (s.sku || "").toLowerCase().includes(query)).slice(0, 40)
-      : (blockId ? stock.filter((s) => s.group === blockId) : []).slice(0, 20);
-    if (!items.length) {
-      results.replaceChildren(el("p", { class: "small muted", style: "padding:10px 0" },
-        query ? "Ничего не найдено." : "Начните вводить название или артикул."));
-      return;
-    }
-    results.replaceChildren(...items.map((s) => el("div", {
+    const scoped = wide ? stock : stock.filter((s) => s.group === blockId);
+    const matched = (query
+      ? scoped.filter((s) => s.name.toLowerCase().includes(query) || (s.sku || "").toLowerCase().includes(query))
+      : scoped
+    ).slice(0, query ? 40 : 20);
+    const rows = matched.map((s) => el("div", {
       class: "row", style: "cursor:pointer",
       onclick: () => addPart(s),
     },
-      el("span", { style: "flex:1" }, s.name, s.sku ? el("span", { class: "small muted" }, " · " + s.sku) : null),
-      el("span", { class: "small muted" }, s.price ? money(s.price) : ""))));
+      el("span", { style: "flex:1" }, s.name),
+      el("span", { class: "small muted" }, s.price ? money(s.price) : "")));
+    if (!matched.length) rows.push(el("p", { class: "small muted", style: "padding:10px 0" }, "Ничего не найдено."));
+    if (!wide) rows.push(widenLink);
+    results.replaceChildren(...rows);
   };
   q.addEventListener("input", drawResults);
   drawResults();
@@ -1627,7 +1640,7 @@ function openPendingSheet(it, stock, { onSet, onDiffQty, onParts, onQty }) {
   let tab = hasDiffs ? "diff" : "parts";
   const content = el("div", {});
   function draw() {
-    content.replaceChildren(
+    content.replaceChildren(...[
       it.multiple ? el("div", { style: "margin-bottom:14px" }, qtyStepper(it.qty, (qty) => { onQty(it.code, qty); draw(); })) : null,
       hasDiffs ? el("div", { class: "segmented", style: "margin-bottom:14px" },
         el("button", { class: tab === "diff" ? "active" : "", onclick: () => { tab = "diff"; draw(); } }, "Усложнения"),
@@ -1635,7 +1648,8 @@ function openPendingSheet(it, stock, { onSet, onDiffQty, onParts, onQty }) {
       tab === "diff"
         ? (hasDiffs ? difficultyList(it.difficulties, (di, st) => { onSet(it.code, di, st); draw(); }, (di, qty) => { onDiffQty(it.code, di, qty); draw(); })
           : el("p", { class: "small muted" }, "Трудностей не ожидается."))
-        : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(it.parts, stock, () => { onParts(it.code, it.parts); draw(); }, blockIdOf(it.code))));
+        : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(it.parts, stock, () => { onParts(it.code, it.parts); draw(); }, blockIdOf(it.code))),
+    ].filter(Boolean));
   }
   draw();
   openSheet(it.name, content);
@@ -1649,7 +1663,7 @@ function openAssessSheet(it, stock, onChange) {
   let tab = hasDiffs ? "diff" : "parts";
   const content = el("div", {});
   function draw() {
-    content.replaceChildren(
+    content.replaceChildren(...[
       it.multiple ? el("div", { style: "margin-bottom:14px" }, qtyStepper(it.qty, (qty) => { it.qty = qty; draw(); onChange(); })) : null,
       hasDiffs ? el("div", { class: "segmented", style: "margin-bottom:14px" },
         el("button", { class: tab === "diff" ? "active" : "", onclick: () => { tab = "diff"; draw(); } }, "Усложнения"),
@@ -1659,7 +1673,8 @@ function openAssessSheet(it, stock, onChange) {
             (di, st) => { it.difficulties[di].state = st; draw(); onChange(); },
             (di, qty) => { if (it.difficulties[di]) it.difficulties[di].qty = qty; draw(); onChange(); })
           : el("p", { class: "small muted" }, "Трудностей не ожидается."))
-        : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(it.parts, stock, () => { draw(); onChange(); }, blockIdOf(it.code))));
+        : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(it.parts, stock, () => { draw(); onChange(); }, blockIdOf(it.code))),
+    ].filter(Boolean));
   }
   draw();
   openSheet(it.name, content);
@@ -1718,14 +1733,15 @@ function openRepairSheet(it, stock, onSave) {
       (di, st) => { diffs[di].state = st; drawDiffs(); save(); },
       (di, qty) => { diffs[di].qty = qty; drawDiffs(); save(); }, true));
     drawDiffs();
-    content.replaceChildren(
+    content.replaceChildren(...[
       hasDiffs ? el("div", { class: "segmented", style: "margin-bottom:14px" },
         el("button", { class: tab === "diff" ? "active" : "", onclick: () => { tab = "diff"; draw(); } }, "Усложнения"),
         el("button", { class: tab === "parts" ? "active" : "", onclick: () => { tab = "parts"; draw(); } }, "Запчасти")) : null,
       tab === "diff" ? diffBox : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(pickedParts, stock, save, blockIdOf(it.code))),
       it.done
         ? el("button", { style: "width:100%;margin-top:16px", onclick: () => { save({ done: false }); toast("Статус снят"); sheet.close(); } }, "Отменить")
-        : el("button", { class: "btn-ok", style: "width:100%;margin-top:16px", onclick: () => { save({ done: true }); toast("Отмечено готово"); sheet.close(); } }, "Готово"));
+        : el("button", { class: "btn-ok", style: "width:100%;margin-top:16px", onclick: () => { save({ done: true }); toast("Отмечено готово"); sheet.close(); } }, "Готово"),
+    ].filter(Boolean));
   }
   draw();
   const sheet = openSheet(it.name, content);
