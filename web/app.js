@@ -204,6 +204,7 @@ let dirty = false; // есть локальные правки, ещё не по
 let inSubScreen = false;
 let autoOpenDiagsFor = null; // номер только что созданного обращения — сразу открыть диагностику
 let editingItemCode = null; // код работы в наряде, у которой сейчас открыта форма редактирования
+let addWorkOpenFor = null; // номер заявки, для которой «+ доп. работа» сейчас развёрнута прямо на экране (вместо перехода на отдельный)
 let ordersSearch = ""; // архив «Обращения» — поиск по телефону клиента
 let ordersGroupBy = "created"; // архив «Обращения» — группировка: "created" | "handed"
 
@@ -1397,7 +1398,32 @@ function viewOrder(number) {
           onQty: (qty) => { claim(); editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) x.qty = qty; }); refresh(); },
           onRemove: (code) => { claim(); removeItem(code); },
         })));
-        b.append(el("button", { style: "margin-top:14px", onclick: () => { claim(); openDiagnostics(); } }, "+ доп. работа"));
+        // «+ доп. работа» разворачивает список узлов (Колёса, Тормоз…) прямо
+        // тут, на месте — не отдельным экраном. Сам список и его состояние —
+        // тот же mountDiagnostics, что и в остальных местах приложения, его
+        // собственная закреплённая кнопка «Готово» снизу заменяет собой
+        // «Выйти»/«Готово к выдаче», пока развёрнуто.
+        if (addWorkOpenFor === number) {
+          const diagHost = el("div", { style: "margin-top:14px" });
+          b.append(diagHost);
+          mountDiagnostics(diagHost, {
+            getItems: () => order.items,
+            onCheck: (fa) => addItem(fa),
+            onUncheck: (fa) => removeItemQuiet(fa.code),
+            onEditItem: (code, patch) => editItemQuiet(code, patch),
+            onDone: (notes) => {
+              addWorkOpenFor = null;
+              if (notes.length) editOrder(number, (o) => { o.diagnosticNotes = [...(o.diagnosticNotes || []), ...notes]; });
+              refresh();
+            },
+            request: order.request || "",
+            onRequest: (v) => editOrder(number, (o) => (o.request = v)),
+            onlyBlocks: bike?.kind === "колесо" ? ["WHL"] : null,
+            inline: true,
+          });
+        } else {
+          b.append(el("button", { style: "margin-top:14px", onclick: () => { claim(); addWorkOpenFor = number; refresh(); } }, "+ доп. работа"));
+        }
         return b;
       };
       const body = stockCache ? buildBody(stockCache) : el("div", {}, skeletonRows(2));
@@ -1407,7 +1433,9 @@ function viewOrder(number) {
       // Кнопка видна всегда, но недоступна, пока не все работы отмечены
       // готовыми — так сразу понятно, что дальше по плану, а не как будто
       // кнопка «появляется из ниоткуда» в неожиданный момент.
-      actions = el("div", { class: "actions" }, el("div", { class: "actions-inner" },
+      // Пока развёрнута «+ доп. работа» — снизу уже своя кнопка «Готово» от
+      // mountDiagnostics, вторую закреплённую панель поверх неё не показываем.
+      actions = addWorkOpenFor === number ? null : el("div", { class: "actions" }, el("div", { class: "actions-inner" },
         el("button", { onclick: leaveOrder }, "Выйти"),
         el("button", { class: "btn-primary", disabled: !allDone, onclick: () => setStatus("готово к выдаче", (o) => { o.finishedAt = new Date().toISOString(); o.occupiedBy = null; o.occupiedByName = ""; }) }, "Готово к выдаче")));
     }
@@ -2040,7 +2068,11 @@ const DIAG_TOGGLES = [
 // чекбокс, без ожидания «Готово»: поэтому его можно тут же посмотреть,
 // изменить (✎) или убрать (✕), не выходя из диагностики.
 // onDone(notes) получает только текстовые заметки без привязки к работе.
-function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDone, request = "", onRequest, onlyBlocks }) {
+// inline — true, когда диагностику встраивают прямо в тело другого экрана
+// (напр. «+ доп. работа» на «в работе»), а не монтируют как весь экран:
+// тогда не оборачиваем содержимое в свой <main class="wrap"> (иначе он
+// вложился бы во внешний main.wrap — невалидная вложенность и двойные отступы).
+function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDone, request = "", onRequest, onlyBlocks, inline = false }) {
   const toggles = { тормоза: "гидравлика", покрышки: "камера", трансмиссия: "механика" };
   let req = request;
   const states = {}; // instId -> { open, faults:Set<number>, comment }
@@ -2198,7 +2230,7 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
 
   function draw() {
     const list = instances();
-    const wrap = el("main", { class: "wrap" });
+    const wrap = el(inline ? "div" : "main", { class: inline ? null : "wrap" });
 
     wrap.append(el("div", { class: "card" },
       el("h2", {}, "Запрос клиента"),
@@ -2334,7 +2366,7 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
     onDone(notes);
   }
 
-  host.replaceChildren(el("main", { class: "wrap" }, skeletonRows()));
+  host.replaceChildren(el(inline ? "div" : "main", { class: inline ? null : "wrap" }, skeletonRows()));
   ensureRepairs().then((r) => { repairs = r; draw(); });
 }
 
