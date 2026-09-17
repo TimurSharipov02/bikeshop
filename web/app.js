@@ -1245,24 +1245,23 @@ function stage(title, ...body) { return el("div", { class: "card" }, el("h2", {}
 // Название запчасти с количеством, если больше одной штуки — «Ротор × 2».
 const partLabel = (p) => p.name + ((p.qty || 1) > 1 ? ` × ${p.qty}` : "");
 
-// Список запчастей у работы — выбор из остатков (с ценой) с возможностью
-// нескольких видов и нескольких штук каждого (повторный выбор той же детали
-// увеличивает количество, а не дублирует строку). Общее для ремонта («в
-// работе») и «Ждёт согласования» — мутирует parts на месте, onChange зовёт
-// сохранение и перерисовку у вызывающего.
+// Список запчастей у работы — выбираешь деталь из остатков, она появляется
+// строкой ниже со своим счётчиком количества (плюс/минус), без повторного
+// похода в выпадающий список ради второй штуки. Общее для ремонта («в
+// работе»), «Ждёт согласования» и оценки при создании обращения — мутирует
+// parts на месте, onChange зовёт сохранение и перерисовку у вызывающего.
 function partsEditor(parts, stock, onChange) {
-  const chips = el("div", {});
-  const drawChips = () => {
-    chips.replaceChildren(...(parts.length
-      ? [el("div", { style: "display:flex;flex-wrap:wrap;gap:6px;margin-top:6px" },
-          parts.map((p, i) => el("span", { class: "pill" }, partLabel(p), " ",
-            el("button", {
-              style: "border:0;background:none;color:inherit;cursor:pointer;padding:0;min-height:auto;font:inherit",
-              onclick: () => { parts.splice(i, 1); drawChips(); onChange(); },
-            }, "✕"))))]
-      : []));
+  const list = el("div", {});
+  const drawList = () => {
+    list.replaceChildren(...parts.map((p, i) => el("div", { style: "display:flex;align-items:center;gap:10px;margin-top:6px" },
+      el("span", { style: "flex:1" }, p.name, p.price ? el("span", { class: "small muted" }, ` · ${money(p.price)}`) : null),
+      qtyStepper(p.qty, (qty) => { p.qty = qty; drawList(); onChange(); }),
+      el("button", {
+        style: iconBtnStyle,
+        onclick: () => { parts.splice(i, 1); drawList(); onChange(); },
+      }, "✕"))));
   };
-  drawChips();
+  drawList();
   const stockSelect = el("select", { style: "width:auto;flex:1" },
     el("option", { value: "" }, stock.length ? "— выбрать деталь —" : "остатки пусты"),
     stock.map((s) => el("option", { value: s.sku || s.name },
@@ -1281,11 +1280,12 @@ function partsEditor(parts, stock, onChange) {
           const existing = parts.find((p) => p.name === name && p.price === price);
           if (existing) existing.qty = (existing.qty || 1) + 1;
           else parts.push({ name, price, qty: 1 });
-          drawChips();
+          stockSelect.value = "";
+          drawList();
           onChange();
         },
       }, "+ добавить")),
-    chips);
+    list);
 }
 
 function itemRow(it, showFacts) {
