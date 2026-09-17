@@ -27,13 +27,25 @@ a { color:var(--accent); text-decoration:none; }
 
 .wrap { max-width:640px; margin:0 auto; padding:20px 16px 112px; }
 
+/* Заголовок по центру, а не мелко слева от кнопки назад — так современнее
+   выглядит, и на главном, на что смотрят на ходу, сразу фокус. Назад/правая
+   плашка — абсолютным позиционированием по бокам, чтобы не мешать центровке
+   и не съезжать при разной их ширине. */
 header.bar { position:sticky; top:0; z-index:10; background:color-mix(in srgb, var(--card) 82%, transparent);
   -webkit-backdrop-filter:saturate(180%) blur(18px); backdrop-filter:saturate(180%) blur(18px);
-  border-bottom:.5px solid var(--line); display:flex; align-items:center; gap:10px; padding:13px 16px; }
-header.bar .back { font-size:26px; color:var(--accent); line-height:1; font-weight:500; padding:0 4px 0 0; }
-header.bar h1 { font-size:17px; margin:0; font-weight:600; letter-spacing:-.005em; }
-header.bar .sub { font-size:14px; color:var(--muted); margin-left:auto; }
+  border-bottom:.5px solid var(--line); display:flex; align-items:center; justify-content:center;
+  padding:13px 44px; }
+header.bar .back { position:absolute; left:8px; top:50%; transform:translateY(-50%);
+  font-size:26px; color:var(--accent); line-height:1; font-weight:500; padding:0 8px; }
+header.bar h1 { font-size:17px; margin:0; font-weight:600; letter-spacing:-.005em; text-align:center;
+  min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+header.bar .sub { position:absolute; right:16px; top:50%; transform:translateY(-50%);
+  font-size:14px; color:var(--muted); text-align:right; }
 a.sub:active { opacity:.5; }
+
+/* Заголовок экрана заявки — покрупнее и пожирнее остальных: там это
+   название велосипеда, главное, на что смотрят чаще всего. */
+header.bar .bar-title-lg { font-size:19px; font-weight:700; }
 
 /* Прогресс по стадиям обращения (принята → в работе → проверка → выдано) —
    пройденные кликабельны, чтобы вернуться на стадию назад при ошибке. */
@@ -79,6 +91,12 @@ a.sub:active { opacity:.5; }
 .empty-state-icon { display:inline-flex; color:var(--line); margin-bottom:6px; }
 .empty-state-icon svg { width:34px; height:34px; }
 .empty-state p { margin:0; }
+
+/* SVG-иконки в кнопках свайпа (правка/удаление) и «мусорки» у счётчика
+   количества — вместо символов из системного шрифта (✎/✕/🗑), которые на
+   разных устройствах выглядят по-разному и грубее остальных иконок. */
+.swipe-action-btn svg, .swipe-action svg { width:19px; height:19px; }
+.step-trash-btn svg { width:18px; height:18px; }
 
 /* Закреплённая мини-сумма снизу экрана — видна независимо от прокрутки
    длинного списка работ. */
@@ -133,11 +151,14 @@ a.sub:active { opacity:.5; }
 .toast.show { opacity:1; transform:translate(-50%, 0); }
 
 /* Свайп-удаление строки списка (Почта/Напоминания): красная кнопка спрятана
-   под строкой, строка едет по X поверх неё. */
+   под строкой, строка едет по X поверх неё. Открытый край кнопок закруглён
+   в тон остальному интерфейсу (карточки/пилюли всюду скруглены) — плоский
+   прямоугольник без скругления смотрелся инородно, не по-нативному. */
 .swipe-row { position:relative; overflow:hidden; }
 .swipe-content { position:relative; z-index:1; background:var(--card); touch-action:pan-y;
   -webkit-user-drag:none; user-select:none; -webkit-user-select:none; }
-.swipe-action { position:absolute; top:0; right:0; bottom:0; width:88px; border:0; border-radius:0;
+.swipe-action { position:absolute; top:0; right:0; bottom:0; width:88px; border:0;
+  border-radius:0 var(--radius-sm) var(--radius-sm) 0;
   min-height:0; padding:0; background:var(--warn); color:#fff; font-size:14px; font-weight:600; cursor:pointer; }
 
 /* То же, но несколько узких кнопок-иконок подряд (правка + удаление) вместо
@@ -147,6 +168,7 @@ a.sub:active { opacity:.5; }
 .swipe-action-btn { width:56px; border:0; border-radius:0; min-height:0; padding:0;
   display:flex; align-items:center; justify-content:center; font-size:19px; cursor:pointer;
   background:var(--fill); color:var(--ink); }
+.swipe-action-btn:last-child { border-radius:0 var(--radius-sm) var(--radius-sm) 0; }
 .swipe-action-btn.warn { background:var(--warn); color:#fff; }
 
 /* статус обращения — цвет для быстрого сканирования списка */
@@ -165,6 +187,8 @@ button, .opt { touch-action: manipulation; }
 button { font:inherit; border:.5px solid var(--line); background:var(--card); color:var(--ink); border-radius:var(--radius-sm);
   padding:13px 16px; cursor:pointer; min-height:46px; transition:transform .1s ease, opacity .1s ease; }
 button:active { transform:scale(.98); opacity:.85; }
+button:disabled { opacity:.4; cursor:default; }
+button:disabled:active { transform:none; }
 .btn-primary { background:var(--accent); color:var(--accent-ink); border-color:var(--accent); font-weight:600; }
 .btn-ok { background:var(--ok); color:#fff; border-color:var(--ok); font-weight:600; }
 .btn-warn { background:var(--warn); color:#fff; border-color:var(--warn); font-weight:600; }
@@ -219,6 +243,14 @@ label { display:block; font-size:13px; color:var(--muted); margin:14px 0 5px; fo
   appearance:none; -webkit-appearance:none; margin:0; flex:0 0 auto; width:22px; height:22px;
   border:1.5px solid var(--line); background:var(--card); display:grid; place-content:center;
   transition:background .12s ease, border-color .12s ease;
+  outline:none;
+}
+/* appearance:none снимает родную галочку, но не родной фокус-ободок — на
+   мобильном он рисуется огромным нечётким прямоугольником не по размеру
+   чекбокса (см. баг). Даём свой, аккуратный, и только для клавиатурной
+   навигации — обычный тап пальцем его не показывает. */
+.opt input[type="checkbox"]:focus-visible, .opt input[type="radio"]:focus-visible, input.chk:focus-visible {
+  outline:2px solid var(--accent); outline-offset:2px;
 }
 .opt input[type="checkbox"], input.chk { border-radius:6px; }
 .opt input[type="radio"] { border-radius:50%; }

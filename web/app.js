@@ -40,7 +40,19 @@ const blockIdOf = (code) => blockIdByPrefix[String(code || "").split("-")[0]] ||
 // (id блока), а не через префикс кода (у них у всех один и тот же CF-N) —
 // их так по коду не сгруппировать, нужно смотреть group на самом пункте.
 const blockTitleById = Object.fromEntries([...diagBlocks, { id: "WSH", title: "Мойка и консервация" }].map((b) => [b.id, b.title]));
-const partBlockIdOf = (it) => it.group || blockIdOf(it.code);
+// it.group — на самом пункте наряда (проставляется при добавлении, см.
+// makeCustomItem); но у пунктов, добавленных ДО того как это поле завели,
+// его нет — тогда для своих неисправностей (CF-id) смотрим узел в текущем
+// каталоге repairsCache по id по названию, а не по коду (см. viewOrder,
+// где кэш прогревается заранее).
+const partBlockIdOf = (it) => {
+  if (it.group) return it.group;
+  if (it.code && it.code.startsWith("CF-")) {
+    const r = (repairsCache || []).find((x) => `CF-${x.id}` === it.code);
+    if (r && r.group) return r.group;
+  }
+  return blockIdOf(it.code);
+};
 
 const app = document.getElementById("app");
 const money = (n) => `${Number(n || 0).toLocaleString("ru-RU")} ₽`;
@@ -680,6 +692,12 @@ window.addEventListener("hashchange", () => { router(); if (SESSION) syncFromSer
 
 const ICON_SVG = (inner) =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+// Иконки для кнопок правки/удаления в свайпе (см. swipeActions) — вместо
+// символов ✎/✕ из системного шрифта, которые на разных устройствах
+// выглядят по-разному и не в стиле остальных SVG-иконок приложения.
+const ICON_EDIT = ICON_SVG('<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>');
+const ICON_CLOSE = ICON_SVG('<path d="M18 6 6 18"/><path d="M6 6l12 12"/>');
+const ICON_TRASH = ICON_SVG('<path d="M4 7h16"/><path d="M9 7V4.5A1.5 1.5 0 0 1 10.5 3h3A1.5 1.5 0 0 1 15 4.5V7"/><path d="M6 7l.8 12a2 2 0 0 0 2 1.9h6.4a2 2 0 0 0 2-1.9L18 7"/><path d="M10 11v6"/><path d="M14 11v6"/>');
 const ICONS = {
   prices: ICON_SVG('<path d="M12.6 3H6a2 2 0 0 0-2 2v6.6a2 2 0 0 0 .6 1.4l8.4 8.4a2 2 0 0 0 2.8 0l5.6-5.6a2 2 0 0 0 0-2.8L13 3.6a2 2 0 0 0-1.4-.6Z"/><circle cx="8.5" cy="8.5" r="1.3"/>'),
   admin: ICON_SVG('<path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6l7-3Z"/>'),
@@ -790,8 +808,9 @@ function swipeActions(rowNode, actions) {
   const bar = el("div", { class: "swipe-actions" },
     actions.map((a) => el("button", {
       class: `swipe-action-btn ${a.className || ""}`,
+      html: a.label,
       onclick: (e) => { e.preventDefault(); e.stopPropagation(); close(); if (openSwipeClose === close) openSwipeClose = null; a.onClick(); },
-    }, a.label)));
+    })));
   rowNode.classList.add("swipe-content");
   rowNode.setAttribute("draggable", "false");
   wrap.append(bar, rowNode);
@@ -920,29 +939,6 @@ function groupBy(list, keyFn) {
 }
 
 
-// Пресет для быстрой проверки: создаёт готовое обращение одним кликом.
-const DEMO_PRESET = {
-  phone: applyPhoneMask("9000000000"), name: "Тест Тестов", kind: "шоссе",
-  brand: "Canyon", model: "Endurace",
-  request: "переключается плохо, щёлкает сзади; готовлю к сезону",
-};
-function createDemoOrder() {
-  const p = DEMO_PRESET.phone;
-  let number = "";
-  editDB((d) => {
-    if (!d.clients.some((c) => c.phone === p)) d.clients.push({ phone: p, name: DEMO_PRESET.name, consentToCall: true });
-    let bn = d.bikes.find((b) => b.ownerPhone === p && b.brand === DEMO_PRESET.brand && b.model === DEMO_PRESET.model)?.number;
-    if (!bn) {
-      bn = nextBikeKey(d, p);
-      d.bikes.push({ number: bn, kind: DEMO_PRESET.kind, brand: DEMO_PRESET.brand, model: DEMO_PRESET.model, ownerPhone: p });
-    }
-    number = nextOrderNumber(d);
-    d.orders.push({ number, clientPhone: p, bikeNumber: bn, request: DEMO_PRESET.request, diagnosticNotes: [], status: "приём", items: [], createdAt: new Date().toISOString() });
-  });
-  autoOpenDiagsFor = number;
-  go("/orders/" + number);
-}
-
 // Архив — только выданные (активные уже на главном экране). Поиск по
 // телефону и группировка по дате создания/выдачи живут тут же, с
 // перерисовкой только списка (не всего экрана), чтобы не терять фокус
@@ -988,9 +984,7 @@ function viewOrders() {
   drawList();
 
   return [
-    bar("Архив", "/", el("span", { class: "sub", style: "display:flex;gap:14px" },
-      el("button", { style: "border:0;background:none;color:inherit;font:inherit;cursor:pointer;padding:0", onclick: createDemoOrder }, "+ демо"),
-      el("a", { href: "#/orders/new", style: "color:inherit" }, "+ новое"))),
+    bar("Архив", "/"),
     el("main", { class: "wrap" },
       el("label", { class: "small muted" }, "Поиск по телефону клиента"), q, seg, listBox),
   ];
@@ -1062,10 +1056,15 @@ function viewNewOrder() {
         el("div", { class: "card", style: "background:var(--bg)" },
           el("span", { class: "muted small" }, "Согласовано на"),
           el("div", { class: "price-range" }, rangeText(orderRange({ items: draft.items }))),
-          minutesText(orderMinutes({ items: draft.items }, true)) ? el("div", { class: "small muted", style: "margin-top:4px" }, minutesText(orderMinutes({ items: draft.items }, true))) : null),
-        el("button", { style: "width:100%;margin-top:12px", onclick: () => stepDiagnostics() }, "+ доп. работа"),
-        el("button", { class: "btn-primary", style: "width:100%;margin-top:10px", onclick: () => stepClient() }, "Дальше — данные клиента"));
-      return [bar("Новое обращение", "/"), el("main", { class: "wrap" }, stage("Оценка усложнений и стоимости", body))];
+          minutesText(orderMinutes({ items: draft.items }, true)) ? el("div", { class: "small muted", style: "margin-top:4px" }, minutesText(orderMinutes({ items: draft.items }, true))) : null));
+      return [
+        bar("Новое обращение", "/"), el("main", { class: "wrap" }, stage("Оценка усложнений и стоимости", body)),
+        // Как везде в приложении — «вперёд»/«назад» закреплены внизу экрана,
+        // слева и справа, а не одна под другой в конце карточки.
+        el("div", { class: "actions" }, el("div", { class: "actions-inner" },
+          el("button", { onclick: () => stepDiagnostics() }, "+ доп. работа"),
+          el("button", { class: "btn-primary", onclick: () => stepClient() }, "Дальше — данные клиента"))),
+      ];
     }
     redraw();
   }
@@ -1118,7 +1117,6 @@ function viewNewOrder() {
     attachPhoneMask(phoneInput, (v) => { f.phone = v; drawClient(); });
 
     const wrap = el("main", { class: "wrap" },
-      draft.items.length ? el("p", { class: "small muted" }, `Согласовано работ: ${draft.items.filter((i) => i.agreed).length} из ${draft.items.length}.`) : null,
       el("div", { class: "card" }, el("h2", {}, "Клиент"),
         el("label", {}, "Телефон"),
         phoneInput,
@@ -1175,6 +1173,10 @@ function viewOrder(number) {
   if (!order) return [bar(number, "/"), el("main", { class: "wrap" }, el("p", { class: "muted" }, "Не найдено"))];
   const bike = d.bikes.find((b) => b.number === order.bikeNumber);
   const client = d.clients.find((c) => c.phone === order.clientPhone);
+  // Прогреваем кэш своих неисправностей заранее (не дожидаясь) — нужен
+  // partBlockIdOf, чтобы верно определить узел у пунктов, добавленных до
+  // того, как в них завели поле group (см. partBlockIdOf).
+  if (!repairsCache) ensureRepairs();
   // keepScroll: мелкая правка (чекбокс, будет/не будет/неизвестно, ✎/✕ у работы)
   // не должна дёргать страницу вверх — только переход между стадиями наряда.
   const refresh = () => render(viewOrder(number), { keepScroll: true });
@@ -1266,8 +1268,13 @@ function viewOrder(number) {
 
   const range = orderRange(order);
   const head = el("div", { class: "card" },
-    el("h2", {}, bike ? [bikeLabel(bike), bike.kind].filter(Boolean).join(" · ") : "велосипед"),
-    el("p", { class: "small muted" }, `${client?.name || "—"} · ${order.clientPhone}`),
+    // Название велосипеда уже крупно в шапке экрана — тут не повторяем,
+    // только тип и номер обращения (для сверки).
+    el("h2", {}, [bike?.kind, order.number].filter(Boolean).join(" · ")),
+    // Вся строка — ссылка tel:, а не только номер: на телефоне так проще
+    // попасть пальцем, а 📞 сразу подсказывает, что тут можно позвонить.
+    el("a", { href: `tel:${order.clientPhone.replace(/[^\d+]/g, "")}`, class: "small muted", style: "display:flex;align-items:center;gap:6px;width:fit-content" },
+      `${client?.name || "—"} · ${order.clientPhone}`, el("span", {}, "📞")),
     order.request ? el("p", { class: "small" }, "Запрос клиента: " + order.request) : null);
 
   if ((order.diagnosticNotes || []).length) {
@@ -1355,19 +1362,21 @@ function viewOrder(number) {
   }
 
   if (order.status === "взята в работу") {
-    // Заявка без хозяина (старая «принята», ручная правка и т.п.) — открыли,
-    // значит уже взялись, отдельного шага «взять в работу» не нужно.
-    // editOrder мутирует тот же объект order (DB не клонируется), так что
-    // ниже order.occupiedBy уже видит присвоенное значение без перерендера.
-    if (!order.occupiedBy) editOrder(number, (o) => { o.occupiedBy = SESSION?.id || null; o.occupiedByName = SESSION?.name || ""; });
+    // Заявка без хозяина (свободна — только что освободили кнопкой «Выйти»,
+    // старая «принята», ручная правка) — просто посмотреть её можно не
+    // занимая: хозяин назначается не при открытии экрана, а при первом
+    // реальном действии (claim() ниже, дергается из правок по пункту и
+    // «+ доп. работа»). Иначе один взгляд на уже освобождённую заявку тут
+    // же забирал бы её обратно, и «Выйти» никогда не давало видимого эффекта.
+    const claim = () => { if (!order.occupiedBy) editOrder(number, (o) => { o.occupiedBy = SESSION?.id || null; o.occupiedByName = SESSION?.name || ""; }); };
     const leaveOrder = () => {
-      // «Выйти и освободить заявку» — снимаем хозяина, но остаёмся в «В
-      // работе»: отдельного статуса-очереди больше нет.
+      // «Выйти» — снимаем хозяина, но остаёмся в «В работе»: отдельного
+      // статуса-очереди больше нет.
       editOrder(number, (o) => { o.occupiedBy = null; o.occupiedByName = ""; });
       go("/");
     };
 
-    if (order.occupiedBy !== SESSION?.id) {
+    if (order.occupiedBy && order.occupiedBy !== SESSION?.id) {
       main.append(stage("Ремонт",
         el("p", { class: "small muted" }, `Заявку сейчас ведёт: ${order.occupiedByName || "другой мастер"}.`)));
     } else {
@@ -1382,26 +1391,29 @@ function viewOrder(number) {
         if (pendingCard) b.append(pendingCard);
         order.items.filter((i) => i.agreed).forEach((it) => b.append(repairItem(it, stock, {
           onRun: () => openRunner(it.code),
-          onSave: (patch) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) Object.assign(x, patch); }); refresh(); },
-          onQty: (qty) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) x.qty = qty; }); refresh(); },
-          onRemove: removeItem,
+          onSave: (patch) => { claim(); editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) Object.assign(x, patch); }); refresh(); },
+          onQty: (qty) => { claim(); editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) x.qty = qty; }); refresh(); },
+          onRemove: (code) => { claim(); removeItem(code); },
         })));
-        b.append(el("button", { onclick: () => openDiagnostics() }, "+ доп. работа"));
+        b.append(el("button", { onclick: () => { claim(); openDiagnostics(); } }, "+ доп. работа"));
         return b;
       };
       const body = stockCache ? buildBody(stockCache) : el("div", {}, skeletonRows(2));
       if (!stockCache) ensureStock().then((s) => body.replaceChildren(...buildBody(s).childNodes));
       main.append(stage("Ремонт", body));
       const allDone = order.items.filter((i) => i.agreed).length > 0 && order.items.filter((i) => i.agreed).every((i) => i.done);
+      // Кнопка видна всегда, но недоступна, пока не все работы отмечены
+      // готовыми — так сразу понятно, что дальше по плану, а не как будто
+      // кнопка «появляется из ниоткуда» в неожиданный момент.
       actions = el("div", { class: "actions" }, el("div", { class: "actions-inner" },
         el("button", { onclick: leaveOrder }, "Выйти"),
-        allDone ? el("button", { class: "btn-primary", onclick: () => setStatus("готово к выдаче", (o) => { o.finishedAt = new Date().toISOString(); o.occupiedBy = null; o.occupiedByName = ""; }) }, "Готово к выдаче") : null));
+        el("button", { class: "btn-primary", disabled: !allDone, onclick: () => setStatus("готово к выдаче", (o) => { o.finishedAt = new Date().toISOString(); o.occupiedBy = null; o.occupiedByName = ""; }) }, "Готово к выдаче")));
     }
   }
 
   if (order.status === "готово к выдаче") {
     main.append(pendingCardHost());
-    main.append(stage("Смета для звонка клиенту", itemList({ items: order.items.filter((i) => i.agreed) }, true, null, true),
+    main.append(stage("Смета для звонка клиенту", itemList({ items: order.items.filter((i) => i.agreed) }, true, null, true, false),
       el("div", { class: "card", style: "background:var(--bg);margin-top:12px" },
         el("span", { class: "muted small" }, "Итого"),
         el("div", { class: "total" }, rangeText(range)))));
@@ -1415,7 +1427,7 @@ function viewOrder(number) {
 
   if (order.status === "выдан") {
     main.append(pendingCardHost());
-    main.append(stage("Выдан", itemList({ items: order.items.filter((i) => i.agreed) }, true, null, true),
+    main.append(stage("Выдан", itemList({ items: order.items.filter((i) => i.agreed) }, true, null, true, false),
       el("div", { class: "card", style: "background:var(--bg)" },
         el("span", { class: "muted small" }, "Итого"),
         el("div", { class: "total" }, rangeText(range)))));
@@ -1432,7 +1444,14 @@ function viewOrder(number) {
   const agreedCount = order.items.filter((i) => i.agreed).length;
   const showStickyTotal = order.status === "выдан" && agreedCount > 3;
   return [
-    bar(order.number, order.status === "выдан" ? "/orders" : "/", el("span", { class: "sub" }, order.status)),
+    // Название велосипеда вместо номера обращения, покрупнее остальных
+    // заголовков — по нему сразу видно, с чем работаешь. Статус справа
+    // убрали: он и так виден на полоске стадий чуть ниже, дублировать не
+    // нужно. Номер обращения — в карточке велосипеда ниже, для сверки не
+    // пропал.
+    el("header", { class: "bar" },
+      el("a", { class: "back", href: "#" + (order.status === "выдан" ? "/orders" : "/") }, "‹"),
+      el("h1", { class: "bar-title-lg" }, bike ? bikeLabel(bike) : order.number)),
     orderProgressBar(order.status, jumpToStage),
     main,
     actions,
@@ -1461,9 +1480,17 @@ const partLabel = (p) => p.name + ((p.qty || 1) > 1 ? ` × ${p.qty}` : "");
 // мутирует parts на месте, onChange зовёт сохранение и перерисовку у
 // вызывающего.
 function partsEditor(parts, stock, onChange, blockId) {
-  const list = el("div", {});
+  // Раньше уже добавленные запчасти шли просто списком сразу под результатами
+  // поиска — без подписи и без рамок между строками всё сливалось в один
+  // нечитаемый блок, особенно с длинными названиями в 3-4 строки. Теперь у
+  // добавленного — свой заголовок и оформление списком, как везде в
+  // приложении (граница + тонкий разделитель между строками).
+  const listLabel = el("p", { class: "small muted", style: "margin:16px 0 4px" }, "Добавлено к этой работе");
+  const list = el("div", { class: "rows" });
   const drawList = () => {
-    list.replaceChildren(...parts.map((p, i) => el("div", { style: "display:flex;align-items:center;gap:10px;margin-top:6px" },
+    listLabel.style.display = parts.length ? "" : "none";
+    list.style.display = parts.length ? "" : "none";
+    list.replaceChildren(...parts.map((p, i) => el("div", { class: "row", style: "cursor:default" },
       el("span", { style: "flex:1" }, p.name, p.price ? el("span", { class: "small muted" }, ` · ${money(p.price)}`) : null),
       qtyStepper(p.qty, (qty) => { p.qty = qty; drawList(); onChange(); }, p.maxQty,
         () => { parts.splice(i, 1); drawList(); onChange(); }))));
@@ -1495,7 +1522,10 @@ function partsEditor(parts, stock, onChange, blockId) {
     el("a", { href: "#", onclick: (e) => { e.preventDefault(); wide = true; drawResults(); } }, "Искать среди всех остатков →"));
   const drawResults = () => {
     const query = q.value.trim().toLowerCase();
-    if (!query) { results.replaceChildren(); return; }
+    // Пустая рамка без строк смотрится как лишняя полоска — прячем блок
+    // целиком, когда показывать нечего, а не просто очищаем содержимое.
+    if (!query) { results.style.display = "none"; results.replaceChildren(); return; }
+    results.style.display = "";
     if (!stock.length) { results.replaceChildren(el("p", { class: "small muted", style: "padding:10px 0" }, "Остатки пусты.")); return; }
     const scoped = wide ? stock : stock.filter((s) => s.group === blockId);
     const matched = scoped.filter((s) => s.name.toLowerCase().includes(query) || (s.sku || "").toLowerCase().includes(query)).slice(0, 40);
@@ -1512,7 +1542,7 @@ function partsEditor(parts, stock, onChange, blockId) {
   q.addEventListener("input", drawResults);
   drawResults();
 
-  return el("div", {}, q, results, list);
+  return el("div", {}, q, results, listLabel, list);
 }
 
 function itemRow(it, showFacts) {
@@ -1538,17 +1568,20 @@ const iconBtnStyle = "border:0;background:none;color:var(--muted);cursor:pointer
 // значит без ограничения. При достижении потолка «+» просто отключается —
 // это подстраховка от случайного «натыкал лишнего», а не жёсткий запрет.
 // onRemove — необязательный: если задан, при количестве 1 кнопка «−»
-// превращается в 🗑 и убирает позицию целиком, вместо отдельной кнопки ✕
-// рядом (так — для запчастей, где это осмысленно; для работ/усложнений
-// параметр не передаётся, там «−» просто держит минимум 1, как раньше).
+// превращается в иконку корзины и убирает позицию целиком, вместо отдельной
+// кнопки ✕ рядом (так — для запчастей, где это осмысленно; для работ/
+// усложнений параметр не передаётся, там «−» просто держит минимум 1).
 function qtyStepper(value, onChange, max, onRemove) {
   const atMax = max > 0 && (value || 1) >= max;
   const atMin = (value || 1) <= 1;
+  const showTrash = atMin && onRemove;
   return el("div", { style: "display:flex;align-items:center;gap:8px" },
     el("button", {
+      class: showTrash ? "step-trash-btn" : "",
       style: iconBtnStyle + ";font-size:15px",
-      onclick: () => { if (atMin && onRemove) onRemove(); else onChange(Math.max(1, (value || 1) - 1)); },
-    }, atMin && onRemove ? "🗑" : "−"),
+      html: showTrash ? ICON_TRASH : null,
+      onclick: () => { if (showTrash) onRemove(); else onChange(Math.max(1, (value || 1) - 1)); },
+    }, showTrash ? null : "−"),
     el("span", { class: "small", style: "min-width:16px;text-align:center" }, String(value || 1)),
     el("button", { style: iconBtnStyle + ";font-size:15px", disabled: atMax, onclick: () => onChange(max > 0 ? Math.min(max, (value || 1) + 1) : (value || 1) + 1) }, "+"));
 }
@@ -1821,11 +1854,10 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove }) {
 
 // Содержимое bottom sheet для repairItem — усложнения/запчасти на вкладках
 // (одна вкладка, если запчастям нечего показывать усложнения, и наоборот).
-// Правки (было/не было, запчасти) сохраняются сами по себе сразу; кнопка
-// внизу — отдельное, самостоятельное действие «отметить/снять готово», а не
-// «сохранить». Закрыть форму (✕, свайп вниз, тап по фону) можно в любой
-// момент — терять нечего, всё уже сохранено, так что кнопка саму форму не
-// закрывает, только меняет статус на месте.
+// Правки (было/не было, запчасти) сохраняются сами по себе сразу. Кнопка
+// внизу («Отметить/снять готово») сама меняет статус и закрывает форму —
+// это финальное действие по этому пункту, дальше по нему обычно нечего
+// делать, форму саму закрыть тоже незачем.
 function openRepairSheet(it, stock, onSave) {
   // «неизвестно» — прогнозное состояние (по умолчанию у новой работы), тут
   // такого выбора нет (см. fact:true ниже) — приводим к «не было», иначе
@@ -1852,12 +1884,12 @@ function openRepairSheet(it, stock, onSave) {
         el("button", { class: tab === "parts" ? "active" : "", onclick: () => { tab = "parts"; draw(); } }, "Запчасти")) : null,
       tab === "diff" ? diffBox : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(pickedParts, stock, save, partBlockIdOf(it))),
       it.done
-        ? el("button", { style: "width:100%;margin-top:16px", onclick: () => { save({ done: false }); toast("Отметка «готово» снята"); draw(); } }, "Снять отметку «готово»")
-        : el("button", { class: "btn-ok", style: "width:100%;margin-top:16px", onclick: () => { save({ done: true }); toast("Отмечено готово"); draw(); } }, "Отметить готово"),
+        ? el("button", { style: "width:100%;margin-top:16px", onclick: () => { save({ done: false }); toast("Отметка «готово» снята"); sheet.close(); } }, "Снять отметку «готово»")
+        : el("button", { class: "btn-ok", style: "width:100%;margin-top:16px", onclick: () => { save({ done: true }); toast("Отмечено готово"); sheet.close(); } }, "Отметить готово"),
     ].filter(Boolean));
   }
   draw();
-  openSheet(it.name, content);
+  const sheet = openSheet(it.name, content);
 }
 
 // ============================================================================
@@ -2213,8 +2245,8 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
           fb.append(el("div", {},
             isAdmin
               ? swipeActions(rowContent, [
-                  { label: "✎", onClick: () => { editingThis ? editOverrideFor.delete(editKey) : editOverrideFor.add(editKey); draw(); } },
-                  { label: "✕", className: "warn", onClick: async () => {
+                  { label: ICON_EDIT, onClick: () => { editingThis ? editOverrideFor.delete(editKey) : editOverrideFor.add(editKey); draw(); } },
+                  { label: ICON_CLOSE, className: "warn", onClick: async () => {
                       if (!confirm(`Убрать «${f.label}» из списка совсем?`)) return;
                       const wasChecked = s.faults.has(i);
                       if (f.custom) {
