@@ -1208,6 +1208,11 @@ function viewOrder(number) {
   }
 
   const main = el("main", { class: "wrap" }, head);
+  // Закреплённая внизу экрана панель действий — как «Готово» на диагностике:
+  // одна кнопка слева, другая справа (одна ведёт вперёд по стадиям, другая —
+  // назад/в сторону), обе всегда в зоне досягаемости, даже если список работ
+  // длинный и укатился за экран. Наполняется ниже, по статусу заявки.
+  let actions = null;
   // Переход на новую стадию — это новый экран, тут скролл наверх уместен.
   const setStatus = (s, extra) => { editOrder(number, (o) => { o.status = s; if (extra) extra(o); }); render(viewOrder(number)); };
   // Возврат на пройденную стадию из прогресс-бара — по ошибке ушли дальше,
@@ -1277,12 +1282,11 @@ function viewOrder(number) {
   }
 
   if (order.status === "принята") {
-    main.append(stage("Ремонт",
-      el("p", { class: "small muted" }, "Заявка в очереди — заберите в работу, чтобы увидеть список работ."),
-      el("button", {
-        class: "btn-primary", style: "width:100%",
-        onclick: () => setStatus("взята в работу", (o) => { o.occupiedBy = SESSION?.id || null; o.occupiedByName = SESSION?.name || ""; }),
-      }, "Взять в работу")));
+    // Раньше тут был отдельный экран «Заявка в очереди — Взять в работу» —
+    // лишний клик не нужен: открыли заявку — значит, уже взялись за неё,
+    // сразу переходим в работу и показываем список работ.
+    main.append(stage("Ремонт", skeletonRows(2)));
+    queueMicrotask(() => setStatus("взята в работу", (o) => { o.occupiedBy = SESSION?.id || null; o.occupiedByName = SESSION?.name || ""; }));
   }
 
   if (order.status === "взята в работу") {
@@ -1311,14 +1315,15 @@ function viewOrder(number) {
           onRemove: removeItem,
         })));
         b.append(el("button", { onclick: () => openDiagnostics() }, "+ доп. работа"));
-        b.append(el("button", { style: "margin-top:10px", onclick: leaveOrder }, "Выйти и освободить заявку"));
-        const allDone = order.items.filter((i) => i.agreed).length > 0 && order.items.filter((i) => i.agreed).every((i) => i.done);
-        if (allDone) b.append(el("button", { class: "btn-primary", style: "width:100%;margin-top:12px", onclick: () => setStatus("готово к выдаче", (o) => { o.finishedAt = new Date().toISOString(); o.occupiedBy = null; o.occupiedByName = ""; }) }, "Готово к выдаче"));
         return b;
       };
       const body = stockCache ? buildBody(stockCache) : el("div", {}, skeletonRows(2));
       if (!stockCache) ensureStock().then((s) => body.replaceChildren(...buildBody(s).childNodes));
       main.append(stage("Ремонт", body));
+      const allDone = order.items.filter((i) => i.agreed).length > 0 && order.items.filter((i) => i.agreed).every((i) => i.done);
+      actions = el("div", { class: "actions" }, el("div", { class: "actions-inner" },
+        el("button", { onclick: leaveOrder }, "Выйти и освободить заявку"),
+        allDone ? el("button", { class: "btn-primary", onclick: () => setStatus("готово к выдаче", (o) => { o.finishedAt = new Date().toISOString(); o.occupiedBy = null; o.occupiedByName = ""; }) }, "Готово к выдаче") : null));
     }
   }
 
@@ -1328,10 +1333,10 @@ function viewOrder(number) {
       el("div", { class: "card", style: "background:var(--bg);margin-top:12px" },
         el("span", { class: "muted small" }, "Итого"),
         el("div", { class: "total" }, rangeText(range)))));
-    main.append(stage("Что дальше",
-      el("button", { style: "width:100%", onclick: () => jumpToStage("взята в работу") }, "Добавить работу"),
+    actions = el("div", { class: "actions" }, el("div", { class: "actions-inner" },
+      el("button", { onclick: () => jumpToStage("взята в работу") }, "Добавить работу"),
       el("button", {
-        class: "btn-ok", style: "width:100%;margin-top:10px",
+        class: "btn-ok",
         onclick: () => { editOrder(number, (o) => { o.status = "выдан"; o.handedOverAt = new Date().toISOString(); }); go("/"); },
       }, "Выдать клиенту")));
   }
@@ -1349,13 +1354,16 @@ function viewOrder(number) {
     queueMicrotask(openDiagnostics);
   }
   // Список работ длинный — «Итого» внизу карточки может уйти за экран, пока
-  // листаешь. Закреплённая мини-сумма снизу экрана держит её на виду.
+  // листаешь. Закреплённая мини-сумма снизу экрана держит её на виду. На
+  // «готово к выдаче» эту роль уже играет панель actions с кнопками — своя
+  // «Итого»-плашка поверх неё была бы лишней.
   const agreedCount = order.items.filter((i) => i.agreed).length;
-  const showStickyTotal = ["готово к выдаче", "выдан"].includes(order.status) && agreedCount > 3;
+  const showStickyTotal = order.status === "выдан" && agreedCount > 3;
   return [
     bar(order.number, order.status === "выдан" ? "/orders" : "/", el("span", { class: "sub" }, order.status)),
     orderProgressBar(order.status, jumpToStage),
     main,
+    actions,
     showStickyTotal ? stickyTotal(range) : null,
   ];
 }
