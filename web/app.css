@@ -231,6 +231,12 @@ label { display:block; font-size:13px; color:var(--muted); margin:14px 0 5px; fo
 .opt { display:flex; align-items:center; gap:10px; padding:13px; border:.5px solid var(--line); border-radius:var(--radius-sm);
   margin:6px 0; cursor:pointer; background:var(--card); transition:border-color .12s ease, background .12s ease; }
 .opt:has(input:checked) { border-color:var(--accent); background:var(--accent-weak); }
+/* .row.opt — та же строка-переключатель, но в плотном списке (неисправности
+   узла на диагностике): своя рамка на каждую строку внутри уже очерченной
+   карточки узла смотрелась как рамка в рамке, тут вместо неё — обычная
+   плоская строка списка с разделителем, отмеченная просто заливкой. */
+.row.opt { border:0; border-radius:0; margin:0; padding:13px 16px; background:transparent; }
+.row.opt:has(input:checked) { border-color:transparent; background:var(--accent-weak); }
 /* Свой чекбокс/радио вместо голого системного — квадрат со скруглением или
    кружок, заливка акцентом и белая галочка/точка при выборе. */
 .opt input[type="checkbox"], .opt input[type="radio"], input.chk {

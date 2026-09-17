@@ -394,6 +394,15 @@ const orderRange = (o) =>
   o.items.filter((i) => i.agreed).reduce(
     (a, it) => { const r = itemRange(it); return { min: a.min + r.min, max: a.max + r.max }; },
     { min: 0, max: 0 });
+// Все согласованные работы отмечены готовыми — заявка фактически готова к
+// выдаче, даже если статус в базе всё ещё «взята в работу» (отдельной
+// стадии для этого больше нет). Используется и на самом экране «Ремонт»
+// (когда включать «Выдать клиенту»), и в списке обращений (какой тег
+// показать).
+const orderAllDone = (o) => {
+  const agreed = o.items.filter((i) => i.agreed);
+  return agreed.length > 0 && agreed.every((i) => i.done);
+};
 // До согласования ничего ещё не отмечено agreed — считаем по всему списку целиком.
 const orderRangeAll = (o) =>
   o.items.reduce((a, it) => { const r = itemRange(it); return { min: a.min + r.min, max: a.max + r.max }; }, { min: 0, max: 0 });
@@ -574,13 +583,16 @@ const STATUS_TAG_CLASS = {
   "взята в работу": "tag-progress", "выдан": "tag-done",
 };
 const statusTag = (status) => el("span", { class: "tag " + (STATUS_TAG_CLASS[status] || "") }, status);
-// «Взята в работу» без хозяина (только что оформлена или освобождена
-// кнопкой «Выйти») — на списке обращений это должно выглядеть как
-// «Свободна», а не как будто кто-то её уже ведёт.
-const orderStatusTag = (o) =>
-  o.status === "взята в работу" && !o.occupiedBy
-    ? el("span", { class: "tag tag-new" }, "Свободна")
-    : statusTag(o.status);
+// «Взята в работу» — сырой статус ничего не говорит о том, что реально
+// происходит с заявкой в списке, поэтому тут не он, а более точная метка:
+// все работы готовы — «Готово к выдаче» (это важнее, чем занята она или
+// нет — надо звонить клиенту); иначе, без хозяина (только что оформлена
+// или освобождена кнопкой «Выйти») — «Свободна».
+const orderStatusTag = (o) => {
+  if (o.status === "взята в работу" && orderAllDone(o)) return el("span", { class: "tag tag-check" }, "Готово к выдаче");
+  if (o.status === "взята в работу" && !o.occupiedBy) return el("span", { class: "tag tag-new" }, "Свободна");
+  return statusTag(o.status);
+};
 
 // ============================================================================
 //  РОУТЕР
@@ -848,13 +860,16 @@ function swipeActions(rowNode, actions) {
 // .rows полагается на CSS :last-child, чтобы убрать разделитель у последней
 // строки — когда строки обёрнуты в .swipe-row, эта связь рвётся (последняя
 // .row больше не последний ребёнок .rows). Снимаем разделитель явно.
-function rowsList(nodes) {
+// flat — список уже внутри своей карточки (например, узла диагностики) и
+// не должен рисовать ещё одну рамку вокруг себя, только убрать разделитель
+// у последней строки, как обычно.
+function rowsList(nodes, flat = false) {
   if (nodes.length) {
     const last = nodes[nodes.length - 1];
     const rowEl = last.matches?.(".row") ? last : last.querySelector?.(".row");
     if (rowEl) rowEl.style.borderBottom = "0";
   }
-  return el("div", { class: "rows" }, nodes);
+  return el("div", { class: flat ? null : "rows" }, nodes);
 }
 
 function formatDateShort(iso) {
@@ -1419,7 +1434,7 @@ function viewOrder(number) {
       const body = stockCache ? buildBody(stockCache) : el("div", {}, skeletonRows(2));
       if (!stockCache) ensureStock().then((s) => body.replaceChildren(...buildBody(s).childNodes));
       main.append(stage("Ремонт", body));
-      const allDone = order.items.filter((i) => i.agreed).length > 0 && order.items.filter((i) => i.agreed).every((i) => i.done);
+      const allDone = orderAllDone(order);
       // Кнопка видна всегда, но недоступна, пока не все работы отмечены
       // готовыми — так сразу понятно, что дальше по плану, а не как будто
       // кнопка «появляется из ниоткуда» в неожиданный момент.
@@ -2259,14 +2274,21 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
 
       if (s.open) {
         const fb = el("div", { style: "margin-top:8px" });
+        // Плоский список, а не чип-строка на каждую неисправность (.opt как
+        // отдельная кнопка-переключатель в других местах) — тут их может
+        // быть много подряд, и рамка на рамке на рамке внутри и так уже
+        // очерченной карточки узла выглядела тесно. rowsList — тот же
+        // способ убрать разделитель у последней строки, что и в остальных
+        // списках приложения (обращения, архив, каталог запчастей).
+        const faultNodes = [];
         const faults = blockFaults(inst.b);
         faults.forEach((f, i) => {
           if (!faultVisible(f)) return;
           const isAdmin = SESSION?.role === "admin";
           const editKey = f.custom ? f.id : f.overrideKey;
           const editingThis = editOverrideFor.has(editKey);
-          const rowContent = el("div", { style: "display:flex;align-items:center;gap:6px;background:var(--card)" },
-            el("label", { class: "opt", style: "flex:1" },
+          const rowContent = el("div", { style: "display:flex;align-items:center" },
+            el("label", { class: "row opt", style: "flex:1" },
               el("input", { type: "checkbox", checked: s.faults.has(i),
                 onchange: () => {
                   // Без code — неисправность без привязанной операции (определяется
@@ -2283,7 +2305,7 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
           // Раньше ✎/✕ жили прямо в строке — с плотным списком смотрелись
           // мелко и тесно. Теперь открываются свайпом влево, как удаление
           // в других списках приложения.
-          fb.append(el("div", {},
+          faultNodes.push(el("div", {},
             isAdmin
               ? swipeActions(rowContent, [
                   { label: ICON_EDIT, onClick: () => { editingThis ? editOverrideFor.delete(editKey) : editOverrideFor.add(editKey); draw(); } },
@@ -2317,6 +2339,7 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
               ? (f.custom ? customFaultEditForm(f, () => { editOverrideFor.delete(editKey); draw(); }) : overrideForm(f, () => { editOverrideFor.delete(editKey); draw(); }))
               : null));
         });
+        if (faultNodes.length) fb.append(rowsList(faultNodes, true));
         if (SESSION?.role === "admin") {
           fb.append(addFormOpenFor.has(inst.b.id)
             ? customFaultForm(inst.b.id)
