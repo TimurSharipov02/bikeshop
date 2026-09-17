@@ -1376,13 +1376,13 @@ function viewOrder(number) {
   }
 
   if (order.status === "взята в работу") {
-    // Заявка без хозяина (свободна — только что освободили кнопкой «Выйти»,
-    // старая «принята», ручная правка) — просто посмотреть её можно не
-    // занимая: хозяин назначается не при открытии экрана, а при первом
-    // реальном действии (claim() ниже, дергается из правок по пункту и
-    // «+ доп. работа»). Иначе один взгляд на уже освобождённую заявку тут
-    // же забирал бы её обратно, и «Выйти» никогда не давало видимого эффекта.
-    const claim = () => { if (!order.occupiedBy) editOrder(number, (o) => { o.occupiedBy = SESSION?.id || null; o.occupiedByName = SESSION?.name || ""; }); };
+    // Заявку должен вести только один мастер одновременно — иначе два
+    // человека могут одновременно править один и тот же наряд, не видя друг
+    // друга. Поэтому вход в свободную заявку сразу занимает её тем, кто
+    // открыл экран; освободить можно только явной кнопкой «Выйти».
+    if (!order.occupiedBy) {
+      editOrder(number, (o) => { o.occupiedBy = SESSION?.id || null; o.occupiedByName = SESSION?.name || ""; });
+    }
     const leaveOrder = () => {
       // «Выйти» — снимаем хозяина, но остаёмся в «В работе»: отдельного
       // статуса-очереди больше нет.
@@ -1405,10 +1405,17 @@ function viewOrder(number) {
         if (pendingCard) b.append(pendingCard);
         order.items.filter((i) => i.agreed).forEach((it) => b.append(repairItem(it, stock, {
           onRun: () => openRunner(it.code),
-          onSave: (patch) => { claim(); editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) Object.assign(x, patch); }); refresh(); },
-          onQty: (qty) => { claim(); editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) x.qty = qty; }); refresh(); },
-          onRemove: (code) => { claim(); removeItem(code); },
+          onSave: (patch) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) Object.assign(x, patch); }); refresh(); },
+          onQty: (qty) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) x.qty = qty; }); refresh(); },
+          onRemove: (code) => removeItem(code),
         })));
+        // Итог по всем согласованным работам — раньше был только на отдельном
+        // экране-смете, теперь его увели вместе с самим экраном; тут он нужен
+        // так же, звонить клиенту с итоговой суммой можно прямо отсюда.
+        if (order.items.some((i) => i.agreed)) b.append(
+          el("div", { class: "card", style: "background:var(--bg);margin-top:12px" },
+            el("span", { class: "muted small" }, "Итого"),
+            el("div", { class: "total" }, rangeText(range))));
         // «+ доп. работа» разворачивает список узлов (Колёса, Тормоз…) прямо
         // тут, на месте — не отдельным экраном. Сам список и его состояние —
         // тот же mountDiagnostics, что и в остальных местах приложения, его
@@ -1433,7 +1440,7 @@ function viewOrder(number) {
             inline: true,
           });
         } else {
-          b.append(el("button", { style: "margin-top:14px", onclick: () => { claim(); addWorkOpenFor = number; refresh(); } }, "+ доп. работа"));
+          b.append(el("button", { style: "margin-top:14px", onclick: () => { addWorkOpenFor = number; refresh(); } }, "+ доп. работа"));
         }
         return b;
       };
