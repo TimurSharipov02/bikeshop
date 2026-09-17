@@ -33,12 +33,14 @@ for (const b of diagBlocks) for (const pre of b.codes || []) blockByPrefix[pre] 
 const blockOf = (code) => blockByPrefix[String(code || "").split("-")[0]] || "Прочее";
 // То же самое, но id блока (WHL/BRK/...), а не название — для группировки
 // запчастей по узлу: у какой работы какие детали предлагать первыми.
-const blockIdByPrefix = {};
+const blockIdByPrefix = { WSH: "WSH" };
 for (const b of diagBlocks) for (const pre of b.codes || []) blockIdByPrefix[pre] = b.id;
 const blockIdOf = (code) => blockIdByPrefix[String(code || "").split("-")[0]] || "";
 // Свои неисправности (catalog/repairs) привязаны к узлу напрямую через group
-// (id блока), а не через префикс кода — их так по коду не сгруппировать.
-const blockTitleById = Object.fromEntries(diagBlocks.map((b) => [b.id, b.title]));
+// (id блока), а не через префикс кода (у них у всех один и тот же CF-N) —
+// их так по коду не сгруппировать, нужно смотреть group на самом пункте.
+const blockTitleById = Object.fromEntries([...diagBlocks, { id: "WSH", title: "Мойка и консервация" }].map((b) => [b.id, b.title]));
+const partBlockIdOf = (it) => it.group || blockIdOf(it.code);
 
 const app = document.getElementById("app");
 const money = (n) => `${Number(n || 0).toLocaleString("ru-RU")} ₽`;
@@ -415,7 +417,7 @@ function makeItem(code, notes = "") {
 // цена/время/усложнения лежат прямо в ней самой.
 function makeCustomItem(fa, notes = "") {
   return {
-    code: fa.code, name: fa.label, agreed: false, done: false, parts: [], notes,
+    code: fa.code, name: fa.label, group: fa.group || "", agreed: false, done: false, parts: [], notes,
     workPrice: fa.price || 0,
     estimateMinutes: fa.minutes || 0,
     partsPrice: 0,
@@ -1549,24 +1551,29 @@ function itemList(order, showFacts, edit, detailed, grouped = true) {
   return box;
 }
 
-// Разбивка стоимости работы по составляющим — для звонка клиенту на
-// «готово к выдаче»/«выдан», чтобы не пересчитывать на словах: сама
-// работа, каждая запчасть (с ценой и количеством) и каждое подтвердившееся
-// усложнение отдельной строкой.
-function detailedItemRow(it) {
-  const r = itemRange(it);
+// Разбивка стоимости работы по составляющим — сама работа, каждая запчасть
+// (с ценой и количеством) и каждое подтвердившееся усложнение отдельной
+// строкой. Общая и для звонка клиенту («готово к выдаче»/«выдан»), и для
+// списка «в работе», чтобы мастер сразу видел, из чего складывается сумма,
+// не открывая форму по каждому пункту.
+function costLines(it) {
   const lines = [`работы ${money((it.workPrice || 0) * (it.qty || 1))}`];
   for (const p of it.parts || []) lines.push(`${partLabel(p)} ${money((p.price || 0) * (p.qty || 1))}`);
   if (it.partsPrice) lines.push(`запчасти ${money(it.partsPrice)}`);
   for (const d of it.difficulties || []) {
     if (d.state === "yes") lines.push(`${d.label} ${money((d.add || 0) * (d.qty || 1))}`);
   }
+  return lines;
+}
+
+function detailedItemRow(it) {
+  const r = itemRange(it);
   return el("div", { class: "row", style: "cursor:default;align-items:flex-start;flex-direction:column" },
     el("div", { style: "display:flex;width:100%;gap:8px" },
       el("span", { style: "flex:1" }, it.name, it.multiple && (it.qty || 1) > 1 ? el("span", { class: "small muted" }, ` × ${it.qty}`) : null),
       el("span", { class: "price-tag", style: "font-size:17px" }, rangeText(r))),
     it.notes ? el("p", { class: "small muted", style: "margin:2px 0 0" }, it.notes) : null,
-    el("div", { class: "small muted", style: "margin-top:4px" }, lines.map((l) => el("div", {}, "– " + l))));
+    el("div", { class: "small muted", style: "margin-top:4px" }, costLines(it).map((l) => el("div", {}, "– " + l))));
 }
 
 // Список усложнений — на «Оценке» (прикидка для клиента, ещё не известно
@@ -1648,7 +1655,7 @@ function openPendingSheet(it, stock, { onSet, onDiffQty, onParts, onQty }) {
       tab === "diff"
         ? (hasDiffs ? difficultyList(it.difficulties, (di, st) => { onSet(it.code, di, st); draw(); }, (di, qty) => { onDiffQty(it.code, di, qty); draw(); })
           : el("p", { class: "small muted" }, "Трудностей не ожидается."))
-        : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(it.parts, stock, () => { onParts(it.code, it.parts); draw(); }, blockIdOf(it.code))),
+        : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(it.parts, stock, () => { onParts(it.code, it.parts); draw(); }, partBlockIdOf(it))),
     ].filter(Boolean));
   }
   draw();
@@ -1673,7 +1680,7 @@ function openAssessSheet(it, stock, onChange) {
             (di, st) => { it.difficulties[di].state = st; draw(); onChange(); },
             (di, qty) => { if (it.difficulties[di]) it.difficulties[di].qty = qty; draw(); onChange(); })
           : el("p", { class: "small muted" }, "Трудностей не ожидается."))
-        : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(it.parts, stock, () => { draw(); onChange(); }, blockIdOf(it.code))),
+        : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(it.parts, stock, () => { draw(); onChange(); }, partBlockIdOf(it))),
     ].filter(Boolean));
   }
   draw();
@@ -1697,22 +1704,36 @@ function pendingAgreementCard(order, handlers, stock) {
 // внизу формы: «Готово» либо «Отменить», в обе стороны без ограничений.
 function repairItem(it, stock, { onRun, onSave, onQty, onRemove }) {
   const box = el("div", { class: "assess" });
-  const nameRow = el("div", {
-    style: "display:flex;align-items:center;gap:8px;cursor:pointer",
-    onclick: () => openRepairSheet(it, stock, onSave),
-  },
+  const nameRow = el("div", { style: "display:flex;align-items:center;gap:8px" },
     el("b", { style: "flex:1;min-width:0" }, it.name),
     it.done ? el("span", { class: "pill" }, "готово") : null,
     el("span", { style: "flex:0 0 auto;color:var(--line);font-size:19px" }, "›"));
-  box.append(nameRow, el("div", { class: "price-tag", style: "margin-top:2px" }, rangeText(itemRange(it))));
+  // Кликабельна вся карточка (имя + сумма + разбивка по составляющим), а не
+  // только строка с именем — с разбивкой карточка стала заметно выше, и тап
+  // ниже имени должен так же открывать форму, а не проваливаться в никуда.
+  // Счётчик количества ниже — вне этой области, у него свои кнопки.
+  const openArea = el("div", {
+    style: "cursor:pointer",
+    onclick: () => openRepairSheet(it, stock, onSave),
+  },
+    nameRow,
+    el("div", { class: "price-tag", style: "margin-top:2px" }, rangeText(itemRange(it))),
+    // Та же разбивка по составляющим, что и на «готово к выдаче» — не нужно
+    // открывать форму, чтобы увидеть, из чего сложилась сумма.
+    el("div", { class: "small muted", style: "margin-top:4px" }, costLines(it).map((l) => el("div", {}, "– " + l))));
+  box.append(openArea);
   if (it.multiple) box.append(el("div", { style: "margin-top:10px" }, qtyStepper(it.qty, onQty)));
   if (it.notes) box.append(el("p", { class: "small muted" }, it.notes));
   return onRemove ? swipeToDelete(box, () => { onRemove(it.code); return true; }) : box;
 }
 
 // Содержимое bottom sheet для repairItem — усложнения/запчасти на вкладках
-// (одна вкладка, если запчастям нечего показывать усложнения, и наоборот),
-// «Готово»/«Отменить» внизу закрывает форму — с ней покончено.
+// (одна вкладка, если запчастям нечего показывать усложнения, и наоборот).
+// Правки (было/не было, запчасти) сохраняются сами по себе сразу; кнопка
+// внизу — отдельное, самостоятельное действие «отметить/снять готово», а не
+// «сохранить». Закрыть форму (✕, свайп вниз, тап по фону) можно в любой
+// момент — терять нечего, всё уже сохранено, так что кнопка саму форму не
+// закрывает, только меняет статус на месте.
 function openRepairSheet(it, stock, onSave) {
   // «неизвестно» — прогнозное состояние (по умолчанию у новой работы), тут
   // такого выбора нет (см. fact:true ниже) — приводим к «не было», иначе
@@ -1737,14 +1758,14 @@ function openRepairSheet(it, stock, onSave) {
       hasDiffs ? el("div", { class: "segmented", style: "margin-bottom:14px" },
         el("button", { class: tab === "diff" ? "active" : "", onclick: () => { tab = "diff"; draw(); } }, "Усложнения"),
         el("button", { class: tab === "parts" ? "active" : "", onclick: () => { tab = "parts"; draw(); } }, "Запчасти")) : null,
-      tab === "diff" ? diffBox : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(pickedParts, stock, save, blockIdOf(it.code))),
+      tab === "diff" ? diffBox : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(pickedParts, stock, save, partBlockIdOf(it))),
       it.done
-        ? el("button", { style: "width:100%;margin-top:16px", onclick: () => { save({ done: false }); toast("Статус снят"); sheet.close(); } }, "Отменить")
-        : el("button", { class: "btn-ok", style: "width:100%;margin-top:16px", onclick: () => { save({ done: true }); toast("Отмечено готово"); sheet.close(); } }, "Готово"),
+        ? el("button", { style: "width:100%;margin-top:16px", onclick: () => { save({ done: false }); toast("Отметка «готово» снята"); draw(); } }, "Снять отметку «готово»")
+        : el("button", { class: "btn-ok", style: "width:100%;margin-top:16px", onclick: () => { save({ done: true }); toast("Отмечено готово"); draw(); } }, "Отметить готово"),
     ].filter(Boolean));
   }
   draw();
-  const sheet = openSheet(it.name, content);
+  openSheet(it.name, content);
 }
 
 // ============================================================================
