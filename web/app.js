@@ -88,12 +88,22 @@ const fixDoneDifficulties = (items) =>
     return { ...it, difficulties: it.difficulties.map((d) => (d.state === "unknown" ? { ...d, state: "no" } : d)) };
   });
 
+// Запчасти раньше были просто названиями (строками) без цены и количества —
+// приводим к {name, price, qty}, иначе itemRange не может посчитать их
+// стоимость, а старые записи ломают рендер списка (ожидает объект).
+const fixPartsShape = (items) =>
+  (items || []).map((it) => {
+    if (!(it.parts || []).some((p) => typeof p === "string")) return it;
+    return { ...it, parts: it.parts.map((p) => (typeof p === "string" ? { name: p, price: 0, qty: 1 } : p)) };
+  });
+
 const migrateOrders = (orders) =>
   (orders || []).map((o) => {
     let next = o;
     if (next.status === "в работе") next = { ...next, status: next.occupiedBy ? "взята в работу" : "принята" };
     if (next.status === "проверка") next = { ...next, status: "готово к выдаче" };
-    const items = fixDoneDifficulties(next.items);
+    let items = fixDoneDifficulties(next.items);
+    items = fixPartsShape(items);
     if (items !== next.items) next = { ...next, items };
     return next;
   });
@@ -277,8 +287,9 @@ const nextBikeKey = (d, phone) => `${phone}#${d.bikes.filter((b) => b.ownerPhone
 // qty у работы и у каждого усложнения — сколько раз это сделано (несколько
 // колёс, несколько спиц и т.п.); значимо только когда у работы/усложнения
 // стоит галочка «несколько», иначе всегда 1 и ни на что не влияет.
+const partsCost = (parts) => (parts || []).reduce((s, p) => s + (p.price || 0) * (p.qty || 1), 0);
 function itemRange(it) {
-  const base = (it.workPrice || 0) * (it.qty || 1) + (it.partsPrice || 0);
+  const base = (it.workPrice || 0) * (it.qty || 1) + (it.partsPrice || 0) + partsCost(it.parts);
   let min = base, max = base;
   for (const d of it.difficulties || []) {
     const amt = (d.add || 0) * (d.qty || 1);
@@ -833,7 +844,9 @@ function viewNewOrder() {
   // велосипеда, так что шапка с ними не показывается.
   function stepAssess() {
     const openCodes = new Set();
+    let stock = stockCache || [];
     const redraw = () => render(build(), { keepScroll: true });
+    if (!stockCache) ensureStock().then((s) => { stock = s; redraw(); });
     function build() {
       const body = el("div", {});
       if (draft.items.length === 0) body.append(el("p", { class: "muted small" }, "Работ пока нет."));
@@ -862,11 +875,9 @@ function viewNewOrder() {
           else row.append(el("div", { style: "margin-top:8px" }, difficultyList(it.difficulties,
             (di, st) => { it.difficulties[di].state = st; redraw(); },
             (di, qty) => { if (it.difficulties[di]) it.difficulties[di].qty = qty; redraw(); })));
-          row.append(el("div", { style: "display:flex;gap:8px;align-items:center;margin-top:10px" },
-            el("span", { class: "small muted", style: "flex:1" }, "Запчасти (детали) в счёт"),
-            el("input", { type: "number", value: it.partsPrice || 0, style: "width:96px;text-align:right",
-              onchange: (e) => { it.partsPrice = +e.target.value || 0; redraw(); } }),
-            el("span", { class: "muted small" }, "₽")));
+          row.append(
+            el("label", { style: "margin-top:10px" }, "Запчасти"),
+            partsEditor(it.parts, stock, redraw));
         }
         body.append(row);
       });
@@ -1198,7 +1209,7 @@ function viewOrder(number) {
 
   if (order.status === "готово к выдаче") {
     main.append(pendingCardHost());
-    main.append(stage("Смета для звонка клиенту", itemList({ items: order.items.filter((i) => i.agreed) }, true),
+    main.append(stage("Смета для звонка клиенту", itemList({ items: order.items.filter((i) => i.agreed) }, true, null, true),
       el("div", { class: "card", style: "background:var(--bg);margin-top:12px" },
         el("span", { class: "muted small" }, "Итого"),
         el("div", { class: "total" }, rangeText(range)))));
@@ -1212,7 +1223,7 @@ function viewOrder(number) {
 
   if (order.status === "выдан") {
     main.append(pendingCardHost());
-    main.append(stage("Выдан", itemList({ items: order.items.filter((i) => i.agreed) }, true),
+    main.append(stage("Выдан", itemList({ items: order.items.filter((i) => i.agreed) }, true, null, true),
       el("div", { class: "card", style: "background:var(--bg)" },
         el("span", { class: "muted small" }, "Итого"),
         el("div", { class: "total" }, rangeText(range)))));
@@ -1231,6 +1242,52 @@ function viewOrder(number) {
 
 function stage(title, ...body) { return el("div", { class: "card" }, el("h2", {}, title), ...body); }
 
+// Название запчасти с количеством, если больше одной штуки — «Ротор × 2».
+const partLabel = (p) => p.name + ((p.qty || 1) > 1 ? ` × ${p.qty}` : "");
+
+// Список запчастей у работы — выбор из остатков (с ценой) с возможностью
+// нескольких видов и нескольких штук каждого (повторный выбор той же детали
+// увеличивает количество, а не дублирует строку). Общее для ремонта («в
+// работе») и «Ждёт согласования» — мутирует parts на месте, onChange зовёт
+// сохранение и перерисовку у вызывающего.
+function partsEditor(parts, stock, onChange) {
+  const chips = el("div", {});
+  const drawChips = () => {
+    chips.replaceChildren(...(parts.length
+      ? [el("div", { style: "display:flex;flex-wrap:wrap;gap:6px;margin-top:6px" },
+          parts.map((p, i) => el("span", { class: "pill" }, partLabel(p), " ",
+            el("button", {
+              style: "border:0;background:none;color:inherit;cursor:pointer;padding:0;min-height:auto;font:inherit",
+              onclick: () => { parts.splice(i, 1); drawChips(); onChange(); },
+            }, "✕"))))]
+      : []));
+  };
+  drawChips();
+  const stockSelect = el("select", { style: "width:auto;flex:1" },
+    el("option", { value: "" }, stock.length ? "— выбрать деталь —" : "остатки пусты"),
+    stock.map((s) => el("option", { value: s.sku || s.name },
+      `${s.name}${s.sku ? " · " + s.sku : ""}${s.price ? ` · ${money(s.price)}` : ""}`)));
+  return el("div", {},
+    el("div", { style: "display:flex;gap:8px" },
+      stockSelect,
+      el("button", {
+        style: "flex:0 0 auto",
+        onclick: () => {
+          const v = stockSelect.value;
+          if (!v) return;
+          const found = stock.find((s) => (s.sku || s.name) === v);
+          const name = found ? found.name : v;
+          const price = found?.price || 0;
+          const existing = parts.find((p) => p.name === name && p.price === price);
+          if (existing) existing.qty = (existing.qty || 1) + 1;
+          else parts.push({ name, price, qty: 1 });
+          drawChips();
+          onChange();
+        },
+      }, "+ добавить")),
+    chips);
+}
+
 function itemRow(it, showFacts) {
   const r = itemRange(it);
   return el("div", { class: "row", style: "cursor:default;align-items:flex-start" },
@@ -1239,7 +1296,7 @@ function itemRow(it, showFacts) {
       showFacts && !it.agreed ? el("span", { class: "pill", style: "background:var(--fill);color:var(--muted)" }, "не согласовано") : null,
       it.notes ? el("span", { class: "small muted" }, el("br"), it.notes) : null,
       showFacts && it.done && (it.parts.length || it.doneBy) ? el("span", { class: "small muted" }, el("br"),
-        [it.parts.length ? it.parts.join(", ") : null, it.doneBy].filter(Boolean).join(" · ")) : null),
+        [it.parts.length ? it.parts.map(partLabel).join(", ") : null, it.doneBy].filter(Boolean).join(" · ")) : null),
     el("span", { class: "small muted" }, rangeText(r)));
 }
 
@@ -1326,7 +1383,7 @@ function editableItemRow(it, { onRemove, onSave, refresh }) {
 // Наряд сгруппирован по узлам велосипеда (блоки диагностики), порядок — как в diagnostics.json.
 // edit — {onRemove, onSave, refresh}: если передан, работы на стадии «приём»
 // можно убрать или изменить прямо в списке.
-function itemList(order, showFacts, edit) {
+function itemList(order, showFacts, edit, detailed) {
   if (order.items.length === 0) return el("p", { class: "muted small" }, "Работ пока нет.");
   const groups = groupBy(order.items, (it) => blockOf(it.code));
   const box = el("div", { style: "margin-top:8px" });
@@ -1335,9 +1392,29 @@ function itemList(order, showFacts, edit) {
     if (!list || !list.length) continue;
     box.append(
       el("p", { class: "small muted", style: "margin:14px 0 4px;letter-spacing:.05em" }, title.toUpperCase()),
-      el("div", { class: "rows" }, list.map((it) => edit ? editableItemRow(it, edit) : itemRow(it, showFacts))));
+      el("div", { class: "rows" }, list.map((it) => edit ? editableItemRow(it, edit) : detailed ? detailedItemRow(it) : itemRow(it, showFacts))));
   }
   return box;
+}
+
+// Разбивка стоимости работы по составляющим — для звонка клиенту на
+// «готово к выдаче»/«выдан», чтобы не пересчитывать на словах: сама
+// работа, каждая запчасть (с ценой и количеством) и каждое подтвердившееся
+// усложнение отдельной строкой.
+function detailedItemRow(it) {
+  const r = itemRange(it);
+  const lines = [`работы ${money((it.workPrice || 0) * (it.qty || 1))}`];
+  for (const p of it.parts || []) lines.push(`${partLabel(p)} ${money((p.price || 0) * (p.qty || 1))}`);
+  if (it.partsPrice) lines.push(`запчасти ${money(it.partsPrice)}`);
+  for (const d of it.difficulties || []) {
+    if (d.state === "yes") lines.push(`${d.label} ${money((d.add || 0) * (d.qty || 1))}`);
+  }
+  return el("div", { class: "row", style: "cursor:default;align-items:flex-start;flex-direction:column" },
+    el("div", { style: "display:flex;width:100%;gap:8px" },
+      el("span", { style: "flex:1" }, it.name, it.multiple && (it.qty || 1) > 1 ? el("span", { class: "small muted" }, ` × ${it.qty}`) : null),
+      el("span", {}, rangeText(r))),
+    it.notes ? el("p", { class: "small muted", style: "margin:2px 0 0" }, it.notes) : null,
+    el("div", { class: "small muted", style: "margin-top:4px" }, lines.map((l) => el("div", {}, "– " + l))));
 }
 
 // Список усложнений — на «Оценке» (прикидка для клиента, ещё не известно
@@ -1405,38 +1482,10 @@ function pendingAgreementRow(it, { onAgree, onRemove, onSet, onDiffQty, onParts,
       (di, qty) => onDiffQty(it.code, di, qty))));
     // Тот же список запчастей, что и у согласованной работы («в работе») —
     // выбор из остатков + «+ добавить», а не отдельная оценка суммой.
-    const pickedParts = [...(it.parts || [])];
-    const partsChips = el("div", {});
-    const drawParts = () => {
-      partsChips.replaceChildren(...(pickedParts.length
-        ? [el("div", { style: "display:flex;flex-wrap:wrap;gap:6px;margin-top:6px" },
-            pickedParts.map((p, i) => el("span", { class: "pill" }, p, " ",
-              el("button", {
-                style: "border:0;background:none;color:inherit;cursor:pointer;padding:0;min-height:auto;font:inherit",
-                onclick: () => { pickedParts.splice(i, 1); drawParts(); onParts(it.code, pickedParts); },
-              }, "✕"))))]
-        : []));
-    };
-    drawParts();
-    const stockSelect = el("select", { style: "width:auto;flex:1" },
-      el("option", { value: "" }, stock.length ? "— выбрать деталь —" : "остатки пусты"),
-      stock.map((s) => el("option", { value: s.sku || s.name },
-        `${s.name}${s.sku ? " · " + s.sku : ""}${s.qty != null ? ` (${s.qty} ${s.unit || "шт"})` : ""}`)));
+    const pickedParts = (it.parts || []).map((p) => ({ ...p }));
     box.append(
       el("label", { style: "margin-top:10px" }, "Запчасти"),
-      el("div", { style: "display:flex;gap:8px" },
-        stockSelect,
-        el("button", {
-          style: "flex:0 0 auto",
-          onclick: () => {
-            const v = stockSelect.value;
-            if (!v) return;
-            const found = stock.find((s) => (s.sku || s.name) === v);
-            const label = found ? found.name : v;
-            if (!pickedParts.includes(label)) { pickedParts.push(label); drawParts(); onParts(it.code, pickedParts); }
-          },
-        }, "+ добавить")),
-      partsChips);
+      partsEditor(pickedParts, stock, () => onParts(it.code, pickedParts)));
   }
   box.append(el("div", { class: "btn-row", style: "margin-top:10px" },
     el("button", { class: "btn-ok", onclick: () => onAgree(it.code) }, "Согласовано"),
@@ -1465,7 +1514,7 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove, refresh }) {
   // помеченная «готово» работа продолжала бы считаться диапазоном цены,
   // а не точной суммой.
   const diffs = JSON.parse(JSON.stringify(it.difficulties || [])).map((d) => (d.state === "unknown" ? { ...d, state: "no" } : d));
-  const pickedParts = [...(it.parts || [])];
+  const pickedParts = (it.parts || []).map((p) => ({ ...p }));
   const save = (extra) => onSave({ parts: pickedParts, difficulties: diffs, doneBy: it.doneBy ?? SESSION?.name ?? undefined, ...extra });
 
   const box = el("div", { class: "assess" });
@@ -1495,39 +1544,11 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove, refresh }) {
     (di, st) => { diffs[di].state = st; drawDiffs(); save(); },
     (di, qty) => { diffs[di].qty = qty; drawDiffs(); save(); }, true));
   drawDiffs();
-  const partsChips = el("div", {});
-  const drawParts = () => {
-    partsChips.replaceChildren(...(pickedParts.length
-      ? [el("div", { style: "display:flex;flex-wrap:wrap;gap:6px;margin-top:6px" },
-          pickedParts.map((p, i) => el("span", { class: "pill" }, p, " ",
-            el("button", {
-              style: "border:0;background:none;color:inherit;cursor:pointer;padding:0;min-height:auto;font:inherit",
-              onclick: () => { pickedParts.splice(i, 1); drawParts(); save(); },
-            }, "✕"))))]
-      : []));
-  };
-  drawParts();
-  const stockSelect = el("select", { style: "width:auto;flex:1" },
-    el("option", { value: "" }, stock.length ? "— выбрать деталь —" : "остатки пусты"),
-    stock.map((s) => el("option", { value: s.sku || s.name },
-      `${s.name}${s.sku ? " · " + s.sku : ""}${s.qty != null ? ` (${s.qty} ${s.unit || "шт"})` : ""}`)));
   if (diffs.length) form.append(el("label", {}, "Усложнения по факту"));
   form.append(
     diffBox,
     el("label", {}, "Запчасти"),
-    el("div", { style: "display:flex;gap:8px" },
-      stockSelect,
-      el("button", {
-        style: "flex:0 0 auto",
-        onclick: () => {
-          const v = stockSelect.value;
-          if (!v) return;
-          const found = stock.find((s) => (s.sku || s.name) === v);
-          const label = found ? found.name : v;
-          if (!pickedParts.includes(label)) { pickedParts.push(label); drawParts(); save(); }
-        },
-      }, "+ добавить")),
-    partsChips,
+    partsEditor(pickedParts, stock, save),
     it.done
       ? el("button", { style: "width:100%;margin-top:12px", onclick: () => { repairOpenCodes.delete(it.code); save({ done: false }); } }, "Отменить")
       : el("button", { class: "btn-ok", style: "width:100%;margin-top:12px", onclick: () => { repairOpenCodes.delete(it.code); save({ done: true }); } }, "Готово"));
@@ -2245,11 +2266,12 @@ function stockScreen(data, error) {
   const items = (data.items || []).map((it) => ({ ...it }));
   const updated = data.updatedAt ? new Date(data.updatedAt).toLocaleString("ru-RU") : null;
 
-  const rows = items.map((it, i) => el("div", { class: "price-row", style: "display:flex;gap:8px;align-items:center" },
+  const rows = items.map((it, i) => el("div", { class: "price-row", style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" },
     el("input", { value: it.sku, style: "width:90px", placeholder: "артикул", onchange: (ev) => { items[i].sku = ev.target.value; } }),
-    el("input", { value: it.name, style: "flex:1", placeholder: "название", onchange: (ev) => { items[i].name = ev.target.value; } }),
-    el("input", { type: "number", value: it.qty, style: "width:70px;text-align:right", onchange: (ev) => { items[i].qty = +ev.target.value || 0; } }),
+    el("input", { value: it.name, style: "flex:1;min-width:120px", placeholder: "название", onchange: (ev) => { items[i].name = ev.target.value; } }),
+    el("input", { type: "number", value: it.qty, style: "width:70px;text-align:right", placeholder: "остаток", onchange: (ev) => { items[i].qty = +ev.target.value || 0; } }),
     el("input", { value: it.unit, style: "width:60px", placeholder: "ед.", onchange: (ev) => { items[i].unit = ev.target.value; } }),
+    el("input", { type: "number", value: it.price || 0, style: "width:80px;text-align:right", placeholder: "цена", onchange: (ev) => { items[i].price = +ev.target.value || 0; } }),
     el("button", { onclick: () => saveStockItems(items.filter((_, j2) => j2 !== i)) }, "✕")));
 
   const importArea = el("textarea", { rows: 4 });
@@ -2260,19 +2282,19 @@ function stockScreen(data, error) {
       updated ? el("p", { class: "small muted" }, "Обновлено: " + updated) : null,
       el("div", { class: "card" },
         rows.length ? el("div", { class: "list" }, rows) : el("p", { class: "muted small" }, "Пока пусто."),
-        el("button", { style: "margin-top:10px", onclick: () => { items.push({ sku: "", name: "", qty: 0, unit: "шт" }); render(stockScreen({ items, updatedAt: data.updatedAt }, "")); } }, "+ строка"),
+        el("button", { style: "margin-top:10px", onclick: () => { items.push({ sku: "", name: "", qty: 0, unit: "шт", price: 0 }); render(stockScreen({ items, updatedAt: data.updatedAt }, "")); } }, "+ строка"),
         el("div", { class: "btn-row", style: "margin-top:12px" },
           el("button", { class: "btn-primary", onclick: () => saveStockItems(items) }, "Сохранить"))),
       el("div", { class: "card" },
         el("h2", {}, "Импорт списком"),
-        el("p", { class: "small muted" }, "Пока без прямой связи с 1С — вставьте выгрузку сюда, каждая позиция с новой строки: артикул;название;остаток;единица. Полностью заменит список выше."),
+        el("p", { class: "small muted" }, "Пока без прямой связи с 1С — вставьте выгрузку сюда, каждая позиция с новой строки: артикул;название;остаток;единица;цена. Полностью заменит список выше."),
         importArea,
         el("div", { class: "btn-row", style: "margin-top:10px" },
           el("button", {
             onclick: () => {
               const parsed = importArea.value.split("\n").map((line) => line.split(";").map((s) => s.trim()))
                 .filter((p) => p[0] || p[1])
-                .map(([sku, name, qty, unit]) => ({ sku: sku || "", name: name || "", qty: Number(qty) || 0, unit: unit || "шт" }));
+                .map(([sku, name, qty, unit, price]) => ({ sku: sku || "", name: name || "", qty: Number(qty) || 0, unit: unit || "шт", price: Number(price) || 0 }));
               if (parsed.length) saveStockItems(parsed);
             },
           }, "Импортировать (заменит список)")))),
