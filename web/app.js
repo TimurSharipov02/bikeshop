@@ -1629,15 +1629,18 @@ function editableItemRow(it, { onRemove, onSave, refresh }) {
   const r = itemRange(it);
   const isEditing = editingItemCode === it.code;
   // Имя — на своей строке (растягивается на всю ширину, переносится
-  // предсказуемо), цена/счётчик количества/действия — строкой ниже, всегда
-  // в одном и том же порядке независимо от длины названия.
-  const header = el("div", { class: "row", style: "align-items:flex-start;flex-direction:column;gap:6px" },
+  // предсказуемо), цена/счётчик количества — строкой ниже, всегда в одном
+  // и том же порядке независимо от длины названия. ✎/✕ — как везде в
+  // приложении, за свайпом влево, а не отдельными кнопками в строке.
+  const rowContent = el("div", { class: "row", style: "align-items:flex-start;flex-direction:column;gap:6px" },
     el("span", { style: "width:100%" }, it.name, it.notes ? el("span", { class: "small muted" }, el("br"), it.notes) : null),
     el("div", { style: "display:flex;align-items:center;gap:10px;width:100%" },
       it.multiple ? qtyStepper(it.qty, (qty) => onSave(it.code, { qty })) : null,
-      el("span", { class: "price-tag", style: "flex:1" }, rangeText(r)),
-      el("button", { style: iconBtnStyle, onclick: () => { editingItemCode = isEditing ? null : it.code; refresh(); } }, "✎"),
-      el("button", { style: iconBtnStyle, onclick: () => { if (confirm(`Убрать «${it.name}» из наряда?`)) onRemove(it.code); } }, "✕")));
+      el("span", { class: "price-tag", style: "flex:1" }, rangeText(r))));
+  const header = swipeActions(rowContent, [
+    { label: ICON_EDIT, onClick: () => { editingItemCode = isEditing ? null : it.code; refresh(); } },
+    { label: ICON_CLOSE, className: "warn", onClick: () => { if (confirm(`Убрать «${it.name}» из наряда?`)) onRemove(it.code); } },
+  ]);
   if (!isEditing) return header;
 
   const d = {
