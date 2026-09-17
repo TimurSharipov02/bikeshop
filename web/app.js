@@ -570,6 +570,13 @@ const STATUS_TAG_CLASS = {
   "взята в работу": "tag-progress", "готово к выдаче": "tag-check", "выдан": "tag-done",
 };
 const statusTag = (status) => el("span", { class: "tag " + (STATUS_TAG_CLASS[status] || "") }, status);
+// «Взята в работу» без хозяина (только что оформлена или освобождена
+// кнопкой «Выйти») — на списке обращений это должно выглядеть как
+// «Свободна», а не как будто кто-то её уже ведёт.
+const orderStatusTag = (o) =>
+  o.status === "взята в работу" && !o.occupiedBy
+    ? el("span", { class: "tag tag-new" }, "Свободна")
+    : statusTag(o.status);
 
 // Реальный путь обращения — три стадии одной операции (легаси приём/оценка/
 // согласование сюда не входят, там прогресс не показываем; «принята» как
@@ -899,7 +906,7 @@ function orderRow(o, d, onDelete, dateIso) {
       // тут только его имя.
       o.occupiedByName ? el("span", { class: "small muted" }, " · мастер: " + o.occupiedByName) : null,
       dateIso ? el("span", { class: "small muted" }, " · " + formatDateShort(dateIso)) : null),
-    statusTag(o.status));
+    orderStatusTag(o));
   return onDelete ? swipeToDelete(row, () => onDelete(o)) : row;
 }
 
@@ -1145,8 +1152,11 @@ function viewNewOrder() {
             }
             const number = nextOrderNumber(d);
             d.orders.push({
+              // Только что оформленная заявка — свободна: занять её должен
+              // тот, кто реально возьмётся за работу (claim() на экране
+              // «в работе»), а не автоматически тот, кто её завёл.
               number, clientPhone: p, bikeNumber: bn, request: draft.request, diagnosticNotes: draft.diagnosticNotes,
-              status: "взята в работу", occupiedBy: SESSION?.id || null, occupiedByName: SESSION?.name || "",
+              status: "взята в работу", occupiedBy: null, occupiedByName: "",
               items: draft.items, createdAt: new Date().toISOString(),
             });
           });
