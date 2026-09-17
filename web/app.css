@@ -47,17 +47,6 @@ a.sub:active { opacity:.5; }
    название велосипеда, главное, на что смотрят чаще всего. */
 header.bar .bar-title-lg { font-size:19px; font-weight:700; }
 
-/* Прогресс по стадиям обращения (принята → в работе → проверка → выдано) —
-   пройденные кликабельны, чтобы вернуться на стадию назад при ошибке. */
-.progress-steps { display:flex; align-items:center; gap:2px; padding:10px 16px; overflow-x:auto;
-  background:var(--card); border-bottom:.5px solid var(--line); font-size:13px; }
-.pstep { padding:5px 9px; border-radius:999px; white-space:nowrap; color:var(--line); flex:0 0 auto; }
-.pstep-done { color:var(--accent); cursor:pointer; touch-action:manipulation; }
-.pstep-done:active { opacity:.6; }
-.pstep-current { background:var(--accent-weak); color:var(--accent); font-weight:600; }
-.pstep-future { color:var(--muted); }
-.pstep-sep { color:var(--line); font-size:12px; flex:0 0 auto; }
-
 .card { background:var(--card); border:.5px solid var(--line); border-radius:var(--radius); padding:16px;
   margin-bottom:14px; box-shadow:var(--shadow-sm); }
 .card h2 { margin:0 0 10px; font-size:16px; font-weight:650; letter-spacing:-.005em; }

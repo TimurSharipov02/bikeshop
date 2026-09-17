@@ -582,35 +582,6 @@ const orderStatusTag = (o) =>
     ? el("span", { class: "tag tag-new" }, "Свободна")
     : statusTag(o.status);
 
-// Реальный путь обращения — три стадии одной операции (легаси приём/оценка/
-// согласование сюда не входят, там прогресс не показываем; «принята» как
-// отдельный шаг убрали совсем — открыли заявку в работе, значит уже взялись,
-// отдельного «взять» не нужно, а отказаться можно кнопкой «Выйти и
-// освободить заявку»). Пройденные стадии кликабельны — можно вернуться
-// назад, если мастер ошибся; будущие нет — двигаться вперёд можно только
-// кнопками на самой стадии.
-// «Готово к выдаче» убрали как отдельную стадию: как только все работы на
-// «в работе» отмечены готовыми, там же становится доступна «Выдать клиенту»
-// — отдельный экран-подтверждение только дублировал тот же список работ.
-const ORDER_STAGES = [
-  { key: "взята в работу", label: "В работе" },
-  { key: "выдан", label: "Выдано" },
-];
-function orderProgressBar(status, onJump) {
-  const idx = ORDER_STAGES.findIndex((s) => s.key === status);
-  if (idx === -1) return null;
-  const out = [];
-  ORDER_STAGES.forEach((s, i) => {
-    if (i) out.push(el("span", { class: "pstep-sep" }, "›"));
-    const state = i < idx ? "done" : i === idx ? "current" : "future";
-    out.push(el("span", {
-      class: `pstep pstep-${state}`,
-      onclick: state === "done" ? () => onJump(s.key) : null,
-    }, s.label));
-  });
-  return el("div", { class: "progress-steps" }, out);
-}
-
 // ============================================================================
 //  РОУТЕР
 // ============================================================================
@@ -1308,9 +1279,10 @@ function viewOrder(number) {
   let actions = null;
   // Переход на новую стадию — это новый экран, тут скролл наверх уместен.
   const setStatus = (s, extra) => { editOrder(number, (o) => { o.status = s; if (extra) extra(o); }); render(viewOrder(number)); };
-  // Возврат на пройденную стадию из прогресс-бара — по ошибке ушли дальше,
-  // чем нужно. Сбрасываем поля, которые эта и более поздние стадии проставляют,
-  // чтобы состояние не противоречило статусу, на который вернулись.
+  // Возврат на пройденную стадию — по ошибке выдали раньше времени или
+  // нашлась недоделка. Сбрасываем поля, которые эта и более поздние стадии
+  // проставляют, чтобы состояние не противоречило статусу, на который
+  // вернулись.
   const jumpToStage = (target) => {
     editOrder(number, (o) => {
       o.status = target;
@@ -1471,7 +1443,11 @@ function viewOrder(number) {
     main.append(stage("Выдан", itemList({ items: order.items.filter((i) => i.agreed) }, true, null, true, false),
       el("div", { class: "card", style: "background:var(--bg)" },
         el("span", { class: "muted small" }, "Итого"),
-        el("div", { class: "total" }, rangeText(range)))));
+        el("div", { class: "total" }, rangeText(range))),
+      // Выдали по ошибке раньше времени или нашлась недоделка — можно
+      // вернуть в работу; без прогресс-бара это был единственный способ.
+      el("button", { class: "small", style: "border:0;background:none;color:var(--muted);margin-top:10px",
+        onclick: () => jumpToStage("взята в работу") }, "Вернуть в работу")));
   }
 
   if (autoOpenDiagsFor === number && order.status === "приём" && order.items.length === 0) {
@@ -1486,14 +1462,11 @@ function viewOrder(number) {
   const showStickyTotal = order.status === "выдан" && agreedCount > 3;
   return [
     // Название велосипеда вместо номера обращения, покрупнее остальных
-    // заголовков — по нему сразу видно, с чем работаешь. Статус справа
-    // убрали: он и так виден на полоске стадий чуть ниже, дублировать не
-    // нужно. Номер обращения — в карточке велосипеда ниже, для сверки не
-    // пропал.
+    // заголовков — по нему сразу видно, с чем работаешь. Номер обращения —
+    // в карточке велосипеда ниже, для сверки не пропал.
     el("header", { class: "bar" },
       el("a", { class: "back", href: "#" + (order.status === "выдан" ? "/orders" : "/") }, "‹"),
       el("h1", { class: "bar-title-lg" }, bike ? bikeLabel(bike) : order.number)),
-    orderProgressBar(order.status, jumpToStage),
     main,
     actions,
     showStickyTotal ? stickyTotal(range) : null,
@@ -2242,22 +2215,28 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
     const list = instances();
     const wrap = el(inline ? "div" : "main", { class: inline ? null : "wrap" });
 
-    wrap.append(el("div", { class: "card" },
-      el("h2", {}, "Запрос клиента"),
-      // DIAG_TOGGLES (гидравлика/механика и т.п.) пока скрыты — переключатели
-      // остаются в коде с дефолтными значениями, faultVisible ими и пользуется.
-      onRequest ? el("textarea", { rows: 2, value: req, placeholder: "с чем пришёл, со слов клиента", style: "margin-top:10px",
-        onchange: (e) => { req = e.target.value.trim(); onRequest(req); } }) : null));
+    // При встраивании в «+ доп. работа» (inline) ни запрос клиента, ни
+    // список уже добавленного тут не нужны: запрос — это только про первичный
+    // приём, а список работ и так виден выше, на самом экране «Ремонт»,
+    // повторять его тут было бы дублированием.
+    if (!inline) {
+      wrap.append(el("div", { class: "card" },
+        el("h2", {}, "Запрос клиента"),
+        // DIAG_TOGGLES (гидравлика/механика и т.п.) пока скрыты — переключатели
+        // остаются в коде с дефолтными значениями, faultVisible ими и пользуется.
+        onRequest ? el("textarea", { rows: 2, value: req, placeholder: "с чем пришёл, со слов клиента", style: "margin-top:10px",
+          onchange: (e) => { req = e.target.value.trim(); onRequest(req); } }) : null));
 
-    const items = getItems();
-    if (items.length) {
-      wrap.append(el("div", {},
-        el("p", { class: "small muted", style: "margin:14px 0 4px" }, "Уже добавлено в наряд"),
-        itemList({ items }, false, {
-          onRemove: (code) => { onUncheck({ code }); uncheckByCode(code); draw(); },
-          onSave: (code, patch) => { onEditItem(code, patch); draw(); },
-          refresh: draw,
-        }, false, false)));
+      const items = getItems();
+      if (items.length) {
+        wrap.append(el("div", {},
+          el("p", { class: "small muted", style: "margin:14px 0 4px" }, "Уже добавлено в наряд"),
+          itemList({ items }, false, {
+            onRemove: (code) => { onUncheck({ code }); uncheckByCode(code); draw(); },
+            onSave: (code, patch) => { onEditItem(code, patch); draw(); },
+            refresh: draw,
+          }, false, false)));
+      }
     }
 
     for (const inst of list) {
