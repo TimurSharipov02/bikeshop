@@ -80,9 +80,6 @@ header.bar .bar-title-lg { font-size:19px; font-weight:700; }
 .row .chev { margin-left:auto; color:var(--line); font-size:19px; flex:0 0 auto; }
 .row .tag { margin-left:auto; font-size:12px; font-weight:600; padding:3px 9px; border-radius:999px;
   background:var(--fill); color:var(--muted); border:0; white-space:nowrap; }
-/* Готово к выдаче давно, но не выдано — полоска сбоку для сканирования списка. */
-.row-overdue { box-shadow:inset 4px 0 0 var(--orange); }
-
 .row-icon { flex:0 0 auto; width:30px; height:30px; border-radius:8px; background:var(--accent);
   color:#fff; display:flex; align-items:center; justify-content:center; }
 .row-icon svg { width:17px; height:17px; }

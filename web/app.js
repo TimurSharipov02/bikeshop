@@ -182,6 +182,10 @@ const migrateOrders = (orders) =>
     // сами доберут его при открытии (см. viewOrder), тут только статус.
     if (next.status === "принята") next = { ...next, status: "взята в работу" };
     if (next.status === "проверка") next = { ...next, status: "готово к выдаче" };
+    // «готово к выдаче» тоже убрали отдельным шагом — экран «в работе» и так
+    // показывает тот же список работ и предлагает «Выдать клиенту», как
+    // только всё отмечено готовым; отдельная стадия-подтверждение не нужна.
+    if (next.status === "готово к выдаче") next = { ...next, status: "взята в работу" };
     let items = fixDoneDifficulties(next.items);
     items = fixPartsShape(items);
     if (items !== next.items) next = { ...next, items };
@@ -567,7 +571,7 @@ function openWorkPicker({ existingItems, bikeKind, onBack, onPick }) {
 
 const STATUS_TAG_CLASS = {
   "приём": "tag-new", "оценка": "tag-quote", "согласование": "tag-approve",
-  "взята в работу": "tag-progress", "готово к выдаче": "tag-check", "выдан": "tag-done",
+  "взята в работу": "tag-progress", "выдан": "tag-done",
 };
 const statusTag = (status) => el("span", { class: "tag " + (STATUS_TAG_CLASS[status] || "") }, status);
 // «Взята в работу» без хозяина (только что оформлена или освобождена
@@ -585,9 +589,11 @@ const orderStatusTag = (o) =>
 // освободить заявку»). Пройденные стадии кликабельны — можно вернуться
 // назад, если мастер ошибся; будущие нет — двигаться вперёд можно только
 // кнопками на самой стадии.
+// «Готово к выдаче» убрали как отдельную стадию: как только все работы на
+// «в работе» отмечены готовыми, там же становится доступна «Выдать клиенту»
+// — отдельный экран-подтверждение только дублировал тот же список работ.
 const ORDER_STAGES = [
   { key: "взята в работу", label: "В работе" },
-  { key: "готово к выдаче", label: "Готово к выдаче" },
   { key: "выдан", label: "Выдано" },
 ];
 function orderProgressBar(status, onJump) {
@@ -894,11 +900,7 @@ function formatDateGroup(iso) {
 function orderRow(o, d, onDelete, dateIso) {
   const bike = d.bikes.find((b) => b.number === o.bikeNumber);
   const client = d.clients.find((c) => c.phone === o.clientPhone);
-  // Готово к выдаче больше двух суток и клиент всё ещё не забрал — отмечаем
-  // полоской сбоку, чтобы такие заявки сразу бросались в глаза в списке.
-  const overdue = o.status === "готово к выдаче" && o.finishedAt
-    && Date.now() - new Date(o.finishedAt).getTime() > 48 * 3600 * 1000;
-  const row = el("a", { class: "row" + (overdue ? " row-overdue" : ""), href: `#/orders/${o.number}` },
+  const row = el("a", { class: "row", href: `#/orders/${o.number}` },
     el("span", { class: "code" }, o.number),
     el("span", { style: "flex:1;min-width:0" }, bike ? bikeLabel(bike) : o.bikeNumber,
       el("br"), el("span", { class: "small muted" }, client?.name || o.clientPhone),
@@ -1312,8 +1314,7 @@ function viewOrder(number) {
   const jumpToStage = (target) => {
     editOrder(number, (o) => {
       o.status = target;
-      if (target === "взята в работу") { o.occupiedBy = SESSION?.id || null; o.occupiedByName = SESSION?.name || ""; o.finishedAt = null; o.handedOverAt = null; }
-      else if (target === "готово к выдаче") { o.occupiedBy = null; o.occupiedByName = ""; o.handedOverAt = null; }
+      if (target === "взята в работу") { o.occupiedBy = SESSION?.id || null; o.occupiedByName = SESSION?.name || ""; o.handedOverAt = null; }
     });
     render(viewOrder(number));
   };
@@ -1445,24 +1446,17 @@ function viewOrder(number) {
       // кнопка «появляется из ниоткуда» в неожиданный момент.
       // Пока развёрнута «+ доп. работа» — снизу уже своя кнопка «Готово» от
       // mountDiagnostics, вторую закреплённую панель поверх неё не показываем.
+      // Как только все согласованные работы отмечены готовыми, «Выдать
+      // клиенту» становится доступна прямо тут — отдельного экрана-сметы
+      // для этого больше нет, он показывал тот же список работ и итог,
+      // что уже виден выше.
       actions = addWorkOpenFor === number ? null : el("div", { class: "actions" }, el("div", { class: "actions-inner" },
         el("button", { onclick: leaveOrder }, "Выйти"),
-        el("button", { class: "btn-primary", disabled: !allDone, onclick: () => setStatus("готово к выдаче", (o) => { o.finishedAt = new Date().toISOString(); o.occupiedBy = null; o.occupiedByName = ""; }) }, "Готово к выдаче")));
+        el("button", {
+          class: "btn-ok", disabled: !allDone,
+          onclick: () => { editOrder(number, (o) => { o.status = "выдан"; o.occupiedBy = null; o.occupiedByName = ""; o.handedOverAt = new Date().toISOString(); }); go("/"); },
+        }, "Выдать клиенту")));
     }
-  }
-
-  if (order.status === "готово к выдаче") {
-    main.append(pendingCardHost());
-    main.append(stage("Смета для звонка клиенту", itemList({ items: order.items.filter((i) => i.agreed) }, true, null, true, false),
-      el("div", { class: "card", style: "background:var(--bg);margin-top:12px" },
-        el("span", { class: "muted small" }, "Итого"),
-        el("div", { class: "total" }, rangeText(range)))));
-    actions = el("div", { class: "actions" }, el("div", { class: "actions-inner" },
-      el("button", { onclick: () => jumpToStage("взята в работу") }, "Добавить работу"),
-      el("button", {
-        class: "btn-ok",
-        onclick: () => { editOrder(number, (o) => { o.status = "выдан"; o.handedOverAt = new Date().toISOString(); }); go("/"); },
-      }, "Выдать клиенту")));
   }
 
   if (order.status === "выдан") {
@@ -1478,9 +1472,9 @@ function viewOrder(number) {
     queueMicrotask(openDiagnostics);
   }
   // Список работ длинный — «Итого» внизу карточки может уйти за экран, пока
-  // листаешь. Закреплённая мини-сумма снизу экрана держит её на виду. На
-  // «готово к выдаче» эту роль уже играет панель actions с кнопками — своя
-  // «Итого»-плашка поверх неё была бы лишней.
+  // листаешь. Закреплённая мини-сумма снизу экрана держит её на виду. Там,
+  // где уже есть закреплённая панель actions с кнопками, своя «Итого»-плашка
+  // поверх неё была бы лишней.
   const agreedCount = order.items.filter((i) => i.agreed).length;
   const showStickyTotal = order.status === "выдан" && agreedCount > 3;
   return [
@@ -1729,9 +1723,8 @@ function itemList(order, showFacts, edit, detailed, grouped = true) {
 
 // Разбивка стоимости работы по составляющим — сама работа, каждая запчасть
 // (с ценой и количеством) и каждое подтвердившееся усложнение отдельной
-// строкой. Общая и для звонка клиенту («готово к выдаче»/«выдан»), и для
-// списка «в работе», чтобы мастер сразу видел, из чего складывается сумма,
-// не открывая форму по каждому пункту.
+// строкой. Общая для списков «в работе» и «выдан», чтобы мастер сразу видел,
+// из чего складывается сумма, не открывая форму по каждому пункту.
 function costLines(it) {
   const lines = [`работы ${money((it.workPrice || 0) * (it.qty || 1))}`];
   for (const p of it.parts || []) lines.push(`${partLabel(p)} ${money((p.price || 0) * (p.qty || 1))}`);
@@ -1901,7 +1894,7 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove }) {
   },
     nameRow,
     el("div", { class: "price-tag", style: "margin-top:2px" }, rangeText(itemRange(it))),
-    // Та же разбивка по составляющим, что и на «готово к выдаче» — не нужно
+    // Та же разбивка по составляющим, что и в списке «выдан» — не нужно
     // открывать форму, чтобы увидеть, из чего сложилась сумма.
     el("div", { class: "small muted", style: "margin-top:4px" }, costLines(it).map((l) => el("div", {}, "– " + l))));
   box.append(openArea);
