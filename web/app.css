@@ -140,6 +140,15 @@ a.sub:active { opacity:.5; }
 .swipe-action { position:absolute; top:0; right:0; bottom:0; width:88px; border:0; border-radius:0;
   min-height:0; padding:0; background:var(--warn); color:#fff; font-size:14px; font-weight:600; cursor:pointer; }
 
+/* То же, но несколько узких кнопок-иконок подряд (правка + удаление) вместо
+   одной с текстом — для строк, где эти кнопки раньше жили прямо в строке и
+   смотрелись мелко и тесно. */
+.swipe-actions { position:absolute; top:0; right:0; bottom:0; display:flex; }
+.swipe-action-btn { width:56px; border:0; border-radius:0; min-height:0; padding:0;
+  display:flex; align-items:center; justify-content:center; font-size:19px; cursor:pointer;
+  background:var(--fill); color:var(--ink); }
+.swipe-action-btn.warn { background:var(--warn); color:#fff; }
+
 /* статус обращения — цвет для быстрого сканирования списка */
 .tag.tag-new     { background:var(--fill); color:var(--muted); }
 .tag.tag-quote   { background:var(--orange-weak); color:var(--orange); }

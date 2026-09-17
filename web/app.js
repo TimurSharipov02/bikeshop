@@ -165,7 +165,10 @@ const fixPartsShape = (items) =>
 const migrateOrders = (orders) =>
   (orders || []).map((o) => {
     let next = o;
-    if (next.status === "в работе") next = { ...next, status: next.occupiedBy ? "взята в работу" : "принята" };
+    if (next.status === "в работе") next = { ...next, status: "взята в работу" };
+    // «принята» убрали как отдельный шаг — заявки без хозяина (occupiedBy)
+    // сами доберут его при открытии (см. viewOrder), тут только статус.
+    if (next.status === "принята") next = { ...next, status: "взята в работу" };
     if (next.status === "проверка") next = { ...next, status: "готово к выдаче" };
     let items = fixDoneDifficulties(next.items);
     items = fixPartsShape(items);
@@ -551,16 +554,18 @@ function openWorkPicker({ existingItems, bikeKind, onBack, onPick }) {
 
 const STATUS_TAG_CLASS = {
   "приём": "tag-new", "оценка": "tag-quote", "согласование": "tag-approve",
-  "принята": "tag-new", "взята в работу": "tag-progress", "готово к выдаче": "tag-check", "выдан": "tag-done",
+  "взята в работу": "tag-progress", "готово к выдаче": "tag-check", "выдан": "tag-done",
 };
 const statusTag = (status) => el("span", { class: "tag " + (STATUS_TAG_CLASS[status] || "") }, status);
 
-// Реальный путь обращения — четыре стадии одной операции (легаси приём/
-// оценка/согласование сюда не входят, там прогресс не показываем). Пройденные
-// стадии кликабельны — можно вернуться назад, если мастер ошибся; будущие
-// нет — двигаться вперёд можно только кнопками на самой стадии.
+// Реальный путь обращения — три стадии одной операции (легаси приём/оценка/
+// согласование сюда не входят, там прогресс не показываем; «принята» как
+// отдельный шаг убрали совсем — открыли заявку в работе, значит уже взялись,
+// отдельного «взять» не нужно, а отказаться можно кнопкой «Выйти и
+// освободить заявку»). Пройденные стадии кликабельны — можно вернуться
+// назад, если мастер ошибся; будущие нет — двигаться вперёд можно только
+// кнопками на самой стадии.
 const ORDER_STAGES = [
-  { key: "принята", label: "Принята" },
   { key: "взята в работу", label: "В работе" },
   { key: "готово к выдаче", label: "Готово к выдаче" },
   { key: "выдан", label: "Выдано" },
@@ -761,6 +766,68 @@ function swipeToDelete(rowNode, onDelete, label = "Удалить") {
     dragging = false;
     if (locked === "x") {
       if (x < -ACTION_W / 2) openFull();
+      else { close(); if (openSwipeClose === close) openSwipeClose = null; }
+    }
+  };
+  rowNode.addEventListener("pointerup", finish);
+  rowNode.addEventListener("pointercancel", finish);
+  rowNode.addEventListener("click", (e) => {
+    if (moved) { e.preventDefault(); return; }
+    if (x !== 0) { e.preventDefault(); close(); if (openSwipeClose === close) openSwipeClose = null; }
+  });
+
+  return wrap;
+}
+
+// Тот же жест, что и swipeToDelete, но открывает несколько узких кнопок-иконок
+// подряд (например правка + удаление), а не одну с текстом — для плотных
+// списков (правка неисправностей в диагностике), где такие кнопки прямо в
+// строке смотрятся слишком мелко и тесно. actions — [{label, onClick, className}].
+function swipeActions(rowNode, actions) {
+  const ACTION_W = 56;
+  const width = ACTION_W * actions.length;
+  const wrap = el("div", { class: "swipe-row" });
+  const bar = el("div", { class: "swipe-actions" },
+    actions.map((a) => el("button", {
+      class: `swipe-action-btn ${a.className || ""}`,
+      onclick: (e) => { e.preventDefault(); e.stopPropagation(); close(); if (openSwipeClose === close) openSwipeClose = null; a.onClick(); },
+    }, a.label)));
+  rowNode.classList.add("swipe-content");
+  rowNode.setAttribute("draggable", "false");
+  wrap.append(bar, rowNode);
+
+  let x = 0, dragging = false, locked = null, moved = false, startX = 0, startY = 0, fromX = 0, pid = null;
+  const apply = (animate) => {
+    rowNode.style.transition = animate ? "transform .22s cubic-bezier(.2,.8,.2,1)" : "none";
+    rowNode.style.transform = x ? `translateX(${x}px)` : "";
+  };
+  const close = (animate = true) => { x = 0; apply(animate); };
+  const openFull = (animate = true) => { x = -width; apply(animate); openSwipeClose = close; };
+
+  rowNode.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    if (openSwipeClose && openSwipeClose !== close) closeOpenSwipe();
+    dragging = true; locked = null; moved = false; pid = e.pointerId;
+    startX = e.clientX; startY = e.clientY; fromX = x;
+  });
+  rowNode.addEventListener("pointermove", (e) => {
+    if (!dragging || e.pointerId !== pid) return;
+    const ddx = e.clientX - startX, ddy = e.clientY - startY;
+    if (locked === null) {
+      if (Math.abs(ddx) < 6 && Math.abs(ddy) < 6) return;
+      locked = Math.abs(ddx) > Math.abs(ddy) ? "x" : "y";
+      if (locked === "x") rowNode.setPointerCapture(pid);
+    }
+    if (locked !== "x") return;
+    moved = true;
+    x = Math.max(-width - 16, Math.min(0, fromX + ddx));
+    apply(false);
+  });
+  const finish = (e) => {
+    if (!dragging || (e && e.pointerId !== pid)) return;
+    dragging = false;
+    if (locked === "x") {
+      if (x < -width / 2) openFull();
       else { close(); if (openSwipeClose === close) openSwipeClose = null; }
     }
   };
@@ -1025,7 +1092,10 @@ function viewNewOrder() {
     function drawBike() {
       const ec = findClientByPhone(loadDB().clients, f.phone);
       const owned = ec ? loadDB().bikes.filter((b) => b.ownerPhone === ec.phone) : [];
-      if (!owned.some((b) => b.number === f.bike)) f.bike = "new";
+      // По умолчанию — уже существующий велосипед клиента (первый на учёте),
+      // а не «новый»: новый велосипед — редкий случай, не тот, что чаще всего
+      // нужен при повторном визите.
+      if (!owned.some((b) => b.number === f.bike)) f.bike = owned.length ? owned[0].number : "new";
       bikeSlot.replaceChildren(el("h2", {}, "Велосипед"));
       for (const b of owned) {
         bikeSlot.append(el("label", { class: "opt" },
@@ -1077,7 +1147,8 @@ function viewNewOrder() {
             const number = nextOrderNumber(d);
             d.orders.push({
               number, clientPhone: p, bikeNumber: bn, request: draft.request, diagnosticNotes: draft.diagnosticNotes,
-              status: "принята", items: draft.items, createdAt: new Date().toISOString(),
+              status: "взята в работу", occupiedBy: SESSION?.id || null, occupiedByName: SESSION?.name || "",
+              items: draft.items, createdAt: new Date().toISOString(),
             });
           });
           go("/");
@@ -1221,8 +1292,7 @@ function viewOrder(number) {
   const jumpToStage = (target) => {
     editOrder(number, (o) => {
       o.status = target;
-      if (target === "принята") { o.occupiedBy = null; o.occupiedByName = ""; o.finishedAt = null; o.handedOverAt = null; }
-      else if (target === "взята в работу") { o.occupiedBy = SESSION?.id || null; o.occupiedByName = SESSION?.name || ""; o.finishedAt = null; o.handedOverAt = null; }
+      if (target === "взята в работу") { o.occupiedBy = SESSION?.id || null; o.occupiedByName = SESSION?.name || ""; o.finishedAt = null; o.handedOverAt = null; }
       else if (target === "готово к выдаче") { o.occupiedBy = null; o.occupiedByName = ""; o.handedOverAt = null; }
     });
     render(viewOrder(number));
@@ -1277,21 +1347,23 @@ function viewOrder(number) {
         el("span", { class: "muted small" }, "Согласовано на"),
         el("div", { class: "price-range" }, rangeText(range)),
         minutesText(orderMinutes(order, true)) ? el("div", { class: "small muted", style: "margin-top:4px" }, minutesText(orderMinutes(order, true))) : null),
-      el("button", { class: "btn-primary", style: "width:100%", onclick: () => setStatus("принята") }, "В работу"));
+      el("button", {
+        class: "btn-primary", style: "width:100%",
+        onclick: () => setStatus("взята в работу", (o) => { o.occupiedBy = SESSION?.id || null; o.occupiedByName = SESSION?.name || ""; }),
+      }, "В работу"));
     main.append(stage("Согласование с клиентом", body));
   }
 
-  if (order.status === "принята") {
-    // Раньше тут был отдельный экран «Заявка в очереди — Взять в работу» —
-    // лишний клик не нужен: открыли заявку — значит, уже взялись за неё,
-    // сразу переходим в работу и показываем список работ.
-    main.append(stage("Ремонт", skeletonRows(2)));
-    queueMicrotask(() => setStatus("взята в работу", (o) => { o.occupiedBy = SESSION?.id || null; o.occupiedByName = SESSION?.name || ""; }));
-  }
-
   if (order.status === "взята в работу") {
+    // Заявка без хозяина (старая «принята», ручная правка и т.п.) — открыли,
+    // значит уже взялись, отдельного шага «взять в работу» не нужно.
+    // editOrder мутирует тот же объект order (DB не клонируется), так что
+    // ниже order.occupiedBy уже видит присвоенное значение без перерендера.
+    if (!order.occupiedBy) editOrder(number, (o) => { o.occupiedBy = SESSION?.id || null; o.occupiedByName = SESSION?.name || ""; });
     const leaveOrder = () => {
-      editOrder(number, (o) => { o.status = "принята"; o.occupiedBy = null; o.occupiedByName = ""; });
+      // «Выйти и освободить заявку» — снимаем хозяина, но остаёмся в «В
+      // работе»: отдельного статуса-очереди больше нет.
+      editOrder(number, (o) => { o.occupiedBy = null; o.occupiedByName = ""; });
       go("/");
     };
 
@@ -1322,7 +1394,7 @@ function viewOrder(number) {
       main.append(stage("Ремонт", body));
       const allDone = order.items.filter((i) => i.agreed).length > 0 && order.items.filter((i) => i.agreed).every((i) => i.done);
       actions = el("div", { class: "actions" }, el("div", { class: "actions-inner" },
-        el("button", { onclick: leaveOrder }, "Выйти и освободить заявку"),
+        el("button", { onclick: leaveOrder }, "Выйти"),
         allDone ? el("button", { class: "btn-primary", onclick: () => setStatus("готово к выдаче", (o) => { o.finishedAt = new Date().toISOString(); o.occupiedBy = null; o.occupiedByName = ""; }) }, "Готово к выдаче") : null));
     }
   }
@@ -1393,11 +1465,8 @@ function partsEditor(parts, stock, onChange, blockId) {
   const drawList = () => {
     list.replaceChildren(...parts.map((p, i) => el("div", { style: "display:flex;align-items:center;gap:10px;margin-top:6px" },
       el("span", { style: "flex:1" }, p.name, p.price ? el("span", { class: "small muted" }, ` · ${money(p.price)}`) : null),
-      qtyStepper(p.qty, (qty) => { p.qty = qty; drawList(); onChange(); }, p.maxQty),
-      el("button", {
-        style: iconBtnStyle,
-        onclick: () => { parts.splice(i, 1); drawList(); onChange(); },
-      }, "✕"))));
+      qtyStepper(p.qty, (qty) => { p.qty = qty; drawList(); onChange(); }, p.maxQty,
+        () => { parts.splice(i, 1); drawList(); onChange(); }))));
   };
   drawList();
 
@@ -1413,23 +1482,23 @@ function partsEditor(parts, stock, onChange, blockId) {
     toast(`Добавлено: ${s.name}`);
   };
 
-  // Пока не расширили поиск вручную — показываем только детали узла этой
-  // работы (тормоз чиним — тормозные и предлагаем), не весь склад. Если
-  // работа не привязана ни к какому узлу (свой/старый пункт) — сразу ищем
-  // по всем остаткам, сужать нечем.
+  // Список ничего не показывает, пока не начали вводить — только результаты
+  // поиска, без списка «по умолчанию» (на реальном складе он либо пуст, либо
+  // показывает произвольные позиции не в тему). Пока не расширили поиск
+  // вручную — ищем только в узле этой работы (тормоз чиним — среди тормозных),
+  // не по всему складу. Если работа не привязана ни к какому узлу (свой/старый
+  // пункт) — сразу ищем по всем остаткам, сужать нечем.
   let wide = !blockId;
   const q = el("input", { type: "text", placeholder: "Поиск детали по названию" });
   const results = el("div", { class: "rows", style: "max-height:260px;overflow-y:auto;margin-top:8px" });
   const widenLink = el("p", { class: "small", style: "margin-top:2px" },
     el("a", { href: "#", onclick: (e) => { e.preventDefault(); wide = true; drawResults(); } }, "Искать среди всех остатков →"));
   const drawResults = () => {
-    if (!stock.length) { results.replaceChildren(el("p", { class: "small muted", style: "padding:10px 0" }, "Остатки пусты.")); return; }
     const query = q.value.trim().toLowerCase();
+    if (!query) { results.replaceChildren(); return; }
+    if (!stock.length) { results.replaceChildren(el("p", { class: "small muted", style: "padding:10px 0" }, "Остатки пусты.")); return; }
     const scoped = wide ? stock : stock.filter((s) => s.group === blockId);
-    const matched = (query
-      ? scoped.filter((s) => s.name.toLowerCase().includes(query) || (s.sku || "").toLowerCase().includes(query))
-      : scoped
-    ).slice(0, query ? 40 : 20);
+    const matched = scoped.filter((s) => s.name.toLowerCase().includes(query) || (s.sku || "").toLowerCase().includes(query)).slice(0, 40);
     const rows = matched.map((s) => el("div", {
       class: "row", style: "cursor:pointer",
       onclick: () => addPart(s),
@@ -1468,10 +1537,18 @@ const iconBtnStyle = "border:0;background:none;color:var(--muted);cursor:pointer
 // max — необязательный потолок (например, у запчасти на складе); 0/undefined
 // значит без ограничения. При достижении потолка «+» просто отключается —
 // это подстраховка от случайного «натыкал лишнего», а не жёсткий запрет.
-function qtyStepper(value, onChange, max) {
+// onRemove — необязательный: если задан, при количестве 1 кнопка «−»
+// превращается в 🗑 и убирает позицию целиком, вместо отдельной кнопки ✕
+// рядом (так — для запчастей, где это осмысленно; для работ/усложнений
+// параметр не передаётся, там «−» просто держит минимум 1, как раньше).
+function qtyStepper(value, onChange, max, onRemove) {
   const atMax = max > 0 && (value || 1) >= max;
+  const atMin = (value || 1) <= 1;
   return el("div", { style: "display:flex;align-items:center;gap:8px" },
-    el("button", { style: iconBtnStyle + ";font-size:15px", onclick: () => onChange(Math.max(1, (value || 1) - 1)) }, "−"),
+    el("button", {
+      style: iconBtnStyle + ";font-size:15px",
+      onclick: () => { if (atMin && onRemove) onRemove(); else onChange(Math.max(1, (value || 1) - 1)); },
+    }, atMin && onRemove ? "🗑" : "−"),
     el("span", { class: "small", style: "min-width:16px;text-align:center" }, String(value || 1)),
     el("button", { style: iconBtnStyle + ";font-size:15px", disabled: atMax, onclick: () => onChange(max > 0 ? Math.min(max, (value || 1) + 1) : (value || 1) + 1) }, "+"));
 }
@@ -2075,8 +2152,7 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
       el("h2", {}, "Запрос клиента"),
       // DIAG_TOGGLES (гидравлика/механика и т.п.) пока скрыты — переключатели
       // остаются в коде с дефолтными значениями, faultVisible ими и пользуется.
-      onRequest ? el("label", { class: "small muted", style: "margin-top:10px" }, "Запрос клиента (со слов)") : null,
-      onRequest ? el("textarea", { rows: 2, value: req, placeholder: "с чем пришёл",
+      onRequest ? el("textarea", { rows: 2, value: req, placeholder: "с чем пришёл, со слов клиента", style: "margin-top:10px",
         onchange: (e) => { req = e.target.value.trim(); onRequest(req); } }) : null));
 
     const items = getItems();
@@ -2097,9 +2173,11 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
         style: "display:flex;align-items:center;gap:10px;cursor:pointer",
         onclick: () => { s.open = !s.open; draw(); },
       },
+        // Текст-подсказку («на что смотреть при проверке узла») пока скрыли —
+        // делаем версию для опытных мастеров, которым она не нужна. Данные
+        // (b.prompt) не трогаем — пригодятся для отдельной версии для новичков.
         el("div", { style: "flex:1" },
-          el("h2", { style: "margin:0" }, inst.label),
-          el("p", { class: "small muted", style: "margin:2px 0 0" }, inst.b.prompt)),
+          el("h2", { style: "margin:0" }, inst.label)),
         count ? el("span", { class: "pill", style: "background:var(--warn-weak);color:var(--warn)" }, String(count)) : null,
         el("span", {
           style: `flex:0 0 auto;color:var(--line);font-size:19px;transform:rotate(${s.open ? "90deg" : "0deg"});transition:transform .15s ease`,
@@ -2114,32 +2192,29 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
           const isAdmin = SESSION?.role === "admin";
           const editKey = f.custom ? f.id : f.overrideKey;
           const editingThis = editOverrideFor.has(editKey);
+          const rowContent = el("div", { style: "display:flex;align-items:center;gap:6px;background:var(--card)" },
+            el("label", { class: "opt", style: "flex:1" },
+              el("input", { type: "checkbox", checked: s.faults.has(i),
+                onchange: () => {
+                  // Без code — неисправность без привязанной операции (определяется
+                  // на разборке), в наряд не превращается, только в заметку.
+                  // Один и тот же код может быть отмечен и спереди, и сзади —
+                  // убираем работу из наряда, только когда код больше нигде не отмечен.
+                  if (s.faults.has(i)) { s.faults.delete(i); if (f.code && !codeCheckedElsewhere(f.code, inst.id)) onUncheck(f); }
+                  else { s.faults.add(i); if (f.code) onCheck(f); }
+                  draw();
+                } }),
+              el("span", {}, f.label,
+                f.code && !f.custom ? el("span", { class: "pill" }, rangeText(codeRange(f.code))) : null,
+                f.custom ? el("span", { class: "pill" }, rangeText(customFaultRange(f))) : null)));
+          // Раньше ✎/✕ жили прямо в строке — с плотным списком смотрелись
+          // мелко и тесно. Теперь открываются свайпом влево, как удаление
+          // в других списках приложения.
           fb.append(el("div", {},
-            el("div", { style: "display:flex;align-items:center;gap:6px" },
-              el("label", { class: "opt", style: "flex:1" },
-                el("input", { type: "checkbox", checked: s.faults.has(i),
-                  onchange: () => {
-                    // Без code — неисправность без привязанной операции (определяется
-                    // на разборке), в наряд не превращается, только в заметку.
-                    // Один и тот же код может быть отмечен и спереди, и сзади —
-                    // убираем работу из наряда, только когда код больше нигде не отмечен.
-                    if (s.faults.has(i)) { s.faults.delete(i); if (f.code && !codeCheckedElsewhere(f.code, inst.id)) onUncheck(f); }
-                    else { s.faults.add(i); if (f.code) onCheck(f); }
-                    draw();
-                  } }),
-                el("span", {}, f.label,
-                  f.code && !f.custom ? el("span", { class: "pill" }, rangeText(codeRange(f.code))) : null,
-                  f.custom ? el("span", { class: "pill" }, rangeText(customFaultRange(f))) : null)),
-              isAdmin
-                ? el("button", {
-                    style: iconBtnStyle,
-                    onclick: () => { editingThis ? editOverrideFor.delete(editKey) : editOverrideFor.add(editKey); draw(); },
-                  }, "✎")
-                : null,
-              isAdmin
-                ? el("button", {
-                    style: iconBtnStyle,
-                    onclick: async () => {
+            isAdmin
+              ? swipeActions(rowContent, [
+                  { label: "✎", onClick: () => { editingThis ? editOverrideFor.delete(editKey) : editOverrideFor.add(editKey); draw(); } },
+                  { label: "✕", className: "warn", onClick: async () => {
                       if (!confirm(`Убрать «${f.label}» из списка совсем?`)) return;
                       const wasChecked = s.faults.has(i);
                       if (f.custom) {
@@ -2162,9 +2237,9 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
                         if (!ok) return;
                       }
                       draw();
-                    },
-                  }, "✕")
-                : null),
+                    } },
+                ])
+              : rowContent,
             editingThis
               ? (f.custom ? customFaultEditForm(f, () => { editOverrideFor.delete(editKey); draw(); }) : overrideForm(f, () => { editOverrideFor.delete(editKey); draw(); }))
               : null));
