@@ -28,6 +28,7 @@ export default async function handler(req, res) {
             unit: String(it.unit || "шт").trim(),
             price: Number(it.price) || 0,
             group: String(it.group || "").trim(),
+            maxQty: Number(it.maxQty) || 0,
           }))
           .filter((it) => it.sku || it.name)
       : [];

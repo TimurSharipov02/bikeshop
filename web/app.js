@@ -1385,7 +1385,7 @@ function partsEditor(parts, stock, onChange, blockId) {
   const drawList = () => {
     list.replaceChildren(...parts.map((p, i) => el("div", { style: "display:flex;align-items:center;gap:10px;margin-top:6px" },
       el("span", { style: "flex:1" }, p.name, p.price ? el("span", { class: "small muted" }, ` · ${money(p.price)}`) : null),
-      qtyStepper(p.qty, (qty) => { p.qty = qty; drawList(); onChange(); }),
+      qtyStepper(p.qty, (qty) => { p.qty = qty; drawList(); onChange(); }, p.maxQty),
       el("button", {
         style: iconBtnStyle,
         onclick: () => { parts.splice(i, 1); drawList(); onChange(); },
@@ -1393,10 +1393,13 @@ function partsEditor(parts, stock, onChange, blockId) {
   };
   drawList();
 
+  // maxQty — необязательный потолок у складской позиции (спицы можно взять
+  // 64, а цепь — только одну); переносим на саму запчасть в наряде, чтобы
+  // qtyStepper мог его учитывать и после того, как список остатков закрыт.
   const addPart = (s) => {
     const existing = parts.find((p) => p.name === s.name && p.price === (s.price || 0));
-    if (existing) existing.qty = (existing.qty || 1) + 1;
-    else parts.push({ name: s.name, price: s.price || 0, qty: 1 });
+    if (existing) existing.qty = Math.min((existing.qty || 1) + 1, existing.maxQty || Infinity);
+    else parts.push({ name: s.name, price: s.price || 0, qty: 1, maxQty: s.maxQty || 0 });
     drawList();
     onChange();
     toast(`Добавлено: ${s.name}`);
@@ -1454,11 +1457,15 @@ const iconBtnStyle = "border:0;background:none;color:var(--muted);cursor:pointer
 // Счётчик количества (сколько раз сделана работа/усложнение — два колеса,
 // несколько спиц и т.п.). Показывается только когда у работы или усложнения
 // стоит галочка «несколько», иначе количество всегда 1 и не отображается.
-function qtyStepper(value, onChange) {
+// max — необязательный потолок (например, у запчасти на складе); 0/undefined
+// значит без ограничения. При достижении потолка «+» просто отключается —
+// это подстраховка от случайного «натыкал лишнего», а не жёсткий запрет.
+function qtyStepper(value, onChange, max) {
+  const atMax = max > 0 && (value || 1) >= max;
   return el("div", { style: "display:flex;align-items:center;gap:8px" },
     el("button", { style: iconBtnStyle + ";font-size:15px", onclick: () => onChange(Math.max(1, (value || 1) - 1)) }, "−"),
     el("span", { class: "small", style: "min-width:16px;text-align:center" }, String(value || 1)),
-    el("button", { style: iconBtnStyle + ";font-size:15px", onclick: () => onChange((value || 1) + 1) }, "+"));
+    el("button", { style: iconBtnStyle + ";font-size:15px", disabled: atMax, onclick: () => onChange(max > 0 ? Math.min(max, (value || 1) + 1) : (value || 1) + 1) }, "+"));
 }
 
 // Редактор списка усложнений (название + надбавка к цене + надбавка к времени
@@ -2508,6 +2515,7 @@ function stockScreen(data, error) {
       el("select", { style: "width:auto", onchange: (ev) => { items[i].group = ev.target.value; } },
         el("option", { value: "", selected: !it.group }, "без узла"),
         STOCK_GROUPS.map((g) => el("option", { value: g.id, selected: it.group === g.id }, g.title))),
+      el("input", { type: "number", value: it.maxQty || "", style: "width:56px;text-align:right", placeholder: "макс", title: "Потолок количества за раз (спицы — 64, цепь — 1 и т.п.), необязательно", onchange: (ev) => { items[i].maxQty = +ev.target.value || 0; } }),
       el("button", { onclick: () => { items.splice(i, 1); drawRows(); } }, "✕"))));
   };
   drawRows();
@@ -2522,19 +2530,19 @@ function stockScreen(data, error) {
       el("div", { class: "card" },
         searchInput,
         el("div", { style: "margin-top:10px" }, rowsBox),
-        el("button", { style: "margin-top:10px", onclick: () => { items.push({ sku: "", name: "", qty: 0, unit: "шт", price: 0, group: "" }); render(stockScreen({ items, updatedAt: data.updatedAt }, "")); } }, "+ строка"),
+        el("button", { style: "margin-top:10px", onclick: () => { items.push({ sku: "", name: "", qty: 0, unit: "шт", price: 0, group: "", maxQty: 0 }); render(stockScreen({ items, updatedAt: data.updatedAt }, "")); } }, "+ строка"),
         el("div", { class: "btn-row", style: "margin-top:12px" },
           el("button", { class: "btn-primary", onclick: () => saveStockItems(items) }, "Сохранить"))),
       el("div", { class: "card" },
         el("h2", {}, "Импорт списком"),
-        el("p", { class: "small muted" }, "Пока без прямой связи с 1С — вставьте выгрузку сюда, каждая позиция с новой строки: артикул;название;остаток;единица;цена;узел (WHL/BRK/BB/STR/FRM/DRV/WSH, можно пусто). Полностью заменит список выше."),
+        el("p", { class: "small muted" }, "Пока без прямой связи с 1С — вставьте выгрузку сюда, каждая позиция с новой строки: артикул;название;остаток;единица;цена;узел;макс (узел — WHL/BRK/BB/STR/FRM/DRV/WSH, макс — потолок количества за раз, оба поля можно оставить пустыми). Полностью заменит список выше."),
         importArea,
         el("div", { class: "btn-row", style: "margin-top:10px" },
           el("button", {
             onclick: () => {
               const parsed = importArea.value.split("\n").map((line) => line.split(";").map((s) => s.trim()))
                 .filter((p) => p[0] || p[1])
-                .map(([sku, name, qty, unit, price, group]) => ({ sku: sku || "", name: name || "", qty: Number(qty) || 0, unit: unit || "шт", price: Number(price) || 0, group: group || "" }));
+                .map(([sku, name, qty, unit, price, group, maxQty]) => ({ sku: sku || "", name: name || "", qty: Number(qty) || 0, unit: unit || "шт", price: Number(price) || 0, group: group || "", maxQty: Number(maxQty) || 0 }));
               if (parsed.length) saveStockItems(parsed);
             },
           }, "Импортировать (заменит список)")))),
