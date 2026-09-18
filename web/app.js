@@ -2713,7 +2713,10 @@ function reportContent(masterId, percentOf, header) {
       el("p", { class: "small muted", style: "margin:16px 0 4px" }, "ИСТОРИЯ ВЫПОЛНЕННЫХ ОБРАЩЕНИЙ"),
       history.length === 0
         ? emptyState("Пока ничего не выполнено.")
-        : el("div", { class: "list", style: "gap:10px" }, history.map((rec) => el("div", { class: "card" },
+        // Карточка — ссылка на само обращение: открыть, посмотреть весь
+        // наряд целиком. По сути и есть архив выданных обращений, только
+        // тут ещё сразу видно, что в нём сделал этот мастер и за сколько.
+        : el("div", { class: "list", style: "gap:10px" }, history.map((rec) => el("a", { class: "card card-link", href: `#/orders/${rec.order.number}` },
             el("div", { style: "display:flex;justify-content:space-between;gap:8px" },
               el("div", {}, el("b", {}, rec.bike ? bikeLabel(rec.bike) : rec.client?.name || "Обращение"),
                 rec.latest ? el("div", { class: "small muted" }, formatDateShort(rec.latest)) : null),

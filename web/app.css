@@ -47,6 +47,8 @@ a.sub:active { opacity:.5; }
    название велосипеда, главное, на что смотрят чаще всего. */
 header.bar .bar-title-lg { font-size:19px; font-weight:700; }
 
+.card-link { display:block; color:inherit; text-decoration:none; transition:background .1s ease; }
+.card-link:active { background:var(--fill); }
 .card { background:var(--card); border:.5px solid var(--line); border-radius:var(--radius); padding:16px;
   margin-bottom:14px; box-shadow:var(--shadow-sm); }
 .card h2 { margin:0 0 10px; font-size:16px; font-weight:650; letter-spacing:-.005em; }
