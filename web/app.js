@@ -222,8 +222,6 @@ let inSubScreen = false;
 let autoOpenDiagsFor = null; // номер только что созданного обращения — сразу открыть диагностику
 let editingItemCode = null; // код работы в наряде, у которой сейчас открыта форма редактирования
 let addWorkOpenFor = null; // номер заявки, для которой «+ доп. работа» сейчас развёрнута прямо на экране (вместо перехода на отдельный)
-let ordersSearch = ""; // архив «Обращения» — поиск по телефону клиента
-let ordersGroupBy = "created"; // архив «Обращения» — группировка: "created" | "handed"
 
 // ---------------------------- вход и сессия ---------------------------------
 //
@@ -659,7 +657,6 @@ const routes = [
   [/^\/?$/, viewHome],
   [/^\/orders\/new$/, viewNewOrder],
   [/^\/orders\/([^/]+)$/, (m) => viewOrder(m[1])],
-  [/^\/orders$/, viewOrders],
   [/^\/profile$/, viewProfile],
   [/^\/profile\/report$/, () => masterReportScreen(SESSION?.id, "/profile")],
   [/^\/admin$/, adminOnly(viewAdmin)],
@@ -930,16 +927,11 @@ function rowsList(nodes, flat = false) {
 function formatDateShort(iso) {
   return iso ? new Date(iso).toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit", year: "2-digit" }) : null;
 }
-function formatDateGroup(iso) {
-  return iso ? new Date(iso).toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" }) : "Без даты";
-}
 
-// Строка обращения в списке — велосипед/клиент, статус (без номера
-// обращения — мастерам он не нужен, только путает). Общая для главного
-// экрана (активные) и архива выданных. onDelete, если передан, включает
-// свайп-удаление строки. dateIso, если передан (createdAt или handedOverAt
-// архива), показывается рядом с именем клиента.
-function orderRow(o, d, onDelete, dateIso) {
+// Строка обращения в списке активных обращений на главном экране (без
+// номера обращения — мастерам он не нужен, только путает). onDelete, если
+// передан, включает свайп-удаление строки.
+function orderRow(o, d, onDelete) {
   const bike = d.bikes.find((b) => b.number === o.bikeNumber);
   const client = d.clients.find((c) => c.phone === o.clientPhone);
   const row = el("a", { class: "row", href: `#/orders/${o.number}` },
@@ -947,8 +939,7 @@ function orderRow(o, d, onDelete, dateIso) {
       el("br"), el("span", { class: "small muted" }, client?.name || o.clientPhone),
       // Занятость мастером — теперь сама по себе статус («взята в работу»),
       // тут только его имя.
-      o.occupiedByName ? el("span", { class: "small muted" }, " · мастер: " + o.occupiedByName) : null,
-      dateIso ? el("span", { class: "small muted" }, " · " + formatDateShort(dateIso)) : null),
+      o.occupiedByName ? el("span", { class: "small muted" }, " · мастер: " + o.occupiedByName) : null),
     orderStatusTag(o));
   return onDelete ? swipeToDelete(row, () => onDelete(o)) : row;
 }
@@ -988,57 +979,6 @@ function groupBy(list, keyFn) {
   return m;
 }
 
-
-// Архив — только выданные (активные уже на главном экране). Поиск по
-// телефону и группировка по дате создания/выдачи живут тут же, с
-// перерисовкой только списка (не всего экрана), чтобы не терять фокус
-// в поле поиска на каждую нажатую клавишу — как в openWorkPicker.
-function viewOrders() {
-  const d = loadDB();
-  const q = el("input", { type: "tel", value: applyPhoneMask(ordersSearch) });
-  attachPhoneMask(q, (v) => { ordersSearch = v; drawList(); });
-  const seg = el("div", { class: "segmented", style: "margin-top:10px" });
-  const listBox = el("div", { style: "margin-top:16px" });
-
-  const setGroupBy = (v) => { ordersGroupBy = v; drawSeg(); drawList(); };
-  const drawSeg = () => {
-    seg.replaceChildren(
-      el("button", { class: ordersGroupBy === "created" ? "active" : "", onclick: () => setGroupBy("created") }, "По дате создания"),
-      el("button", { class: ordersGroupBy === "handed" ? "active" : "", onclick: () => setGroupBy("handed") }, "По дате выдачи"));
-  };
-  const drawList = () => {
-    const qDigits = maskedDigits(ordersSearch);
-    let issued = d.orders.filter((o) => o.status === "выдан");
-    if (qDigits) issued = issued.filter((o) => phoneDigits(o.clientPhone).includes(qDigits));
-    const field = ordersGroupBy === "handed" ? "handedOverAt" : "createdAt";
-    issued = [...issued].sort((a, b) => (b[field] || "").localeCompare(a[field] || ""));
-    const groups = [];
-    for (const o of issued) {
-      const label = formatDateGroup(o[field]);
-      let g = groups[groups.length - 1];
-      if (!g || g.label !== label) { g = { label, list: [] }; groups.push(g); }
-      g.list.push(o);
-    }
-    listBox.replaceChildren(
-      ...[
-        issued.length === 0
-          ? emptyState(qDigits ? "Ничего не найдено." : "Пока нет выданных обращений.", qDigits ? EMPTY_ICON_SEARCH : EMPTY_ICON_BOX)
-          : null,
-        ...groups.map((g) => el("div", { style: "margin-bottom:16px" },
-          el("p", { class: "small muted", style: "margin:0 0 4px;letter-spacing:.02em" }, g.label.toUpperCase()),
-          rowsList(g.list.map((o) => orderRow(o, d, deleteOrderWithAlert, o[field]))))),
-      ].filter(Boolean),
-    );
-  };
-  drawSeg();
-  drawList();
-
-  return [
-    bar("Архив", "/"),
-    el("main", { class: "wrap" },
-      el("label", { class: "small muted" }, "Поиск по телефону клиента"), q, seg, listBox),
-  ];
-}
 
 // Новое обращение идёт по шагам: диагностика (отмечаем работы) → оценка
 // усложнений → согласование (что делаем, сумма по деньгам и времени) →
@@ -1543,8 +1483,10 @@ function viewOrder(number) {
     // Название велосипеда вместо номера обращения, покрупнее остальных
     // заголовков — по нему сразу видно, с чем работаешь. Номер обращения
     // нигде в интерфейсе не показываем — мастерам он не нужен, только путает.
+    // Отдельного архива больше нет — «выдан» открывают только из истории в
+    // отчёте по выработке, назад всегда на главный, как и остальные статусы.
     el("header", { class: "bar" },
-      el("a", { class: "back", href: "#" + (order.status === "выдан" ? "/orders" : "/") }, "‹"),
+      el("a", { class: "back", href: "#/" }, "‹"),
       el("h1", { class: "bar-title-lg" }, bike ? bikeLabel(bike) : client?.name || "Обращение")),
     main,
     actions,
@@ -2690,7 +2632,10 @@ function historyList(masterId, percentOf) {
     for (const it of o.items) {
       for (const c of it.completions || []) {
         if (!c.at || (masterId != null && c.masterId !== masterId)) continue;
-        if (!byOrder.has(o.number)) byOrder.set(o.number, { order: o, bike, client, lines: [], earned: 0, latest: c.at });
+        // handedAt — только для сортировки списка (как в бывшем архиве, «по
+        // дате выдачи»); latest (когда фактически сделана работа) — для
+        // фильтра по выбранному периоду в графике выше, не путать местами.
+        if (!byOrder.has(o.number)) byOrder.set(o.number, { order: o, bike, client, lines: [], earned: 0, latest: c.at, handedAt: o.handedOverAt || null });
         const rec = byOrder.get(o.number);
         const earned = entryEarned({ item: it, completion: c }, percentOf);
         rec.lines.push({ name: it.name, qty: c.qty, needQty: itemNeedsQty(it), earned, masterName: c.masterName });
@@ -2699,7 +2644,9 @@ function historyList(masterId, percentOf) {
       }
     }
   }
-  return [...byOrder.values()].sort((a, b) => (b.latest || "").localeCompare(a.latest || ""));
+  // Ещё не выданные заявки (handedAt нет) — по дате последней сделанной в
+  // них работы, чтобы не проваливались в конец списка.
+  return [...byOrder.values()].sort((a, b) => (b.handedAt || b.latest || "").localeCompare(a.handedAt || a.latest || ""));
 }
 
 // Тело отчёта (переключатель периода + график + история) — общее что для
@@ -2715,6 +2662,12 @@ function bucketFullLabel(period, from) {
 }
 const PERIOD_WINDOW_LABEL = { today: "сегодня", day: "последние 14 дней", week: "последние 8 недель", month: "последние 12 месяцев" };
 
+// Возвращает {content, searchBar} — searchBar рисуется отдельным
+// закреплённым низом экрана (как в актуальных iOS-интерфейсах — Почта,
+// Сообщения), а не частью прокручиваемого content, поэтому и не
+// пересоздаётся на каждой перерисовке списка (иначе поле теряло бы фокус
+// на каждый введённый символ). Ищет по номеру телефона клиента — то же,
+// что раньше умел архив выданных обращений, который эта история заменила.
 function reportContent(masterId, percentOf, header) {
   // «Сегодня» по умолчанию — самое частое, что хотят посмотреть, не тратя
   // на это лишний тап (переключение вкладки/выбор столбца).
@@ -2724,6 +2677,7 @@ function reportContent(masterId, percentOf, header) {
   // недель/12 месяцев), как раньше. Для «Сегодня» не применяется — там и
   // так один-единственный отрезок.
   let selectedIdx = null;
+  let searchPhone = "";
   const box = el("div", {});
   const redraw = () => {
     const log = workLog(masterId);
@@ -2737,8 +2691,10 @@ function reportContent(masterId, percentOf, header) {
     const totalEarned = selected ? selected.earned : buckets.reduce((s, b) => s + b.earned, 0);
     const totalCount = selected ? selected.count : buckets.reduce((s, b) => s + b.count, 0);
     const periodLabel = selected ? bucketFullLabel(period, selected.from) : PERIOD_WINDOW_LABEL[period];
-    const history = historyList(masterId, percentOf)
+    const qDigits = maskedDigits(searchPhone);
+    let history = historyList(masterId, percentOf)
       .filter((rec) => rec.latest && new Date(rec.latest) >= rangeFrom && new Date(rec.latest) < rangeTo);
+    if (qDigits) history = history.filter((rec) => phoneDigits(rec.order.clientPhone).includes(qDigits));
     box.replaceChildren(
       el("div", { class: "card" },
         header,
@@ -2752,7 +2708,7 @@ function reportContent(masterId, percentOf, header) {
         buckets.length > 1 ? reportBarChart(buckets, selectedIdx, (i) => { selectedIdx = selectedIdx === i ? null : i; redraw(); }) : null),
       el("p", { class: "small muted", style: "margin:16px 0 4px" }, "ИСТОРИЯ ВЫПОЛНЕННЫХ ОБРАЩЕНИЙ"),
       history.length === 0
-        ? emptyState("Пока ничего не выполнено.")
+        ? emptyState(qDigits ? "Ничего не найдено." : "Пока ничего не выполнено.", qDigits ? EMPTY_ICON_SEARCH : undefined)
         // Карточка — ссылка на само обращение: открыть, посмотреть весь
         // наряд целиком. По сути и есть архив выданных обращений, только
         // тут ещё сразу видно, что в нём сделал этот мастер и за сколько.
@@ -2765,8 +2721,10 @@ function reportContent(masterId, percentOf, header) {
               rec.lines.map((l) => el("div", {},
                 masterId == null ? `${l.masterName} — ` : "", l.name, l.needQty > 1 ? ` ×${l.qty} из ${l.needQty}` : "", " — ", money(l.earned))))))));
   };
+  const searchInput = el("input", { type: "tel", placeholder: "Поиск по телефону клиента", style: "flex:1", value: applyPhoneMask(searchPhone) });
+  attachPhoneMask(searchInput, (v) => { searchPhone = v; redraw(); });
   redraw();
-  return box;
+  return { content: box, searchBar: el("div", { class: "actions" }, el("div", { class: "actions-inner" }, searchInput)) };
 }
 
 function masterReportScreen(masterId, backHash) {
@@ -2779,7 +2737,8 @@ function masterReportScreen(masterId, backHash) {
     // Сам процент — только там, где его редактируют (карточка мастера в
     // админке), тут лишний, не мастеру решать/сверять свою ставку.
     const header = el("div", {}, master.name);
-    host.replaceChildren(reportContent(masterId, () => percent, header));
+    const { content, searchBar } = reportContent(masterId, () => percent, header);
+    host.replaceChildren(content, searchBar);
   });
   return [bar("Отчёт по выработке", backHash), host];
 }
@@ -2795,7 +2754,8 @@ function viewAllMastersReport() {
     const percentByMaster = Object.fromEntries(users.map((u) => [u.id, u.commissionPercent || 0]));
     const percentOf = (masterId) => percentByMaster[masterId] || 0;
     const header = el("div", {}, "Все мастера");
-    host.replaceChildren(reportContent(null, percentOf, header));
+    const { content, searchBar } = reportContent(null, percentOf, header);
+    host.replaceChildren(content, searchBar);
   });
   return [bar("Отчёты по мастерам", "/admin"), host];
 }
