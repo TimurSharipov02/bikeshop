@@ -1061,6 +1061,13 @@ function viewNewOrder() {
 
   function stepClient() {
     const f = { phone: applyPhoneMask(""), name: "", bike: "new", brand: "" };
+    // Смена клиента (другой телефон) — отдельно от простого f.bike: нужно
+    // отличить «сбросить выбор велосипеда, потому что это уже другой
+    // клиент» от «перерисовали форму, потому что мастер сам кликнул радио».
+    // Раньше сброс шёл при каждой перерисовке, если f.bike не входит в
+    // owned[].number — а "new" туда никогда и не входит, так что осознанный
+    // выбор «Новый велосипед» тут же затирался обратно на первый велосипед.
+    let lastClientKey;
 
     const clientSlot = el("div", {});
     const bikeSlot = el("div", { class: "card" }, el("h2", {}, "Велосипед"));
@@ -1081,10 +1088,15 @@ function viewNewOrder() {
     function drawBike() {
       const ec = findClientByPhone(loadDB().clients, f.phone);
       const owned = ec ? loadDB().bikes.filter((b) => b.ownerPhone === ec.phone) : [];
+      const clientKey = ec?.phone ?? null;
       // По умолчанию — уже существующий велосипед клиента (первый на учёте),
       // а не «новый»: новый велосипед — редкий случай, не тот, что чаще всего
-      // нужен при повторном визите.
-      if (!owned.some((b) => b.number === f.bike)) f.bike = owned.length ? owned[0].number : "new";
+      // нужен при повторном визите. Но только когда сменился сам клиент —
+      // иначе клик по «Новый велосипед» сбрасывался бы обратно тут же.
+      if (clientKey !== lastClientKey) {
+        lastClientKey = clientKey;
+        f.bike = owned.length ? owned[0].number : "new";
+      }
       bikeSlot.replaceChildren(el("h2", {}, "Велосипед"));
       for (const b of owned) {
         bikeSlot.append(el("label", { class: "opt" },
