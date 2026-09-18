@@ -687,6 +687,24 @@ function render(nodes, { keepScroll } = {}) {
 }
 window.addEventListener("hashchange", () => { router(); if (SESSION) syncFromServer(); });
 
+// На iOS фикс.-позиционированные панели (.actions — нижняя строка поиска,
+// нижние кнопки) остаются привязаны к низу layout-viewport, который клавиатура
+// не двигает — поэтому панель молча уезжает под клавиатуру, а не поднимается
+// над ней. VisualViewport знает фактическую видимую высоту — по ней считаем,
+// на сколько клавиатура «съела» экран, и поднимаем панели на эту величину
+// через CSS-переменную (см. .actions в app.css).
+(function setupKeyboardOffset() {
+  if (!window.visualViewport) return;
+  const vv = window.visualViewport;
+  const update = () => {
+    const offset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+    document.documentElement.style.setProperty("--kb-offset", offset + "px");
+  };
+  vv.addEventListener("resize", update);
+  vv.addEventListener("scroll", update);
+  update();
+})();
+
 // Потянуть вниз от самого верха экрана — принудительно подтянуть свежие
 // данные с сервера (заявку мог тем временем поменять другой мастер).
 // Работает где угодно в приложении, отдельного подключения на экран не надо.
@@ -2619,38 +2637,12 @@ function periodBuckets(unit, count, offset) {
   }
   return buckets;
 }
-// Свайп по графику — тот же приём (pointerdown/move/up, блокировка оси по
-// порогу), что и swipeToDelete/swipeActions, но без визуального перетаскивания:
-// жест только переключает offset на 1 и перерисовывает (проще и достаточно
-// для этой задачи — не карусель с анимацией, а быстрый дискретный тап-свайп).
-function attachSwipeNav(node, onSwipeLeft, onSwipeRight) {
-  let dragging = false, locked = null, pid = null, startX = 0, startY = 0;
-  node.addEventListener("pointerdown", (e) => {
-    if (e.pointerType === "mouse" && e.button !== 0) return;
-    dragging = true; locked = null; pid = e.pointerId; startX = e.clientX; startY = e.clientY;
-  });
-  node.addEventListener("pointermove", (e) => {
-    if (!dragging || e.pointerId !== pid) return;
-    const ddx = e.clientX - startX, ddy = e.clientY - startY;
-    if (locked === null) {
-      if (Math.abs(ddx) < 6 && Math.abs(ddy) < 6) return;
-      locked = Math.abs(ddx) > Math.abs(ddy) ? "x" : "y";
-      if (locked === "x") node.setPointerCapture(pid);
-    }
-  });
-  const finish = (e) => {
-    if (!dragging || (e && e.pointerId !== pid)) return;
-    dragging = false;
-    if (locked === "x") {
-      const ddx = e.clientX - startX;
-      if (ddx <= -40) onSwipeLeft();
-      else if (ddx >= 40) onSwipeRight();
-    }
-    locked = null;
-  };
-  node.addEventListener("pointerup", finish);
-  node.addEventListener("pointercancel", finish);
-}
+// Лёгкая вибрация при удачном перелистывании — на Android (Vibration API);
+// на iOS Safari эту функцию до сих пор не поддерживает ни в браузере, ни
+// в установленном как приложение виде, так что там вызов молча ничего не
+// делает (не ошибка — просто нет эффекта на этой платформе).
+function hapticTick() { try { navigator.vibrate && navigator.vibrate(10); } catch {} }
+
 // Простой столбиковый график на голых div — без сторонних библиотек, тем же
 // подходом, что и весь остальной интерфейс. Столбец — доход за отрезок,
 // подпись под ним; тап по столбцу показывает сумму (title, для настольного
@@ -2661,7 +2653,7 @@ function attachSwipeNav(node, onSwipeLeft, onSwipeRight) {
 // тап по уже выбранному снимает выбор).
 function reportBarChart(buckets, selectedIdx, onSelect) {
   const max = Math.max(1, ...buckets.map((b) => b.earned));
-  return el("div", { style: "display:flex;align-items:flex-end;gap:4px;height:120px;margin-top:14px" },
+  return el("div", { style: "display:flex;align-items:flex-end;gap:4px;height:120px" },
     buckets.map((b, i) => {
       const dimmed = selectedIdx != null && selectedIdx !== i;
       return el("div", {
@@ -2671,6 +2663,77 @@ function reportBarChart(buckets, selectedIdx, onSelect) {
         el("div", { title: money(b.earned), style: `width:100%;max-width:26px;height:${Math.max(2, Math.round((b.earned / max) * 96))}px;background:${dimmed ? "var(--line)" : "var(--accent)"};border-radius:3px 3px 0 0;transition:background .15s ease` }),
         el("span", { class: "small", style: `font-size:10px;white-space:nowrap;color:${selectedIdx === i ? "var(--accent)" : "var(--muted)"};font-weight:${selectedIdx === i ? "700" : "400"}` }, b.label));
     }));
+}
+
+// Карусель из трёх графиков (прошлое | текущее | будущее), тянущаяся за
+// пальцем в реальном времени вместо прежнего дискретного «свайп → сразу
+// следующий период» (тот вариант ощущался «рывками» и иногда путал
+// направление). getBuckets(offset) — построить столбцы для конкретного
+// смещения; onCommit(newOffset) — вызывается ПОСЛЕ анимации долистывания
+// (родитель обновляет offset/selectedIdx и полностью перерисовывает карточку
+// — к этому моменту страница уже визуально доехала до нужного места, поэтому
+// подмена DOM невидима). Свайп влево тянет в будущее (до floorOffset —
+// дальше пусто, тянуть можно, но с сопротивлением и без фиксации), вправо —
+// в прошлое (без ограничения).
+function pageableChart(tab, offset, floorOffset, getBuckets, selectedIdx, onSelect, onCommit) {
+  const pastOffset = offset + 1;
+  const futureOffset = Math.max(floorOffset, offset - 1);
+  const atFloor = futureOffset === offset;
+  const PANE = "flex:0 0 33.3333%;min-width:0";
+  const pastPane = el("div", { style: PANE }, reportBarChart(getBuckets(pastOffset), null, () => {}));
+  const curPane = el("div", { style: PANE }, reportBarChart(getBuckets(offset), selectedIdx, onSelect));
+  const futurePane = el("div", { style: PANE }, reportBarChart(getBuckets(futureOffset), null, () => {}));
+  const track = el("div", { style: "display:flex;width:300%" }, pastPane, curPane, futurePane);
+  const wrap = el("div", { style: "overflow:hidden;margin-top:14px" }, track);
+
+  let dragging = false, locked = null, pid = null, startX = 0, startY = 0, width = 0, lastX = 0;
+  const setX = (px, animate) => {
+    track.style.transition = animate ? "transform .25s cubic-bezier(.2,.8,.2,1)" : "none";
+    track.style.transform = `translateX(calc(-33.3333% + ${px}px))`;
+  };
+  setX(0, false);
+
+  wrap.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    dragging = true; locked = null; pid = e.pointerId; startX = e.clientX; startY = e.clientY; lastX = 0;
+    width = wrap.getBoundingClientRect().width || 1;
+  });
+  wrap.addEventListener("pointermove", (e) => {
+    if (!dragging || e.pointerId !== pid) return;
+    const ddx = e.clientX - startX, ddy = e.clientY - startY;
+    if (locked === null) {
+      if (Math.abs(ddx) < 6 && Math.abs(ddy) < 6) return;
+      locked = Math.abs(ddx) > Math.abs(ddy) ? "x" : "y";
+      if (locked === "x") wrap.setPointerCapture(pid);
+    }
+    if (locked !== "x") return;
+    // Тянуть в будущее дальше упора всё равно можно — но туго, с явным
+    // сопротивлением, чтобы палец чувствовал границу, а не терял отклик.
+    lastX = ddx < 0 && atFloor ? ddx / 3 : ddx;
+    setX(lastX, false);
+  });
+  const finish = (e) => {
+    if (!dragging || (e && e.pointerId !== pid)) return;
+    dragging = false;
+    if (locked === "x") {
+      const THRESH = Math.min(70, width * 0.18);
+      if (lastX >= THRESH) {
+        setX(width, true);
+        hapticTick();
+        track.addEventListener("transitionend", () => onCommit(pastOffset), { once: true });
+      } else if (lastX <= -THRESH && !atFloor) {
+        setX(-width, true);
+        hapticTick();
+        track.addEventListener("transitionend", () => onCommit(futureOffset), { once: true });
+      } else {
+        setX(0, true);
+      }
+    }
+    locked = null;
+  };
+  wrap.addEventListener("pointerup", finish);
+  wrap.addEventListener("pointercancel", finish);
+  return wrap;
 }
 // masterId === null — история по всем мастерам сразу: в одном обращении
 // могли поучаствовать несколько, поэтому каждая строка подписана именем.
@@ -2734,7 +2797,7 @@ function reportContent(masterId, percentOf, header) {
   // чтобы не тыкать в него лишний раз.
   let tabKey = "week";
   // offset=0 — окно кончается сегодня/этой неделей/этим месяцем; листается
-  // свайпом по графику (см. attachSwipeNav ниже). selectedIdx — индекс
+  // свайпом по графику (см. pageableChart ниже). selectedIdx — индекс
   // выбранного тапом столбца (сумма/история сужаются до него) или null —
   // весь показанный отрезок; по умолчанию (offset=0) выбран последний.
   let offset = 0;
@@ -2744,10 +2807,11 @@ function reportContent(masterId, percentOf, header) {
   const redraw = () => {
     const tab = PERIOD_TABS.find((t) => t.key === tabKey);
     const log = workLog(masterId);
-    const buckets = periodBuckets(tab.unit, tab.count, offset).map((b) => {
+    const getBuckets = (off) => periodBuckets(tab.unit, tab.count, off).map((b) => {
       const entries = log.filter((e) => e.at >= b.from && e.at < b.to);
       return { ...b, earned: entries.reduce((s, e) => s + entryEarned(e, percentOf), 0), count: entries.reduce((s, e) => s + (e.completion.qty || 0), 0) };
     });
+    const buckets = getBuckets(offset);
     const selected = selectedIdx != null ? buckets[selectedIdx] : null;
     const rangeFrom = selected ? selected.from : buckets[0].from;
     const rangeTo = selected ? selected.to : buckets[buckets.length - 1].to;
@@ -2758,13 +2822,9 @@ function reportContent(masterId, percentOf, header) {
     let history = historyList(masterId, percentOf)
       .filter((rec) => rec.latest && new Date(rec.latest) >= rangeFrom && new Date(rec.latest) < rangeTo);
     if (qDigits) history = history.filter((rec) => phoneDigits(rec.order.clientPhone).includes(qDigits));
-    const chart = reportBarChart(buckets, selectedIdx, (i) => { selectedIdx = selectedIdx === i ? null : i; redraw(); });
-    // Свайп влево — «посмотреть вправо» (листнуть к будущим, пустым
-    // отрезкам, максимум до count-1); свайп вправо — уйти в прошлое (без
-    // ограничения).
-    attachSwipeNav(chart,
-      () => { offset = Math.max(-(tab.count - 1), offset - 1); selectedIdx = offset === 0 ? tab.count - 1 : null; redraw(); },
-      () => { offset = offset + 1; selectedIdx = offset === 0 ? tab.count - 1 : null; redraw(); });
+    const chart = pageableChart(tab, offset, -(tab.count - 1), getBuckets, selectedIdx,
+      (i) => { selectedIdx = selectedIdx === i ? null : i; redraw(); },
+      (newOffset) => { offset = newOffset; selectedIdx = offset === 0 ? tab.count - 1 : null; redraw(); });
     box.replaceChildren(
       el("div", { class: "card" },
         header,
