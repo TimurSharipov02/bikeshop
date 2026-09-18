@@ -2791,8 +2791,14 @@ function reportContent(masterId, percentOf, header) {
               rec.lines.map((l) => el("div", {},
                 masterId == null ? `${l.masterName} — ` : "", l.name, l.needQty > 1 ? ` ×${l.qty} из ${l.needQty}` : "", " — ", money(l.earned))))))));
   };
-  const searchInput = el("input", { type: "tel", placeholder: "Поиск по телефону клиента", style: "flex:1", value: applyPhoneMask(searchPhone) });
+  // Пустое поле с подсказкой — не «+7» сразу, а только когда по нему
+  // тапнули (иначе на пустом экране постоянно висит код страны, будто
+  // уже что-то введено). Если ушли с поля, ничего не набрав — подсказка
+  // возвращается.
+  const searchInput = el("input", { type: "tel", placeholder: "Поиск заявки по номеру телефона", style: "flex:1", value: searchPhone ? applyPhoneMask(searchPhone) : "" });
   attachPhoneMask(searchInput, (v) => { searchPhone = v; redraw(); });
+  searchInput.addEventListener("focus", () => { if (!searchInput.value) searchInput.value = "+7"; });
+  searchInput.addEventListener("blur", () => { if (!maskedDigits(searchInput.value)) searchInput.value = ""; });
   redraw();
   return { content: box, searchBar: el("div", { class: "actions" }, el("div", { class: "actions-inner" }, searchInput)) };
 }
