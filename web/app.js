@@ -934,15 +934,15 @@ function formatDateGroup(iso) {
   return iso ? new Date(iso).toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" }) : "Без даты";
 }
 
-// Строка обращения в списке — код, велосипед/клиент, статус. Общая для
-// главного экрана (активные) и архива выданных. onDelete, если передан,
-// включает свайп-удаление строки. dateIso, если передан (createdAt или
-// handedOverAt архива), показывается рядом с именем клиента.
+// Строка обращения в списке — велосипед/клиент, статус (без номера
+// обращения — мастерам он не нужен, только путает). Общая для главного
+// экрана (активные) и архива выданных. onDelete, если передан, включает
+// свайп-удаление строки. dateIso, если передан (createdAt или handedOverAt
+// архива), показывается рядом с именем клиента.
 function orderRow(o, d, onDelete, dateIso) {
   const bike = d.bikes.find((b) => b.number === o.bikeNumber);
   const client = d.clients.find((c) => c.phone === o.clientPhone);
   const row = el("a", { class: "row", href: `#/orders/${o.number}` },
-    el("span", { class: "code" }, o.number),
     el("span", { style: "flex:1;min-width:0" }, bike ? bikeLabel(bike) : o.bikeNumber,
       el("br"), el("span", { class: "small muted" }, client?.name || o.clientPhone),
       // Занятость мастером — теперь сама по себе статус («взята в работу»),
@@ -1285,7 +1285,7 @@ function viewOrder(number) {
   function subBar(code) {
     return el("header", { class: "bar" },
       el("button", { class: "back", style: "border:0;background:none", onclick: refresh }, "‹"),
-      el("h1", {}, order.number), el("span", { class: "sub" }, code));
+      el("h1", {}, bike ? bikeLabel(bike) : client?.name || "Обращение"), el("span", { class: "sub" }, code));
   }
   // Новая работа, добавленная тут (не из исходной сметы), попадает в наряд
   // как agreed:false — уточнить усложнения/запчасти и согласовать можно
@@ -1323,8 +1323,8 @@ function viewOrder(number) {
   const range = orderRange(order);
   const head = el("div", { class: "card" },
     // Название велосипеда уже крупно в шапке экрана — тут не повторяем,
-    // только тип и номер обращения (для сверки).
-    el("h2", {}, [bike?.kind, order.number].filter(Boolean).join(" · ")),
+    // только тип. Номер обращения из вида убрали — мастерам он не нужен.
+    bike?.kind ? el("h2", {}, bike.kind) : null,
     // Вся строка — ссылка tel:, а не только номер: на телефоне так проще
     // попасть пальцем, а 📞 справа, покрупнее, сразу подсказывает, что тут
     // можно позвонить (не теряется мелким значком сразу после текста).
@@ -1542,11 +1542,11 @@ function viewOrder(number) {
   const showStickyTotal = order.status === "выдан" && agreedCount > 3;
   return [
     // Название велосипеда вместо номера обращения, покрупнее остальных
-    // заголовков — по нему сразу видно, с чем работаешь. Номер обращения —
-    // в карточке велосипеда ниже, для сверки не пропал.
+    // заголовков — по нему сразу видно, с чем работаешь. Номер обращения
+    // нигде в интерфейсе не показываем — мастерам он не нужен, только путает.
     el("header", { class: "bar" },
       el("a", { class: "back", href: "#" + (order.status === "выдан" ? "/orders" : "/") }, "‹"),
-      el("h1", { class: "bar-title-lg" }, bike ? bikeLabel(bike) : order.number)),
+      el("h1", { class: "bar-title-lg" }, bike ? bikeLabel(bike) : client?.name || "Обращение")),
     main,
     actions,
     showStickyTotal ? stickyTotal(range) : null,
@@ -2670,10 +2670,11 @@ function historyList(masterId, percentOf) {
   const byOrder = new Map();
   for (const o of d.orders) {
     const bike = d.bikes.find((b) => b.number === o.bikeNumber);
+    const client = d.clients.find((c) => c.phone === o.clientPhone);
     for (const it of o.items) {
       for (const c of it.completions || []) {
         if (!c.at || (masterId != null && c.masterId !== masterId)) continue;
-        if (!byOrder.has(o.number)) byOrder.set(o.number, { order: o, bike, lines: [], earned: 0, latest: c.at });
+        if (!byOrder.has(o.number)) byOrder.set(o.number, { order: o, bike, client, lines: [], earned: 0, latest: c.at });
         const rec = byOrder.get(o.number);
         const earned = entryEarned({ item: it, completion: c }, percentOf);
         rec.lines.push({ name: it.name, qty: c.qty, needQty: itemNeedsQty(it), earned, masterName: c.masterName });
@@ -2715,8 +2716,8 @@ function reportContent(masterId, percentOf, header) {
         ? emptyState("Пока ничего не выполнено.")
         : el("div", { class: "list", style: "gap:10px" }, history.map((rec) => el("div", { class: "card" },
             el("div", { style: "display:flex;justify-content:space-between;gap:8px" },
-              el("div", {}, el("b", {}, rec.bike ? bikeLabel(rec.bike) : rec.order.number),
-                el("div", { class: "small muted" }, rec.order.number, rec.latest ? " · " + formatDateShort(rec.latest) : "")),
+              el("div", {}, el("b", {}, rec.bike ? bikeLabel(rec.bike) : rec.client?.name || "Обращение"),
+                rec.latest ? el("div", { class: "small muted" }, formatDateShort(rec.latest)) : null),
               el("div", { class: "price-tag" }, money(rec.earned))),
             el("div", { class: "small muted", style: "margin-top:6px" },
               rec.lines.map((l) => el("div", {},
