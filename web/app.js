@@ -2628,7 +2628,12 @@ function entryEarned(e, percentOf) {
 function reportBuckets(kind) {
   const now = new Date();
   const buckets = [];
-  if (kind === "day") {
+  if (kind === "today") {
+    // Один отрезок — сегодняшний день целиком. Отдельная вкладка, чтобы не
+    // приходилось каждый раз идти в «По дням» и тыкать в последний столбец.
+    const from = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    buckets.push({ label: "Сегодня", from, to: new Date(from.getFullYear(), from.getMonth(), from.getDate() + 1) });
+  } else if (kind === "day") {
     // Под столбцом — только число месяца, иначе на 14 подряд «05.09 06.09…»
     // подписи сливаются в нечитаемую кашу.
     for (let i = 13; i >= 0; i--) {
@@ -2708,13 +2713,16 @@ function bucketFullLabel(period, from) {
   if (period === "week") return "неделя с " + from.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" });
   return from.toLocaleDateString("ru-RU", { month: "long", year: "numeric" });
 }
-const PERIOD_WINDOW_LABEL = { day: "последние 14 дней", week: "последние 8 недель", month: "последние 12 месяцев" };
+const PERIOD_WINDOW_LABEL = { today: "сегодня", day: "последние 14 дней", week: "последние 8 недель", month: "последние 12 месяцев" };
 
 function reportContent(masterId, percentOf, header) {
-  let period = "day";
+  // «Сегодня» по умолчанию — самое частое, что хотят посмотреть, не тратя
+  // на это лишний тап (переключение вкладки/выбор столбца).
+  let period = "today";
   // Индекс выбранного тапом столбца — «выбранный период» сужается до него
   // (сумма и история ниже); null — весь показанный отрезок (14 дней/8
-  // недель/12 месяцев), как раньше.
+  // недель/12 месяцев), как раньше. Для «Сегодня» не применяется — там и
+  // так один-единственный отрезок.
   let selectedIdx = null;
   const box = el("div", {});
   const redraw = () => {
@@ -2735,12 +2743,13 @@ function reportContent(masterId, percentOf, header) {
       el("div", { class: "card" },
         header,
         el("div", { class: "segmented", style: "margin-top:10px" },
-          ["day", "week", "month"].map((k) => el("button", {
+          ["today", "day", "week", "month"].map((k) => el("button", {
             class: period === k ? "active" : "", onclick: () => { period = k; selectedIdx = null; redraw(); },
-          }, k === "day" ? "По дням" : k === "week" ? "По неделям" : "По месяцам"))),
+          }, k === "today" ? "Сегодня" : k === "day" ? "По дням" : k === "week" ? "По неделям" : "По месяцам"))),
         el("div", { class: "price-range", style: "margin-top:14px" }, money(totalEarned)),
         el("div", { class: "small muted" }, `${totalCount} работ · за ${periodLabel}`),
-        reportBarChart(buckets, selectedIdx, (i) => { selectedIdx = selectedIdx === i ? null : i; redraw(); })),
+        // Один отрезок («Сегодня») сравнивать не с чем — график тут не нужен.
+        buckets.length > 1 ? reportBarChart(buckets, selectedIdx, (i) => { selectedIdx = selectedIdx === i ? null : i; redraw(); }) : null),
       el("p", { class: "small muted", style: "margin:16px 0 4px" }, "ИСТОРИЯ ВЫПОЛНЕННЫХ ОБРАЩЕНИЙ"),
       history.length === 0
         ? emptyState("Пока ничего не выполнено.")
