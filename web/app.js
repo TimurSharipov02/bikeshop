@@ -974,7 +974,6 @@ function viewHome() {
       active.length === 0
         ? emptyState("Активных обращений нет.")
         : rowsList(active.map((o) => orderRow(o, d, deleteOrderWithAlert))),
-      el("a", { href: "#/orders", class: "small", style: "display:inline-block;margin-top:4px" }, "Архив выданных обращений ›"),
       el("p", { class: "muted small", style: "margin-top:16px" },
         (serverOK ? "Данные общие для всех устройств." : "Данные хранятся только в этом браузере.")
           + (BUILD_TIME ? ` · версия от ${BUILD_TIME}` : ""))),
@@ -2767,8 +2766,7 @@ function viewAdmin() {
       el("div", { class: "rows" },
         homeLink("Мастера", "/admin/masters", ICONS.masters),
         homeLink("Отчёты по мастерам", "/admin/reports", ICONS.report),
-        homeLink("Остатки по запчастям", "/admin/stock", ICONS.stock),
-        homeLink("Переопределения работ", "/admin/overrides", ICONS.prices))),
+        homeLink("Остатки по запчастям", "/admin/stock", ICONS.stock))),
   ];
 }
 
