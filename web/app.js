@@ -2592,33 +2592,38 @@ function viewProfile() {
 }
 
 // ============================================================================
-//  ОТЧЁТ ПО ВЫРАБОТКЕ МАСТЕРА
+//  ОТЧЁТ ПО ВЫРАБОТКЕ
 // ============================================================================
-// Один и тот же экран — и «мой отчёт» в профиле, и то, что видит админ по
-// любому мастеру. Источник — сама DB (уже вся загружена на клиенте, как и
-// весь остальной наряд), отдельный API не нужен: идём по всем обращениям,
-// по всем пунктам, по completions с этим masterId.
+// Один и тот же экран и для «мой отчёт» в профиле, и для отчёта по одному
+// мастеру из админки, и для сводки по всем сразу — отличаются только тем,
+// каких мастеров включает workLog/historyList (null — всех) и как считается
+// процент (percentOf: masterId → число, у разных мастеров он может быть
+// разным). Источник — сама DB (уже вся загружена на клиенте), отдельный API
+// не нужен: идём по всем обращениям, по всем пунктам, по completions.
 
-// Одна запись — доля одного пункта наряда, которую сделал этот мастер
-// (qty из completion, не всего пункта — см. itemNeedsQty/totalCompletedQty).
-function masterWorkLog(masterId) {
+// Одна запись — доля одного пункта наряда, которую сделал мастер (qty из
+// completion, не всего пункта — см. itemNeedsQty/totalCompletedQty).
+// masterId === null — записи всех мастеров сразу (сводный отчёт).
+function workLog(masterId) {
   const d = loadDB();
   const out = [];
   for (const o of d.orders) {
     for (const it of o.items) {
       for (const c of it.completions || []) {
-        if (c.masterId !== masterId || !c.at) continue;
+        if (!c.at || (masterId != null && c.masterId !== masterId)) continue;
         out.push({ order: o, item: it, completion: c, at: new Date(c.at) });
       }
     }
   }
   return out;
 }
-// Заработок мастера с одной такой записи — доля пункта (qty/needQty) от
-// стоимости работы (без запчастей), умноженная на процент.
-function entryEarned(e, percent) {
+// Заработок с одной такой записи — доля пункта (qty/needQty) от стоимости
+// работы (без запчастей), умноженная на процент автора именно этой записи
+// (percentOf — функция masterId → процент, а не одно число: в сводном
+// отчёте у каждой строки свой мастер и свой процент).
+function entryEarned(e, percentOf) {
   const share = (e.completion.qty || 0) / itemNeedsQty(e.item);
-  return share * itemWorkValue(e.item) * (percent / 100);
+  return share * itemWorkValue(e.item) * (percentOf(e.completion.masterId) / 100);
 }
 // День/неделя(пн–вс)/месяц — последние 14/8/6 отрезков, включая текущий.
 function reportBuckets(kind) {
@@ -2658,18 +2663,20 @@ function reportBarChart(buckets) {
       el("div", { title: money(b.earned), style: `width:100%;max-width:26px;height:${Math.max(2, Math.round((b.earned / max) * 96))}px;background:var(--accent);border-radius:3px 3px 0 0` }),
       el("span", { class: "small muted", style: "font-size:10px;white-space:nowrap" }, b.label))));
 }
-function masterHistory(masterId, percent) {
+// masterId === null — история по всем мастерам сразу: в одном обращении
+// могли поучаствовать несколько, поэтому каждая строка подписана именем.
+function historyList(masterId, percentOf) {
   const d = loadDB();
   const byOrder = new Map();
   for (const o of d.orders) {
     const bike = d.bikes.find((b) => b.number === o.bikeNumber);
     for (const it of o.items) {
       for (const c of it.completions || []) {
-        if (c.masterId !== masterId || !c.at) continue;
+        if (!c.at || (masterId != null && c.masterId !== masterId)) continue;
         if (!byOrder.has(o.number)) byOrder.set(o.number, { order: o, bike, lines: [], earned: 0, latest: c.at });
         const rec = byOrder.get(o.number);
-        const earned = entryEarned({ item: it, completion: c }, percent);
-        rec.lines.push({ name: it.name, qty: c.qty, needQty: itemNeedsQty(it), earned });
+        const earned = entryEarned({ item: it, completion: c }, percentOf);
+        rec.lines.push({ name: it.name, qty: c.qty, needQty: itemNeedsQty(it), earned, masterName: c.masterName });
         rec.earned += earned;
         if (c.at > rec.latest) rec.latest = c.at;
       }
@@ -2678,91 +2685,72 @@ function masterHistory(masterId, percent) {
   return [...byOrder.values()].sort((a, b) => (b.latest || "").localeCompare(a.latest || ""));
 }
 
+// Тело отчёта (переключатель периода + график + история) — общее что для
+// одного мастера, что для сводки по всем; header — то, что показывается
+// сверху карточки над переключателем (имя+процент или «Все мастера»).
+function reportContent(masterId, percentOf, header) {
+  let period = "day";
+  const box = el("div", {});
+  const redraw = () => {
+    const log = workLog(masterId);
+    const buckets = reportBuckets(period).map((b) => {
+      const entries = log.filter((e) => e.at >= b.from && e.at < b.to);
+      return { ...b, earned: entries.reduce((s, e) => s + entryEarned(e, percentOf), 0), count: entries.reduce((s, e) => s + (e.completion.qty || 0), 0) };
+    });
+    const totalEarned = buckets.reduce((s, b) => s + b.earned, 0);
+    const totalCount = buckets.reduce((s, b) => s + b.count, 0);
+    const history = historyList(masterId, percentOf);
+    box.replaceChildren(
+      el("div", { class: "card" },
+        header,
+        el("div", { class: "segmented", style: "margin-top:10px" },
+          ["day", "week", "month"].map((k) => el("button", {
+            class: period === k ? "active" : "", onclick: () => { period = k; redraw(); },
+          }, k === "day" ? "По дням" : k === "week" ? "По неделям" : "По месяцам"))),
+        el("div", { class: "price-range", style: "margin-top:14px" }, money(totalEarned)),
+        el("div", { class: "small muted" }, `${totalCount} работ · за показанный период`),
+        reportBarChart(buckets)),
+      el("p", { class: "small muted", style: "margin:16px 0 4px" }, "ИСТОРИЯ ВЫПОЛНЕННЫХ ОБРАЩЕНИЙ"),
+      history.length === 0
+        ? emptyState("Пока ничего не выполнено.")
+        : el("div", { class: "list", style: "gap:10px" }, history.map((rec) => el("div", { class: "card" },
+            el("div", { style: "display:flex;justify-content:space-between;gap:8px" },
+              el("div", {}, el("b", {}, rec.bike ? bikeLabel(rec.bike) : rec.order.number),
+                el("div", { class: "small muted" }, rec.order.number, rec.latest ? " · " + formatDateShort(rec.latest) : "")),
+              el("div", { class: "price-tag" }, money(rec.earned))),
+            el("div", { class: "small muted", style: "margin-top:6px" },
+              rec.lines.map((l) => el("div", {},
+                masterId == null ? `${l.masterName} — ` : "", l.name, l.needQty > 1 ? ` ×${l.qty} из ${l.needQty}` : "", " — ", money(l.earned))))))));
+  };
+  redraw();
+  return box;
+}
+
 function masterReportScreen(masterId, backHash) {
   const host = el("main", { class: "wrap" }, skeletonRows());
   const onScreen = () => location.hash === "#" + (backHash === "/profile" ? "/profile/report" : `/admin/reports/${masterId}`);
   ensureUsers().then((users) => {
     if (!onScreen()) return;
     const master = users.find((u) => u.id === masterId) || { id: masterId, name: "—", commissionPercent: 0 };
-    let period = "day";
-    const redraw = () => {
-      const percent = master.commissionPercent || 0;
-      const log = masterWorkLog(masterId);
-      const buckets = reportBuckets(period).map((b) => {
-        const entries = log.filter((e) => e.at >= b.from && e.at < b.to);
-        return { ...b, earned: entries.reduce((s, e) => s + entryEarned(e, percent), 0), count: entries.reduce((s, e) => s + (e.completion.qty || 0), 0) };
-      });
-      const totalEarned = buckets.reduce((s, b) => s + b.earned, 0);
-      const totalCount = buckets.reduce((s, b) => s + b.count, 0);
-      const history = masterHistory(masterId, percent);
-      host.replaceChildren(
-        el("div", { class: "card" },
-          el("div", {}, master.name, el("span", { class: "small muted" }, ` · ${percent}% от работы`)),
-          el("div", { class: "segmented", style: "margin-top:10px" },
-            ["day", "week", "month"].map((k) => el("button", {
-              class: period === k ? "active" : "", onclick: () => { period = k; redraw(); },
-            }, k === "day" ? "По дням" : k === "week" ? "По неделям" : "По месяцам"))),
-          el("div", { class: "price-range", style: "margin-top:14px" }, money(totalEarned)),
-          el("div", { class: "small muted" }, `${totalCount} работ · за показанный период`),
-          reportBarChart(buckets)),
-        el("p", { class: "small muted", style: "margin:16px 0 4px" }, "ИСТОРИЯ ВЫПОЛНЕННЫХ ОБРАЩЕНИЙ"),
-        history.length === 0
-          ? emptyState("Пока ничего не выполнено.")
-          : el("div", { class: "list", style: "gap:10px" }, history.map((rec) => el("div", { class: "card" },
-              el("div", { style: "display:flex;justify-content:space-between;gap:8px" },
-                el("div", {}, el("b", {}, rec.bike ? bikeLabel(rec.bike) : rec.order.number),
-                  el("div", { class: "small muted" }, rec.order.number, rec.latest ? " · " + formatDateShort(rec.latest) : "")),
-                el("div", { class: "price-tag" }, money(rec.earned))),
-              el("div", { class: "small muted", style: "margin-top:6px" },
-                rec.lines.map((l) => el("div", {}, l.name, l.needQty > 1 ? ` ×${l.qty} из ${l.needQty}` : "", " — ", money(l.earned))))))));
-    };
-    redraw();
+    const percent = master.commissionPercent || 0;
+    const header = el("div", {}, master.name, el("span", { class: "small muted" }, ` · ${percent}% от работы`));
+    host.replaceChildren(reportContent(masterId, () => percent, header));
   });
   return [bar("Отчёт по выработке", backHash), host];
 }
 
-// Текущий отрезок (день/неделя/месяц) — просто последний из reportBuckets,
-// тот же способ разбивки на периоды, что и в графике конкретного мастера.
-const currentPeriod = (kind) => reportBuckets(kind).at(-1);
-
-// Сводка по всем мастерам сразу — сколько кто заработал за сегодня/эту
-// неделю/этот месяц, отсортировано по убыванию. Тап по строке — тот же
-// подробный отчёт, что и с карточки мастера в «Мастера».
+// Сводка по всем мастерам сразу — тот же экран, что и у одного мастера
+// (переключатель день/неделя/месяц, график, история), только не по одному
+// человеку, а по всем: у каждой записи в графике/истории свой процент —
+// свой у каждого мастера.
 function viewAllMastersReport() {
   const host = el("main", { class: "wrap" }, skeletonRows());
   ensureUsers().then((users) => {
     if (location.hash !== "#/admin/reports") return;
-    let period = "day";
-    const redraw = () => {
-      const range = currentPeriod(period);
-      const rows = users.map((u) => {
-        const entries = masterWorkLog(u.id).filter((e) => e.at >= range.from && e.at < range.to);
-        return {
-          user: u,
-          earned: entries.reduce((s, e) => s + entryEarned(e, u.commissionPercent || 0), 0),
-          count: entries.reduce((s, e) => s + (e.completion.qty || 0), 0),
-        };
-      }).sort((a, b) => b.earned - a.earned);
-      const total = rows.reduce((s, r) => s + r.earned, 0);
-      host.replaceChildren(
-        el("div", { class: "card" },
-          el("div", { class: "segmented" },
-            ["day", "week", "month"].map((k) => el("button", {
-              class: period === k ? "active" : "", onclick: () => { period = k; redraw(); },
-            }, k === "day" ? "Сегодня" : k === "week" ? "Эта неделя" : "Этот месяц"))),
-          el("div", { class: "price-range", style: "margin-top:14px" }, money(total)),
-          el("div", { class: "small muted" }, "итого по всем мастерам")),
-        rows.length === 0
-          ? emptyState("Мастеров пока нет.")
-          : el("div", { class: "rows", style: "margin-top:12px" }, rows.map((r) => el("a", { class: "row", href: `#/admin/reports/${r.user.id}` },
-              el("span", { style: "flex:1" }, r.user.name,
-                r.user.role === "admin" ? el("span", { class: "small muted" }, " · админ") : null,
-                !r.user.active ? el("span", { class: "small muted" }, " · отключён") : null),
-              el("span", { class: "small muted", style: "margin-right:8px" }, `${r.count} раб.`),
-              el("span", { class: "price-tag" }, money(r.earned)),
-              el("span", { class: "chev" }, "›")))));
-    };
-    redraw();
+    const percentByMaster = Object.fromEntries(users.map((u) => [u.id, u.commissionPercent || 0]));
+    const percentOf = (masterId) => percentByMaster[masterId] || 0;
+    const header = el("div", {}, "Все мастера");
+    host.replaceChildren(reportContent(null, percentOf, header));
   });
   return [bar("Отчёты по мастерам", "/admin"), host];
 }
