@@ -1,9 +1,9 @@
 {
-  "name": "vella-workshop",
+  "name": "veloterra-workshop",
   "version": "0.1.0",
   "type": "module",
   "private": true,
-  "description": "Веломастерская Vella — рабочий процесс, раннер техпроцедур, веб-приложение",
+  "description": "Веломастерская Veloterra — рабочий процесс, раннер техпроцедур, веб-приложение",
   "scripts": {
     "cli": "node src/cli.ts",
     "check": "node src/validate.ts && node src/dryrun.ts && node src/audit.ts",

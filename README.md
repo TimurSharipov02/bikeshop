@@ -1,4 +1,4 @@
-# Веломастерская Vella
+# Веломастерская Veloterra
 
 Рабочий процесс мастерской и раннер технологических процедур.
 
@@ -10,14 +10,14 @@
 ## Приложение
 
 `npm run build` собирает всё в **один HTML** (данные, стили, код внутри):
-- `vella.html` — открыть двойным кликом локально;
+- `veloterra.html` — открыть двойным кликом локально;
 - `public/index.html` — то же, для хостинга.
 
 Обычный ванильный JavaScript, без фреймворков. Сборка — обычный Node,
 **без пакетов и без TypeScript** (`scripts/build-html.js`).
 
 ```
-npm run build        # → vella.html + public/index.html
+npm run build        # → veloterra.html + public/index.html
 npm run cli          # консольная версия рабочего процесса
 npm run check        # validate + dryrun + audit каталога процедур
 ```
@@ -62,7 +62,7 @@ web/
   template.html      каркас
 scripts/
   gen-catalog.ts     catalog → web/catalog.json
-  build-html.js      сшивает всё в vella.html (обычный Node, без зависимостей)
+  build-html.js      сшивает всё в veloterra.html (обычный Node, без зависимостей)
 src/                 ядро на TS: парсер, движок, домен, консоль, проверки
 docs/                документация проекта
 data/db.json         данные консольной версии (gitignored)

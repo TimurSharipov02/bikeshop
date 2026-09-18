@@ -1,7 +1,7 @@
-// Собирает vella.html (и public/index.html для Vercel) из исходников.
+// Собирает veloterra.html (и public/index.html для Vercel) из исходников.
 // Обычный Node, без зависимостей и без TypeScript.  Запуск:  npm run build
 
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { parseProc } from "../web/parse.js";
 
@@ -63,9 +63,13 @@ const html = readFileSync(p("web/template.html"), "utf8")
   .replace("/*__CATALOG__*/", () => JSON.stringify(catalog))
   .replace("/*__BUNDLE__*/", () => bundle);
 
-writeFileSync(p("vella.html"), html, "utf8");
+writeFileSync(p("veloterra.html"), html, "utf8");
 mkdirSync(p("public"), { recursive: true });
 writeFileSync(p("public/index.html"), html, "utf8");
+// public/ пересобирается каждый раз и не хранится в git — иконку сайта
+// (обычный файл, не часть шаблона) копируем сюда же из web/assets при
+// каждой сборке, а не держим отдельно в public/.
+copyFileSync(p("web/assets/favicon.jpg"), p("public/favicon.jpg"));
 
 const kb = (Buffer.byteLength(html) / 1024).toFixed(0);
-console.log(`✔ ${procedures.length} процедур · vella.html + public/index.html — ${kb} КБ`);
+console.log(`✔ ${procedures.length} процедур · veloterra.html + public/index.html — ${kb} КБ`);

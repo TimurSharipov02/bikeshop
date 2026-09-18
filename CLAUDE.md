@@ -1,6 +1,6 @@
 # Инструкции для Claude в этом проекте
 
-Проект: Vella (веломастерская) — `TimurSharipov02/bikeshop` на GitHub, ветка
+Проект: Veloterra (веломастерская) — `TimurSharipov02/bikeshop` на GitHub, ветка
 `main`. Репозиторий подключён к Vercel через GitHub-интеграцию: любой пуш в
 `main` автоматически собирает и выкладывает новую версию на
 `bikeshop-chi.vercel.app`.

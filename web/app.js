@@ -1,5 +1,5 @@
 // ============================================================================
-//  Веломастерская Vella — всё приложение в одном файле.
+//  Веломастерская Veloterra — всё приложение в одном файле.
 //  Обычный JavaScript. Ни сборщиков, ни фреймворков.
 //
 //    CATALOG  — процедуры / неисправности / цены (вшиты в HTML при сборке)
@@ -967,7 +967,7 @@ function viewHome() {
   const d = loadDB();
   const active = [...d.orders].reverse().filter((o) => o.status !== "выдан");
   return [
-    el("header", { class: "bar" }, el("h1", {}, "Vella"),
+    el("header", { class: "bar" }, el("h1", {}, "Veloterra"),
       el("a", { class: "sub", href: "#/profile" }, SESSION?.name || SESSION?.login || "")),
     el("main", { class: "wrap" },
       el("h2", { class: "small muted", style: "margin:0 0 8px;font-weight:600;letter-spacing:.02em" }, "АКТИВНЫЕ ОБРАЩЕНИЯ"),
@@ -2542,7 +2542,7 @@ function formCard(title, hint, fields, onSubmit, submitLabel, error) {
 }
 
 function viewLogin() {
-  return authCard("Вход в Vella", null,
+  return authCard("Вход в Veloterra", null,
     [...field("Логин", "login"), ...field("Пароль", "password", "password", "current-password")],
     async (form) => {
       await authAction({ action: "login", login: form.login.value.trim(), password: form.password.value });
