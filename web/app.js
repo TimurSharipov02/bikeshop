@@ -696,12 +696,17 @@ window.addEventListener("hashchange", () => { router(); if (SESSION) syncFromSer
 (function setupKeyboardOffset() {
   if (!window.visualViewport) return;
   const vv = window.visualViewport;
+  // Только "resize" — клавиатура меняет именно высоту visualViewport.
+  // Раньше слушали ещё и "scroll", а в формулу подмешивали vv.offsetTop —
+  // но offsetTop плавает и от обычного оттягивания страницы вниз до упора
+  // (резиновый bounce-скролл iOS), из-за чего панель поиска на секунду
+  // подпрыгивала вверх при долистывании страницы, а не только при
+  // появлении клавиатуры.
   const update = () => {
-    const offset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+    const offset = Math.max(0, window.innerHeight - vv.height);
     document.documentElement.style.setProperty("--kb-offset", offset + "px");
   };
   vv.addEventListener("resize", update);
-  vv.addEventListener("scroll", update);
   update();
 })();
 
@@ -2596,19 +2601,17 @@ function entryEarned(e, percentOf) {
   const share = (e.completion.qty || 0) / itemNeedsQty(e.item);
   return share * itemWorkValue(e.item) * (percentOf(e.completion.masterId) / 100);
 }
-// Три вкладки отчёта — каждая листаемое окно фиксированного размера (не
-// привязанное к календарным границам): «Неделя» — 7 дней, «Месяц» — 4
-// недели, «Год» — 12 месяцев. offset=0 — окно кончается сегодня/этой
-// неделей/этим месяцем; offset>0 — пролистали в прошлое (без ограничения);
-// offset<0 — пролистали вперёд, до -(count-1), когда в крайнем левом
-// столбце оказывается «сегодняшний» отрезок, а остальные (n+1) — пустое
-// будущее.
+// Три вкладки отчёта: «Неделя» — по дням, «Месяц» — по неделям, «Год» — по
+// месяцам. n — «отрезков назад от текущего» (0 — сегодня/эта неделя/этот
+// месяц, отрицательное — будущее). minN на вкладку — жёсткий предел вперёд
+// (дальше пусто и листать некуда); назад — без ограничения, догружается по
+// мере прокрутки (см. buildReportTab).
 const PERIOD_TABS = [
   { key: "week", unit: "day", count: 7, label: "Неделя" },
   { key: "month", unit: "week", count: 4, label: "Месяц" },
   { key: "year", unit: "month", count: 12, label: "Год" },
 ];
-function periodBuckets(unit, count, offset) {
+function bucketAt(unit, n) {
   const now = new Date();
   let unitStart;
   if (unit === "day") unitStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -2616,125 +2619,28 @@ function periodBuckets(unit, count, offset) {
     const dow = now.getDay();
     unitStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (dow === 0 ? 6 : dow - 1));
   } else unitStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const buckets = [];
-  for (let j = 0; j < count; j++) {
-    const n = offset + (count - 1 - j); // сколько отрезков назад от текущего (отрицательно — в будущем)
-    let from, to, label;
-    if (unit === "day") {
-      from = new Date(unitStart.getFullYear(), unitStart.getMonth(), unitStart.getDate() - n);
-      to = new Date(from.getFullYear(), from.getMonth(), from.getDate() + 1);
-      label = from.toLocaleDateString("ru-RU", { weekday: "short" });
-    } else if (unit === "week") {
-      from = new Date(unitStart.getFullYear(), unitStart.getMonth(), unitStart.getDate() - n * 7);
-      to = new Date(from.getFullYear(), from.getMonth(), from.getDate() + 7);
-      label = from.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" });
-    } else {
-      from = new Date(unitStart.getFullYear(), unitStart.getMonth() - n, 1);
-      to = new Date(from.getFullYear(), from.getMonth() + 1, 1);
-      label = from.toLocaleDateString("ru-RU", { month: "short" });
-    }
-    buckets.push({ from, to, label });
+  let from, to, label;
+  if (unit === "day") {
+    from = new Date(unitStart.getFullYear(), unitStart.getMonth(), unitStart.getDate() - n);
+    to = new Date(from.getFullYear(), from.getMonth(), from.getDate() + 1);
+    label = from.toLocaleDateString("ru-RU", { weekday: "short" });
+  } else if (unit === "week") {
+    from = new Date(unitStart.getFullYear(), unitStart.getMonth(), unitStart.getDate() - n * 7);
+    to = new Date(from.getFullYear(), from.getMonth(), from.getDate() + 7);
+    label = from.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" });
+  } else {
+    from = new Date(unitStart.getFullYear(), unitStart.getMonth() - n, 1);
+    to = new Date(from.getFullYear(), from.getMonth() + 1, 1);
+    label = from.toLocaleDateString("ru-RU", { month: "short" });
   }
-  return buckets;
+  return { n, from, to, label };
 }
-// Лёгкая вибрация при удачном перелистывании — на Android (Vibration API);
-// на iOS Safari эту функцию до сих пор не поддерживает ни в браузере, ни
-// в установленном как приложение виде, так что там вызов молча ничего не
-// делает (не ошибка — просто нет эффекта на этой платформе).
+// Лёгкая вибрация, когда лента графика «доехала» до новой колонки —
+// на Android (Vibration API); на iOS Safari эту функцию до сих пор не
+// поддерживает ни браузер, ни установленное как приложение (standalone),
+// так что там вызов молча ничего не делает (не ошибка — просто нет эффекта
+// на этой платформе).
 function hapticTick() { try { navigator.vibrate && navigator.vibrate(10); } catch {} }
-
-// Простой столбиковый график на голых div — без сторонних библиотек, тем же
-// подходом, что и весь остальной интерфейс. Столбец — доход за отрезок,
-// подпись под ним; тап по столбцу показывает сумму (title, для настольного
-// использования — на телефоне просто виден масштаб).
-// selectedIdx — индекс выбранного столбца (тап сузил сумму и историю до
-// одного отрезка) или null (ничего не выбрано — сумма по всему окну, все
-// столбцы одинаково акцентные). onSelect(i) — тап по столбцу i (повторный
-// тап по уже выбранному снимает выбор).
-function reportBarChart(buckets, selectedIdx, onSelect) {
-  const max = Math.max(1, ...buckets.map((b) => b.earned));
-  return el("div", { style: "display:flex;align-items:flex-end;gap:4px;height:120px" },
-    buckets.map((b, i) => {
-      const dimmed = selectedIdx != null && selectedIdx !== i;
-      return el("div", {
-        style: "flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:4px;height:100%;justify-content:flex-end;cursor:pointer",
-        onclick: () => onSelect(i),
-      },
-        el("div", { title: money(b.earned), style: `width:100%;max-width:26px;height:${Math.max(2, Math.round((b.earned / max) * 96))}px;background:${dimmed ? "var(--line)" : "var(--accent)"};border-radius:3px 3px 0 0;transition:background .15s ease` }),
-        el("span", { class: "small", style: `font-size:10px;white-space:nowrap;color:${selectedIdx === i ? "var(--accent)" : "var(--muted)"};font-weight:${selectedIdx === i ? "700" : "400"}` }, b.label));
-    }));
-}
-
-// Карусель из трёх графиков (прошлое | текущее | будущее), тянущаяся за
-// пальцем в реальном времени вместо прежнего дискретного «свайп → сразу
-// следующий период» (тот вариант ощущался «рывками» и иногда путал
-// направление). getBuckets(offset) — построить столбцы для конкретного
-// смещения; onCommit(newOffset) — вызывается ПОСЛЕ анимации долистывания
-// (родитель обновляет offset/selectedIdx и полностью перерисовывает карточку
-// — к этому моменту страница уже визуально доехала до нужного места, поэтому
-// подмена DOM невидима). Свайп влево тянет в будущее (до floorOffset —
-// дальше пусто, тянуть можно, но с сопротивлением и без фиксации), вправо —
-// в прошлое (без ограничения).
-function pageableChart(tab, offset, floorOffset, getBuckets, selectedIdx, onSelect, onCommit) {
-  const pastOffset = offset + 1;
-  const futureOffset = Math.max(floorOffset, offset - 1);
-  const atFloor = futureOffset === offset;
-  const PANE = "flex:0 0 33.3333%;min-width:0";
-  const pastPane = el("div", { style: PANE }, reportBarChart(getBuckets(pastOffset), null, () => {}));
-  const curPane = el("div", { style: PANE }, reportBarChart(getBuckets(offset), selectedIdx, onSelect));
-  const futurePane = el("div", { style: PANE }, reportBarChart(getBuckets(futureOffset), null, () => {}));
-  const track = el("div", { style: "display:flex;width:300%" }, pastPane, curPane, futurePane);
-  const wrap = el("div", { style: "overflow:hidden;margin-top:14px" }, track);
-
-  let dragging = false, locked = null, pid = null, startX = 0, startY = 0, width = 0, lastX = 0;
-  const setX = (px, animate) => {
-    track.style.transition = animate ? "transform .25s cubic-bezier(.2,.8,.2,1)" : "none";
-    track.style.transform = `translateX(calc(-33.3333% + ${px}px))`;
-  };
-  setX(0, false);
-
-  wrap.addEventListener("pointerdown", (e) => {
-    if (e.pointerType === "mouse" && e.button !== 0) return;
-    dragging = true; locked = null; pid = e.pointerId; startX = e.clientX; startY = e.clientY; lastX = 0;
-    width = wrap.getBoundingClientRect().width || 1;
-  });
-  wrap.addEventListener("pointermove", (e) => {
-    if (!dragging || e.pointerId !== pid) return;
-    const ddx = e.clientX - startX, ddy = e.clientY - startY;
-    if (locked === null) {
-      if (Math.abs(ddx) < 6 && Math.abs(ddy) < 6) return;
-      locked = Math.abs(ddx) > Math.abs(ddy) ? "x" : "y";
-      if (locked === "x") wrap.setPointerCapture(pid);
-    }
-    if (locked !== "x") return;
-    // Тянуть в будущее дальше упора всё равно можно — но туго, с явным
-    // сопротивлением, чтобы палец чувствовал границу, а не терял отклик.
-    lastX = ddx < 0 && atFloor ? ddx / 3 : ddx;
-    setX(lastX, false);
-  });
-  const finish = (e) => {
-    if (!dragging || (e && e.pointerId !== pid)) return;
-    dragging = false;
-    if (locked === "x") {
-      const THRESH = Math.min(70, width * 0.18);
-      if (lastX >= THRESH) {
-        setX(width, true);
-        hapticTick();
-        track.addEventListener("transitionend", () => onCommit(pastOffset), { once: true });
-      } else if (lastX <= -THRESH && !atFloor) {
-        setX(-width, true);
-        hapticTick();
-        track.addEventListener("transitionend", () => onCommit(futureOffset), { once: true });
-      } else {
-        setX(0, true);
-      }
-    }
-    locked = null;
-  };
-  wrap.addEventListener("pointerup", finish);
-  wrap.addEventListener("pointercancel", finish);
-  return wrap;
-}
 // masterId === null — история по всем мастерам сразу: в одном обращении
 // могли поучаствовать несколько, поэтому каждая строка подписана именем.
 function historyList(masterId, percentOf) {
@@ -2786,57 +2692,124 @@ function windowRangeLabel(unit, buckets) {
   return `${fmt(from)} – ${fmt(toIncl)}`;
 }
 
-// Возвращает {content, searchBar} — searchBar рисуется отдельным
-// закреплённым низом экрана (как в актуальных iOS-интерфейсах — Почта,
-// Сообщения), а не частью прокручиваемого content, поэтому и не
-// пересоздаётся на каждой перерисовке списка (иначе поле теряло бы фокус
-// на каждый введённый символ). Ищет по номеру телефона клиента — то же,
-// что раньше умел архив выданных обращений, который эта история заменила.
-function reportContent(masterId, percentOf, header) {
-  // По умолчанию — «Неделя», последний (сегодняшний) столбец уже выбран,
-  // чтобы не тыкать в него лишний раз.
-  let tabKey = "week";
-  // offset=0 — окно кончается сегодня/этой неделей/этим месяцем; листается
-  // свайпом по графику (см. pageableChart ниже). selectedIdx — индекс
-  // выбранного тапом столбца (сумма/история сужаются до него) или null —
-  // весь показанный отрезок; по умолчанию (offset=0) выбран последний.
-  let offset = 0;
-  let selectedIdx = PERIOD_TABS.find((t) => t.key === tabKey).count - 1;
+// Сколько отрезков-«назад» подгружаем сразу и порциями при подскролле к
+// началу списка — как история чата: не всё сразу, но и не ждать заново на
+// каждый чих. 60 достаточно с запасом даже для «Недели» (по дням — это
+// ~2 месяца назад), а для «Года» (по месяцам) — 5 лет.
+const REPORT_INITIAL_PAST = 60;
+const REPORT_PAST_CHUNK = 30;
+
+// Тело одной вкладки отчёта: настоящая горизонтально прокручиваемая лента
+// столбцов (нативный scroll-snap, как строка дат в Яндекс.Go у водителей) —
+// не карусель из подменяемых кусков, все колонки уже в DOM и участвуют.
+// Прошлое подгружается порциями при подскролле к началу; будущее (n<0)
+// зафиксировано жёстким пределом на вкладку — его просто не рендерим дальше.
+function buildReportTab(masterId, percentOf, tab) {
+  const log = workLog(masterId);
+  const minN = -(tab.count - 1);
+  let maxN = REPORT_INITIAL_PAST;
+  const cache = new Map();
+  const bucketFor = (n) => {
+    let b = cache.get(n);
+    if (b) return b;
+    const base = bucketAt(tab.unit, n);
+    const entries = log.filter((e) => e.at >= base.from && e.at < base.to);
+    b = { ...base, earned: entries.reduce((s, e) => s + entryEarned(e, percentOf), 0), count: entries.reduce((s, e) => s + (e.completion.qty || 0), 0) };
+    cache.set(n, b);
+    return b;
+  };
+  // Шкала графика — от начальной загруженной истории (не пересчитывается
+  // при подгрузке более старых колонок: иначе один крупный старый заказ
+  // мог бы задним числом «сплющить» уже привычный масштаб текущих дней).
+  for (let n = maxN; n >= minN; n--) bucketFor(n);
+  const maxEarned = Math.max(1, ...[...cache.values()].map((b) => b.earned));
+  const barHeightPx = (earned) => Math.max(2, Math.min(96, Math.round((earned / maxEarned) * 96)));
+
+  let selectedN = 0; // по умолчанию выбран сегодняшний/текущий отрезок
   let searchPhone = "";
-  const box = el("div", {});
-  const redraw = () => {
-    const tab = PERIOD_TABS.find((t) => t.key === tabKey);
-    const log = workLog(masterId);
-    const getBuckets = (off) => periodBuckets(tab.unit, tab.count, off).map((b) => {
-      const entries = log.filter((e) => e.at >= b.from && e.at < b.to);
-      return { ...b, earned: entries.reduce((s, e) => s + entryEarned(e, percentOf), 0), count: entries.reduce((s, e) => s + (e.completion.qty || 0), 0) };
-    });
-    const buckets = getBuckets(offset);
-    const selected = selectedIdx != null ? buckets[selectedIdx] : null;
-    const rangeFrom = selected ? selected.from : buckets[0].from;
-    const rangeTo = selected ? selected.to : buckets[buckets.length - 1].to;
-    const totalEarned = selected ? selected.earned : buckets.reduce((s, b) => s + b.earned, 0);
-    const totalCount = selected ? selected.count : buckets.reduce((s, b) => s + b.count, 0);
-    const periodLabel = selected ? bucketFullLabel(tab.unit, selected.from) : windowRangeLabel(tab.unit, buckets);
+  let rangeFrom = null, rangeTo = null; // диапазон для истории ниже — обновляют updateHeader()/selectColumn()
+  // Программная установка стартовой позиции скролла ниже сама по себе
+  // стреляет событием "scroll" — без этого флага обработчик тут же принял
+  // бы её за жест пользователя и сбросил выбор «сегодня» по умолчанию.
+  let suppressNextScroll = false;
+
+  const sumEl = el("div", { class: "price-range", style: "margin-top:14px" });
+  const subEl = el("div", { class: "small muted" });
+  const historyItemsEl = el("div", {});
+  const historySection = el("div", {},
+    el("p", { class: "small muted", style: "margin:16px 0 4px" }, "ИСТОРИЯ ВЫПОЛНЕННЫХ ОБРАЩЕНИЙ"),
+    historyItemsEl);
+
+  const colWidthPct = 100 / tab.count;
+  const scroller = el("div", { style: "display:flex;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;margin-top:14px;height:120px" });
+  const colNodes = new Map(); // n -> {col, bar, label} — для точечной перекраски выбора без пересборки DOM
+
+  const makeCol = (n) => {
+    const b = bucketFor(n);
+    const bar = el("div", { title: money(b.earned), style: `width:100%;max-width:26px;height:${barHeightPx(b.earned)}px;background:var(--accent);border-radius:3px 3px 0 0;transition:background .15s ease` });
+    const label = el("span", { class: "small", style: "font-size:10px;white-space:nowrap;color:var(--muted);font-weight:400" }, b.label);
+    const col = el("div", {
+      style: `flex:0 0 ${colWidthPct}%;min-width:0;scroll-snap-align:start;display:flex;flex-direction:column;align-items:center;gap:4px;height:100%;justify-content:flex-end;cursor:pointer`,
+      onclick: () => selectColumn(n),
+    }, bar, label);
+    colNodes.set(n, { col, bar, label });
+    return col;
+  };
+  {
+    const frag = document.createDocumentFragment();
+    for (let n = maxN; n >= minN; n--) frag.appendChild(makeCol(n));
+    scroller.appendChild(frag);
+  }
+
+  const restyleSelection = () => {
+    for (const [n, { bar, label }] of colNodes) {
+      const isSel = selectedN === n;
+      const dimmed = selectedN != null && !isSel;
+      bar.style.background = dimmed ? "var(--line)" : "var(--accent)";
+      label.style.color = isSel ? "var(--accent)" : "var(--muted)";
+      label.style.fontWeight = isSel ? "700" : "400";
+    }
+  };
+  restyleSelection();
+
+  // Какая колонка сейчас крайняя слева по фактической позиции скролла —
+  // общее для суммы «по всему окну» и для того, чтобы вибрировать только
+  // когда лента реально доехала до новой позиции, а не на каждый тик.
+  const currentLeftN = () => {
+    const colWidthPx = scroller.clientWidth / tab.count || 1;
+    const leftIdx = Math.max(0, Math.round(scroller.scrollLeft / colWidthPx));
+    return maxN - leftIdx;
+  };
+  const visibleWindowBuckets = () => {
+    const leftN = currentLeftN();
+    const out = [];
+    for (let i = 0; i < tab.count; i++) out.push(bucketFor(leftN - i));
+    return out;
+  };
+
+  const updateHeader = () => {
+    if (selectedN != null) {
+      const b = bucketFor(selectedN);
+      sumEl.textContent = money(b.earned);
+      subEl.textContent = `${b.count} работ · за ${bucketFullLabel(tab.unit, b.from)}`;
+      rangeFrom = b.from; rangeTo = b.to;
+    } else {
+      const win = visibleWindowBuckets();
+      const earned = win.reduce((s, b) => s + b.earned, 0);
+      const count = win.reduce((s, b) => s + b.count, 0);
+      sumEl.textContent = money(earned);
+      subEl.textContent = `${count} работ · за ${windowRangeLabel(tab.unit, win)}`;
+      rangeFrom = win[0].from; rangeTo = win[win.length - 1].to;
+    }
+  };
+
+  const redrawHistory = () => {
+    if (!rangeFrom) return;
     const qDigits = maskedDigits(searchPhone);
     let history = historyList(masterId, percentOf)
       .filter((rec) => rec.latest && new Date(rec.latest) >= rangeFrom && new Date(rec.latest) < rangeTo);
     if (qDigits) history = history.filter((rec) => phoneDigits(rec.order.clientPhone).includes(qDigits));
-    const chart = pageableChart(tab, offset, -(tab.count - 1), getBuckets, selectedIdx,
-      (i) => { selectedIdx = selectedIdx === i ? null : i; redraw(); },
-      (newOffset) => { offset = newOffset; selectedIdx = offset === 0 ? tab.count - 1 : null; redraw(); });
-    box.replaceChildren(
-      el("div", { class: "card" },
-        header,
-        el("div", { class: "segmented", style: "margin-top:10px" },
-          PERIOD_TABS.map((t) => el("button", {
-            class: tabKey === t.key ? "active" : "",
-            onclick: () => { tabKey = t.key; offset = 0; selectedIdx = t.count - 1; redraw(); },
-          }, t.label))),
-        el("div", { class: "price-range", style: "margin-top:14px" }, money(totalEarned)),
-        el("div", { class: "small muted" }, `${totalCount} работ · за ${periodLabel}`),
-        chart),
-      el("p", { class: "small muted", style: "margin:16px 0 4px" }, "ИСТОРИЯ ВЫПОЛНЕННЫХ ОБРАЩЕНИЙ"),
+    historyItemsEl.replaceChildren(
       history.length === 0
         ? emptyState(qDigits ? "Ничего не найдено." : "Пока ничего не выполнено.", qDigits ? EMPTY_ICON_SEARCH : undefined)
         // Карточка — ссылка на само обращение: открыть, посмотреть весь
@@ -2849,17 +2822,104 @@ function reportContent(masterId, percentOf, header) {
               el("div", { class: "price-tag" }, money(rec.earned))),
             el("div", { class: "small muted", style: "margin-top:6px" },
               rec.lines.map((l) => el("div", {},
-                masterId == null ? `${l.masterName} — ` : "", l.name, l.needQty > 1 ? ` ×${l.qty} из ${l.needQty}` : "", " — ", money(l.earned))))))));
+                masterId == null ? `${l.masterName} — ` : "", l.name, l.needQty > 1 ? ` ×${l.qty} из ${l.needQty}` : "", " — ", money(l.earned)))))))
+    );
   };
+
+  const selectColumn = (n) => {
+    selectedN = selectedN === n ? null : n;
+    restyleSelection();
+    updateHeader();
+    redrawHistory();
+  };
+
+  // У самого начала ленты (близко к самой старой подгруженной колонке) —
+  // молча подгружаем ещё порцию прошлого и правим scrollLeft на её ширину,
+  // чтобы лента не дёрнулась под пальцем.
+  const maybeExtendPast = () => {
+    const colWidthPx = scroller.clientWidth / tab.count || 1;
+    if (scroller.scrollLeft > colWidthPx * 8) return;
+    const beforeWidth = scroller.scrollWidth;
+    const frag = document.createDocumentFragment();
+    for (let n = maxN + REPORT_PAST_CHUNK; n > maxN; n--) frag.appendChild(makeCol(n));
+    scroller.insertBefore(frag, scroller.firstChild);
+    maxN += REPORT_PAST_CHUNK;
+    scroller.scrollLeft += scroller.scrollWidth - beforeWidth;
+    restyleSelection();
+  };
+
+  let settleTimer = null;
+  let lastLeftN = currentLeftN();
+  scroller.addEventListener("scroll", () => {
+    if (suppressNextScroll) { suppressNextScroll = false; return; }
+    if (selectedN !== null) { selectedN = null; restyleSelection(); }
+    updateHeader();
+    clearTimeout(settleTimer);
+    settleTimer = setTimeout(() => {
+      maybeExtendPast();
+      redrawHistory();
+      const n = currentLeftN();
+      if (n !== lastLeftN) { lastLeftN = n; hapticTick(); }
+    }, 150);
+  }, { passive: true });
+
+  updateHeader();
+  redrawHistory();
+
+  // Стартовая позиция — сегодняшняя/текущая колонка последней видимой
+  // справа, будущее (если есть) — правее, вне экрана, до свайпа. Реальную
+  // ширину знаем только после того, как лента реально встала в документ —
+  // поэтому откладываем на следующий кадр.
+  requestAnimationFrame(() => {
+    const colWidthPx = scroller.clientWidth / tab.count;
+    if (colWidthPx > 0) {
+      suppressNextScroll = true;
+      scroller.scrollLeft = Math.max(0, (maxN - tab.count + 1) * colWidthPx);
+      // На случай если браузер не пришлёт "scroll" вовсе (значение и так
+      // было тем же) — не оставлять флаг взведённым навсегда.
+      setTimeout(() => { suppressNextScroll = false; }, 50);
+    }
+  });
+
+  return {
+    sumEl, subEl, scroller, historySection,
+    setSearch: (v) => { searchPhone = v; redrawHistory(); },
+  };
+}
+
+// Возвращает {content, searchBar} — searchBar рисуется отдельным
+// закреплённым низом экрана (как в актуальных iOS-интерфейсах — Почта,
+// Сообщения), а не частью прокручиваемого content, поэтому и не
+// пересоздаётся на каждой перерисовке списка (иначе поле теряло бы фокус
+// на каждый введённый символ). Ищет по номеру телефона клиента — то же,
+// что раньше умел архив выданных обращений, который эта история заменила.
+function reportContent(masterId, percentOf, header) {
+  // По умолчанию — «Неделя».
+  let tabKey = "week";
+  let searchPhone = "";
+  const box = el("div", {});
+  let tabApi = null;
+  const mountTab = () => {
+    const tab = PERIOD_TABS.find((t) => t.key === tabKey);
+    tabApi = buildReportTab(masterId, percentOf, tab);
+    tabApi.setSearch(searchPhone);
+    box.replaceChildren(
+      el("div", { class: "card" },
+        header,
+        el("div", { class: "segmented", style: "margin-top:10px" },
+          PERIOD_TABS.map((t) => el("button", { class: tabKey === t.key ? "active" : "", onclick: () => { tabKey = t.key; mountTab(); } }, t.label))),
+        tabApi.sumEl, tabApi.subEl, tabApi.scroller),
+      tabApi.historySection);
+  };
+  mountTab();
   // Пустое поле с подсказкой — не «+7» сразу, а только когда по нему
   // тапнули (иначе на пустом экране постоянно висит код страны, будто
   // уже что-то введено). Если ушли с поля, ничего не набрав — подсказка
   // возвращается.
-  const searchInput = el("input", { type: "tel", placeholder: "Поиск заявки по номеру телефона", style: "flex:1", value: searchPhone ? applyPhoneMask(searchPhone) : "" });
-  attachPhoneMask(searchInput, (v) => { searchPhone = v; redraw(); });
+  const searchInput = el("input", { type: "tel", placeholder: "Поиск заявки по номеру телефона", style: "flex:1", value: "" });
+  attachPhoneMask(searchInput, (v) => { searchPhone = v; tabApi.setSearch(v); });
   searchInput.addEventListener("focus", () => { if (!searchInput.value) searchInput.value = "+7"; });
   searchInput.addEventListener("blur", () => { if (!maskedDigits(searchInput.value)) searchInput.value = ""; });
-  redraw();
   return { content: box, searchBar: el("div", { class: "actions" }, el("div", { class: "actions-inner" }, searchInput)) };
 }
 
