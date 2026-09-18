@@ -2629,10 +2629,12 @@ function reportBuckets(kind) {
   const now = new Date();
   const buckets = [];
   if (kind === "day") {
+    // Под столбцом — только число месяца, иначе на 14 подряд «05.09 06.09…»
+    // подписи сливаются в нечитаемую кашу.
     for (let i = 13; i >= 0; i--) {
       const from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
       const to = new Date(from.getFullYear(), from.getMonth(), from.getDate() + 1);
-      buckets.push({ label: from.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" }), from, to });
+      buckets.push({ label: String(from.getDate()), from, to });
     }
   } else if (kind === "week") {
     const dow = now.getDay();
@@ -2643,10 +2645,10 @@ function reportBuckets(kind) {
       buckets.push({ label: from.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" }), from, to });
     }
   } else {
-    for (let i = 5; i >= 0; i--) {
+    for (let i = 11; i >= 0; i--) {
       const from = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const to = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
-      buckets.push({ label: from.toLocaleDateString("ru-RU", { month: "short", year: "2-digit" }), from, to });
+      buckets.push({ label: from.toLocaleDateString("ru-RU", { month: "short" }), from, to });
     }
   }
   return buckets;
@@ -2655,12 +2657,22 @@ function reportBuckets(kind) {
 // подходом, что и весь остальной интерфейс. Столбец — доход за отрезок,
 // подпись под ним; тап по столбцу показывает сумму (title, для настольного
 // использования — на телефоне просто виден масштаб).
-function reportBarChart(buckets) {
+// selectedIdx — индекс выбранного столбца (тап сузил сумму и историю до
+// одного отрезка) или null (ничего не выбрано — сумма по всему окну, все
+// столбцы одинаково акцентные). onSelect(i) — тап по столбцу i (повторный
+// тап по уже выбранному снимает выбор).
+function reportBarChart(buckets, selectedIdx, onSelect) {
   const max = Math.max(1, ...buckets.map((b) => b.earned));
   return el("div", { style: "display:flex;align-items:flex-end;gap:4px;height:120px;margin-top:14px" },
-    buckets.map((b) => el("div", { style: "flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:4px;height:100%;justify-content:flex-end" },
-      el("div", { title: money(b.earned), style: `width:100%;max-width:26px;height:${Math.max(2, Math.round((b.earned / max) * 96))}px;background:var(--accent);border-radius:3px 3px 0 0` }),
-      el("span", { class: "small muted", style: "font-size:10px;white-space:nowrap" }, b.label))));
+    buckets.map((b, i) => {
+      const dimmed = selectedIdx != null && selectedIdx !== i;
+      return el("div", {
+        style: "flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:4px;height:100%;justify-content:flex-end;cursor:pointer",
+        onclick: () => onSelect(i),
+      },
+        el("div", { title: money(b.earned), style: `width:100%;max-width:26px;height:${Math.max(2, Math.round((b.earned / max) * 96))}px;background:${dimmed ? "var(--line)" : "var(--accent)"};border-radius:3px 3px 0 0;transition:background .15s ease` }),
+        el("span", { class: "small", style: `font-size:10px;white-space:nowrap;color:${selectedIdx === i ? "var(--accent)" : "var(--muted)"};font-weight:${selectedIdx === i ? "700" : "400"}` }, b.label));
+    }));
 }
 // masterId === null — история по всем мастерам сразу: в одном обращении
 // могли поучаствовать несколько, поэтому каждая строка подписана именем.
@@ -2688,8 +2700,22 @@ function historyList(masterId, percentOf) {
 // Тело отчёта (переключатель периода + график + история) — общее что для
 // одного мастера, что для сводки по всем; header — то, что показывается
 // сверху карточки над переключателем (имя+процент или «Все мастера»).
+// Полное описание отрезка — для подписи над суммой, когда выбран конкретный
+// столбец (короткая подпись под столбцом типа «18» или «сен» там не
+// прочитать, что именно выбрано).
+function bucketFullLabel(period, from) {
+  if (period === "day") return from.toLocaleDateString("ru-RU", { day: "numeric", month: "long" });
+  if (period === "week") return "неделя с " + from.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" });
+  return from.toLocaleDateString("ru-RU", { month: "long", year: "numeric" });
+}
+const PERIOD_WINDOW_LABEL = { day: "последние 14 дней", week: "последние 8 недель", month: "последние 12 месяцев" };
+
 function reportContent(masterId, percentOf, header) {
   let period = "day";
+  // Индекс выбранного тапом столбца — «выбранный период» сужается до него
+  // (сумма и история ниже); null — весь показанный отрезок (14 дней/8
+  // недель/12 месяцев), как раньше.
+  let selectedIdx = null;
   const box = el("div", {});
   const redraw = () => {
     const log = workLog(masterId);
@@ -2697,19 +2723,24 @@ function reportContent(masterId, percentOf, header) {
       const entries = log.filter((e) => e.at >= b.from && e.at < b.to);
       return { ...b, earned: entries.reduce((s, e) => s + entryEarned(e, percentOf), 0), count: entries.reduce((s, e) => s + (e.completion.qty || 0), 0) };
     });
-    const totalEarned = buckets.reduce((s, b) => s + b.earned, 0);
-    const totalCount = buckets.reduce((s, b) => s + b.count, 0);
-    const history = historyList(masterId, percentOf);
+    const selected = selectedIdx != null ? buckets[selectedIdx] : null;
+    const rangeFrom = selected ? selected.from : buckets[0].from;
+    const rangeTo = selected ? selected.to : buckets[buckets.length - 1].to;
+    const totalEarned = selected ? selected.earned : buckets.reduce((s, b) => s + b.earned, 0);
+    const totalCount = selected ? selected.count : buckets.reduce((s, b) => s + b.count, 0);
+    const periodLabel = selected ? bucketFullLabel(period, selected.from) : PERIOD_WINDOW_LABEL[period];
+    const history = historyList(masterId, percentOf)
+      .filter((rec) => rec.latest && new Date(rec.latest) >= rangeFrom && new Date(rec.latest) < rangeTo);
     box.replaceChildren(
       el("div", { class: "card" },
         header,
         el("div", { class: "segmented", style: "margin-top:10px" },
           ["day", "week", "month"].map((k) => el("button", {
-            class: period === k ? "active" : "", onclick: () => { period = k; redraw(); },
+            class: period === k ? "active" : "", onclick: () => { period = k; selectedIdx = null; redraw(); },
           }, k === "day" ? "По дням" : k === "week" ? "По неделям" : "По месяцам"))),
         el("div", { class: "price-range", style: "margin-top:14px" }, money(totalEarned)),
-        el("div", { class: "small muted" }, `${totalCount} работ · за показанный период`),
-        reportBarChart(buckets)),
+        el("div", { class: "small muted" }, `${totalCount} работ · за ${periodLabel}`),
+        reportBarChart(buckets, selectedIdx, (i) => { selectedIdx = selectedIdx === i ? null : i; redraw(); })),
       el("p", { class: "small muted", style: "margin:16px 0 4px" }, "ИСТОРИЯ ВЫПОЛНЕННЫХ ОБРАЩЕНИЙ"),
       history.length === 0
         ? emptyState("Пока ничего не выполнено.")
