@@ -1803,7 +1803,7 @@ function detailedItemRow(it) {
   const r = itemRange(it);
   const nameRow = el("div", { style: "display:flex;align-items:center;gap:8px" },
     el("b", { style: "flex:1;min-width:0" }, it.name, it.multiple && (it.qty || 1) > 1 ? el("span", { class: "small muted" }, ` × ${it.qty}`) : null),
-    it.done ? el("span", { class: "pill" }, "готово") : null);
+    it.done ? el("span", { class: "pill" }, completionsSummary(it) || "готово") : null);
   return el("div", { class: "assess" },
     nameRow,
     el("div", { class: "price-tag", style: "margin-top:2px" }, rangeText(r)),
@@ -1941,7 +1941,7 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove }) {
   const box = el("div", { class: "assess" });
   const nameRow = el("div", { style: "display:flex;align-items:center;gap:8px" },
     el("b", { style: "flex:1;min-width:0" }, it.name),
-    it.done ? el("span", { class: "pill" }, "готово") : null,
+    it.done ? el("span", { class: "pill" }, completionsSummary(it) || "готово") : null,
     el("span", { style: "flex:0 0 auto;color:var(--line);font-size:19px" }, "›"));
   // Кликабельна вся карточка (имя + сумма + разбивка по составляющим), а не
   // только строка с именем — с разбивкой карточка стала заметно выше, и тап
@@ -2767,7 +2767,9 @@ function masterReportScreen(masterId, backHash) {
     if (!onScreen()) return;
     const master = users.find((u) => u.id === masterId) || { id: masterId, name: "—", commissionPercent: 0 };
     const percent = master.commissionPercent || 0;
-    const header = el("div", {}, master.name, el("span", { class: "small muted" }, ` · ${percent}% от работы`));
+    // Сам процент — только там, где его редактируют (карточка мастера в
+    // админке), тут лишний, не мастеру решать/сверять свою ставку.
+    const header = el("div", {}, master.name);
     host.replaceChildren(reportContent(masterId, () => percent, header));
   });
   return [bar("Отчёт по выработке", backHash), host];
