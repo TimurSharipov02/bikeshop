@@ -66,10 +66,11 @@ const html = readFileSync(p("web/template.html"), "utf8")
 writeFileSync(p("veloterra.html"), html, "utf8");
 mkdirSync(p("public"), { recursive: true });
 writeFileSync(p("public/index.html"), html, "utf8");
-// public/ пересобирается каждый раз и не хранится в git — иконку сайта
-// (обычный файл, не часть шаблона) копируем сюда же из web/assets при
-// каждой сборке, а не держим отдельно в public/.
+// public/ пересобирается каждый раз и не хранится в git — статику (иконка
+// сайта, манифест для «Добавить на экран Домой») копируем сюда же из
+// web/assets при каждой сборке, а не держим отдельно в public/.
 copyFileSync(p("web/assets/favicon.jpg"), p("public/favicon.jpg"));
+copyFileSync(p("web/assets/manifest.json"), p("public/manifest.json"));
 
 const kb = (Buffer.byteLength(html) / 1024).toFixed(0);
 console.log(`✔ ${procedures.length} процедур · veloterra.html + public/index.html — ${kb} КБ`);
