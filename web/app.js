@@ -664,7 +664,8 @@ const routes = [
   [/^\/profile\/report$/, () => masterReportScreen(SESSION?.id, "/profile")],
   [/^\/admin$/, adminOnly(viewAdmin)],
   [/^\/admin\/masters$/, adminOnly(viewMasters)],
-  [/^\/admin\/reports\/([^/]+)$/, adminOnly((m) => masterReportScreen(m[1], "/admin/masters"))],
+  [/^\/admin\/reports$/, adminOnly(viewAllMastersReport)],
+  [/^\/admin\/reports\/([^/]+)$/, adminOnly((m) => masterReportScreen(m[1], "/admin/reports"))],
   [/^\/admin\/stock$/, adminOnly(viewStock)],
   [/^\/admin\/overrides$/, adminOnly(viewOverrides)],
 ];
@@ -2720,6 +2721,52 @@ function masterReportScreen(masterId, backHash) {
   return [bar("Отчёт по выработке", backHash), host];
 }
 
+// Текущий отрезок (день/неделя/месяц) — просто последний из reportBuckets,
+// тот же способ разбивки на периоды, что и в графике конкретного мастера.
+const currentPeriod = (kind) => reportBuckets(kind).at(-1);
+
+// Сводка по всем мастерам сразу — сколько кто заработал за сегодня/эту
+// неделю/этот месяц, отсортировано по убыванию. Тап по строке — тот же
+// подробный отчёт, что и с карточки мастера в «Мастера».
+function viewAllMastersReport() {
+  const host = el("main", { class: "wrap" }, skeletonRows());
+  ensureUsers().then((users) => {
+    if (location.hash !== "#/admin/reports") return;
+    let period = "day";
+    const redraw = () => {
+      const range = currentPeriod(period);
+      const rows = users.map((u) => {
+        const entries = masterWorkLog(u.id).filter((e) => e.at >= range.from && e.at < range.to);
+        return {
+          user: u,
+          earned: entries.reduce((s, e) => s + entryEarned(e, u.commissionPercent || 0), 0),
+          count: entries.reduce((s, e) => s + (e.completion.qty || 0), 0),
+        };
+      }).sort((a, b) => b.earned - a.earned);
+      const total = rows.reduce((s, r) => s + r.earned, 0);
+      host.replaceChildren(
+        el("div", { class: "card" },
+          el("div", { class: "segmented" },
+            ["day", "week", "month"].map((k) => el("button", {
+              class: period === k ? "active" : "", onclick: () => { period = k; redraw(); },
+            }, k === "day" ? "Сегодня" : k === "week" ? "Эта неделя" : "Этот месяц"))),
+          el("div", { class: "price-range", style: "margin-top:14px" }, money(total)),
+          el("div", { class: "small muted" }, "итого по всем мастерам")),
+        rows.length === 0
+          ? emptyState("Мастеров пока нет.")
+          : el("div", { class: "rows", style: "margin-top:12px" }, rows.map((r) => el("a", { class: "row", href: `#/admin/reports/${r.user.id}` },
+              el("span", { style: "flex:1" }, r.user.name,
+                r.user.role === "admin" ? el("span", { class: "small muted" }, " · админ") : null,
+                !r.user.active ? el("span", { class: "small muted" }, " · отключён") : null),
+              el("span", { class: "small muted", style: "margin-right:8px" }, `${r.count} раб.`),
+              el("span", { class: "price-tag" }, money(r.earned)),
+              el("span", { class: "chev" }, "›")))));
+    };
+    redraw();
+  });
+  return [bar("Отчёты по мастерам", "/admin"), host];
+}
+
 // ============================================================================
 //  АДМИНКА
 // ============================================================================
@@ -2730,6 +2777,7 @@ function viewAdmin() {
     el("main", { class: "wrap" },
       el("div", { class: "rows" },
         homeLink("Мастера", "/admin/masters", ICONS.masters),
+        homeLink("Отчёты по мастерам", "/admin/reports", ICONS.report),
         homeLink("Остатки по запчастям", "/admin/stock", ICONS.stock),
         homeLink("Переопределения работ", "/admin/overrides", ICONS.prices))),
   ];
