@@ -2529,7 +2529,7 @@ function viewProfile() {
         el("div", {}, SESSION?.name), el("div", { class: "small muted" }, SESSION?.login,
           SESSION?.role === "admin" ? el("span", { class: "pill" }, "администратор") : el("span", { class: "pill" }, "мастер"))),
       el("div", { class: "rows", style: "margin-bottom:12px" },
-        homeLink("Отчёт по выработке", "/profile/report", ICONS.report),
+        homeLink("Выполненные работы", "/profile/report", ICONS.report),
         SESSION?.role === "admin" ? homeLink("Админка", "/admin", ICONS.admin) : null),
       formCard("Сменить пароль", null,
         [...field("Текущий пароль", "current", "password", "current-password"),
@@ -2578,39 +2578,78 @@ function entryEarned(e, percentOf) {
   const share = (e.completion.qty || 0) / itemNeedsQty(e.item);
   return share * itemWorkValue(e.item) * (percentOf(e.completion.masterId) / 100);
 }
-// День/неделя(пн–вс)/месяц — последние 14/8/6 отрезков, включая текущий.
-function reportBuckets(kind) {
+// Три вкладки отчёта — каждая листаемое окно фиксированного размера (не
+// привязанное к календарным границам): «Неделя» — 7 дней, «Месяц» — 4
+// недели, «Год» — 12 месяцев. offset=0 — окно кончается сегодня/этой
+// неделей/этим месяцем; offset>0 — пролистали в прошлое (без ограничения);
+// offset<0 — пролистали вперёд, до -(count-1), когда в крайнем левом
+// столбце оказывается «сегодняшний» отрезок, а остальные (n+1) — пустое
+// будущее.
+const PERIOD_TABS = [
+  { key: "week", unit: "day", count: 7, label: "Неделя" },
+  { key: "month", unit: "week", count: 4, label: "Месяц" },
+  { key: "year", unit: "month", count: 12, label: "Год" },
+];
+function periodBuckets(unit, count, offset) {
   const now = new Date();
-  const buckets = [];
-  if (kind === "today") {
-    // Один отрезок — сегодняшний день целиком. Отдельная вкладка, чтобы не
-    // приходилось каждый раз идти в «По дням» и тыкать в последний столбец.
-    const from = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    buckets.push({ label: "Сегодня", from, to: new Date(from.getFullYear(), from.getMonth(), from.getDate() + 1) });
-  } else if (kind === "day") {
-    // Под столбцом — только число месяца, иначе на 14 подряд «05.09 06.09…»
-    // подписи сливаются в нечитаемую кашу.
-    for (let i = 13; i >= 0; i--) {
-      const from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
-      const to = new Date(from.getFullYear(), from.getMonth(), from.getDate() + 1);
-      buckets.push({ label: String(from.getDate()), from, to });
-    }
-  } else if (kind === "week") {
+  let unitStart;
+  if (unit === "day") unitStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  else if (unit === "week") {
     const dow = now.getDay();
-    const thisMonday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (dow === 0 ? 6 : dow - 1));
-    for (let i = 7; i >= 0; i--) {
-      const from = new Date(thisMonday.getFullYear(), thisMonday.getMonth(), thisMonday.getDate() - i * 7);
-      const to = new Date(from.getFullYear(), from.getMonth(), from.getDate() + 7);
-      buckets.push({ label: from.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" }), from, to });
+    unitStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (dow === 0 ? 6 : dow - 1));
+  } else unitStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const buckets = [];
+  for (let j = 0; j < count; j++) {
+    const n = offset + (count - 1 - j); // сколько отрезков назад от текущего (отрицательно — в будущем)
+    let from, to, label;
+    if (unit === "day") {
+      from = new Date(unitStart.getFullYear(), unitStart.getMonth(), unitStart.getDate() - n);
+      to = new Date(from.getFullYear(), from.getMonth(), from.getDate() + 1);
+      label = from.toLocaleDateString("ru-RU", { weekday: "short" });
+    } else if (unit === "week") {
+      from = new Date(unitStart.getFullYear(), unitStart.getMonth(), unitStart.getDate() - n * 7);
+      to = new Date(from.getFullYear(), from.getMonth(), from.getDate() + 7);
+      label = from.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" });
+    } else {
+      from = new Date(unitStart.getFullYear(), unitStart.getMonth() - n, 1);
+      to = new Date(from.getFullYear(), from.getMonth() + 1, 1);
+      label = from.toLocaleDateString("ru-RU", { month: "short" });
     }
-  } else {
-    for (let i = 11; i >= 0; i--) {
-      const from = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const to = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
-      buckets.push({ label: from.toLocaleDateString("ru-RU", { month: "short" }), from, to });
-    }
+    buckets.push({ from, to, label });
   }
   return buckets;
+}
+// Свайп по графику — тот же приём (pointerdown/move/up, блокировка оси по
+// порогу), что и swipeToDelete/swipeActions, но без визуального перетаскивания:
+// жест только переключает offset на 1 и перерисовывает (проще и достаточно
+// для этой задачи — не карусель с анимацией, а быстрый дискретный тап-свайп).
+function attachSwipeNav(node, onSwipeLeft, onSwipeRight) {
+  let dragging = false, locked = null, pid = null, startX = 0, startY = 0;
+  node.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    dragging = true; locked = null; pid = e.pointerId; startX = e.clientX; startY = e.clientY;
+  });
+  node.addEventListener("pointermove", (e) => {
+    if (!dragging || e.pointerId !== pid) return;
+    const ddx = e.clientX - startX, ddy = e.clientY - startY;
+    if (locked === null) {
+      if (Math.abs(ddx) < 6 && Math.abs(ddy) < 6) return;
+      locked = Math.abs(ddx) > Math.abs(ddy) ? "x" : "y";
+      if (locked === "x") node.setPointerCapture(pid);
+    }
+  });
+  const finish = (e) => {
+    if (!dragging || (e && e.pointerId !== pid)) return;
+    dragging = false;
+    if (locked === "x") {
+      const ddx = e.clientX - startX;
+      if (ddx <= -40) onSwipeLeft();
+      else if (ddx >= 40) onSwipeRight();
+    }
+    locked = null;
+  };
+  node.addEventListener("pointerup", finish);
+  node.addEventListener("pointercancel", finish);
 }
 // Простой столбиковый график на голых div — без сторонних библиотек, тем же
 // подходом, что и весь остальной интерфейс. Столбец — доход за отрезок,
@@ -2667,12 +2706,22 @@ function historyList(masterId, percentOf) {
 // Полное описание отрезка — для подписи над суммой, когда выбран конкретный
 // столбец (короткая подпись под столбцом типа «18» или «сен» там не
 // прочитать, что именно выбрано).
-function bucketFullLabel(period, from) {
-  if (period === "day") return from.toLocaleDateString("ru-RU", { day: "numeric", month: "long" });
-  if (period === "week") return "неделя с " + from.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" });
+function bucketFullLabel(unit, from) {
+  if (unit === "day") return from.toLocaleDateString("ru-RU", { day: "numeric", month: "long" });
+  if (unit === "week") return "неделя с " + from.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" });
   return from.toLocaleDateString("ru-RU", { month: "long", year: "numeric" });
 }
-const PERIOD_WINDOW_LABEL = { today: "сегодня", day: "последние 14 дней", week: "последние 8 недель", month: "последние 12 месяцев" };
+// Подпись всего видимого окна, когда столбец не выбран — окно теперь
+// листаемое (offset может быть любым), поэтому не «последние N», а
+// фактический диапазон дат видимых столбцов.
+function windowRangeLabel(unit, buckets) {
+  const from = buckets[0].from;
+  const toIncl = new Date(buckets[buckets.length - 1].to.getTime() - 1);
+  const fmt = unit === "month"
+    ? (d) => d.toLocaleDateString("ru-RU", { month: "short", year: "numeric" })
+    : (d) => d.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" });
+  return `${fmt(from)} – ${fmt(toIncl)}`;
+}
 
 // Возвращает {content, searchBar} — searchBar рисуется отдельным
 // закреплённым низом экрана (как в актуальных iOS-интерфейсах — Почта,
@@ -2681,19 +2730,21 @@ const PERIOD_WINDOW_LABEL = { today: "сегодня", day: "последние 
 // на каждый введённый символ). Ищет по номеру телефона клиента — то же,
 // что раньше умел архив выданных обращений, который эта история заменила.
 function reportContent(masterId, percentOf, header) {
-  // «Сегодня» по умолчанию — самое частое, что хотят посмотреть, не тратя
-  // на это лишний тап (переключение вкладки/выбор столбца).
-  let period = "today";
-  // Индекс выбранного тапом столбца — «выбранный период» сужается до него
-  // (сумма и история ниже); null — весь показанный отрезок (14 дней/8
-  // недель/12 месяцев), как раньше. Для «Сегодня» не применяется — там и
-  // так один-единственный отрезок.
-  let selectedIdx = null;
+  // По умолчанию — «Неделя», последний (сегодняшний) столбец уже выбран,
+  // чтобы не тыкать в него лишний раз.
+  let tabKey = "week";
+  // offset=0 — окно кончается сегодня/этой неделей/этим месяцем; листается
+  // свайпом по графику (см. attachSwipeNav ниже). selectedIdx — индекс
+  // выбранного тапом столбца (сумма/история сужаются до него) или null —
+  // весь показанный отрезок; по умолчанию (offset=0) выбран последний.
+  let offset = 0;
+  let selectedIdx = PERIOD_TABS.find((t) => t.key === tabKey).count - 1;
   let searchPhone = "";
   const box = el("div", {});
   const redraw = () => {
+    const tab = PERIOD_TABS.find((t) => t.key === tabKey);
     const log = workLog(masterId);
-    const buckets = reportBuckets(period).map((b) => {
+    const buckets = periodBuckets(tab.unit, tab.count, offset).map((b) => {
       const entries = log.filter((e) => e.at >= b.from && e.at < b.to);
       return { ...b, earned: entries.reduce((s, e) => s + entryEarned(e, percentOf), 0), count: entries.reduce((s, e) => s + (e.completion.qty || 0), 0) };
     });
@@ -2702,22 +2753,29 @@ function reportContent(masterId, percentOf, header) {
     const rangeTo = selected ? selected.to : buckets[buckets.length - 1].to;
     const totalEarned = selected ? selected.earned : buckets.reduce((s, b) => s + b.earned, 0);
     const totalCount = selected ? selected.count : buckets.reduce((s, b) => s + b.count, 0);
-    const periodLabel = selected ? bucketFullLabel(period, selected.from) : PERIOD_WINDOW_LABEL[period];
+    const periodLabel = selected ? bucketFullLabel(tab.unit, selected.from) : windowRangeLabel(tab.unit, buckets);
     const qDigits = maskedDigits(searchPhone);
     let history = historyList(masterId, percentOf)
       .filter((rec) => rec.latest && new Date(rec.latest) >= rangeFrom && new Date(rec.latest) < rangeTo);
     if (qDigits) history = history.filter((rec) => phoneDigits(rec.order.clientPhone).includes(qDigits));
+    const chart = reportBarChart(buckets, selectedIdx, (i) => { selectedIdx = selectedIdx === i ? null : i; redraw(); });
+    // Свайп влево — «посмотреть вправо» (листнуть к будущим, пустым
+    // отрезкам, максимум до count-1); свайп вправо — уйти в прошлое (без
+    // ограничения).
+    attachSwipeNav(chart,
+      () => { offset = Math.max(-(tab.count - 1), offset - 1); selectedIdx = offset === 0 ? tab.count - 1 : null; redraw(); },
+      () => { offset = offset + 1; selectedIdx = offset === 0 ? tab.count - 1 : null; redraw(); });
     box.replaceChildren(
       el("div", { class: "card" },
         header,
         el("div", { class: "segmented", style: "margin-top:10px" },
-          ["today", "day", "week", "month"].map((k) => el("button", {
-            class: period === k ? "active" : "", onclick: () => { period = k; selectedIdx = null; redraw(); },
-          }, k === "today" ? "Сегодня" : k === "day" ? "По дням" : k === "week" ? "По неделям" : "По месяцам"))),
+          PERIOD_TABS.map((t) => el("button", {
+            class: tabKey === t.key ? "active" : "",
+            onclick: () => { tabKey = t.key; offset = 0; selectedIdx = t.count - 1; redraw(); },
+          }, t.label))),
         el("div", { class: "price-range", style: "margin-top:14px" }, money(totalEarned)),
         el("div", { class: "small muted" }, `${totalCount} работ · за ${periodLabel}`),
-        // Один отрезок («Сегодня») сравнивать не с чем — график тут не нужен.
-        buckets.length > 1 ? reportBarChart(buckets, selectedIdx, (i) => { selectedIdx = selectedIdx === i ? null : i; redraw(); }) : null),
+        chart),
       el("p", { class: "small muted", style: "margin:16px 0 4px" }, "ИСТОРИЯ ВЫПОЛНЕННЫХ ОБРАЩЕНИЙ"),
       history.length === 0
         ? emptyState(qDigits ? "Ничего не найдено." : "Пока ничего не выполнено.", qDigits ? EMPTY_ICON_SEARCH : undefined)
@@ -2752,7 +2810,7 @@ function masterReportScreen(masterId, backHash) {
     const { content, searchBar } = reportContent(masterId, () => percent, header);
     host.replaceChildren(content, searchBar);
   });
-  return [bar("Отчёт по выработке", backHash), host];
+  return [bar("Выполненные работы", backHash), host];
 }
 
 // Сводка по всем мастерам сразу — тот же экран, что и у одного мастера
@@ -2889,7 +2947,7 @@ function mastersScreen(list, error) {
         u.role === "admin" ? el("span", { class: "pill" }, "админ") : null,
         !u.active ? el("span", { class: "pill" }, "отключён") : null),
       el("div", { class: "small muted" }, u.login),
-      el("a", { class: "small", href: `#/admin/reports/${u.id}`, style: "display:inline-block;margin-top:6px" }, "Отчёт по выработке ›"));
+      el("a", { class: "small", href: `#/admin/reports/${u.id}`, style: "display:inline-block;margin-top:6px" }, "Выполненные работы ›"));
 
     card.append(el("form", {
       style: "display:flex;gap:8px;margin-top:10px", onsubmit: async (ev) => {
