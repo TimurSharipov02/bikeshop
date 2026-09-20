@@ -3415,7 +3415,7 @@ function stockScreen(data, error) {
       el("input", { value: it.sku, style: "width:90px", placeholder: "артикул", onchange: (ev) => { items[i].sku = ev.target.value; } }),
       el("input", { value: it.name, style: "flex:1;min-width:120px", placeholder: "название", onchange: (ev) => { items[i].name = ev.target.value; } }),
       el("input", { type: "number", value: it.qty, style: qtyStyle(it.qty), placeholder: "остаток", onchange: (ev) => { items[i].qty = +ev.target.value || 0; drawRows(); } }),
-      el("input", { value: it.unit, style: "width:60px", placeholder: "ед.", onchange: (ev) => { items[i].unit = ev.target.value; } }),
+      el("span", { class: "small muted", style: "width:60px;flex:0 0 auto" }, it.unit || "штук"),
       el("input", { type: "number", value: it.price || 0, style: "width:80px;text-align:right", placeholder: "цена", onchange: (ev) => { items[i].price = +ev.target.value || 0; } }),
       el("select", { style: "width:auto", onchange: (ev) => { items[i].group = ev.target.value; } },
         el("option", { value: "", selected: !it.group }, "без узла"),
@@ -3437,7 +3437,7 @@ function stockScreen(data, error) {
         el("div", { class: "search-wrap" }, searchInput, clearBtn),
         chipsBox,
         el("div", { style: "margin-top:6px" }, rowsBox),
-        el("button", { style: "margin-top:10px", onclick: () => { items.push({ sku: "", name: "", qty: 0, unit: "шт", price: 0, group: groupFilter, maxQty: 0 }); render(stockScreen({ items, updatedAt: data.updatedAt }, "")); } }, "+ строка"),
+        el("button", { style: "margin-top:10px", onclick: () => { items.push({ sku: "", name: "", qty: 0, unit: "", price: 0, group: groupFilter, maxQty: 0 }); render(stockScreen({ items, updatedAt: data.updatedAt }, "")); } }, "+ строка"),
         el("div", { class: "btn-row", style: "margin-top:12px" },
           el("button", { class: "btn-primary", onclick: () => saveStockItems(items) }, "Сохранить"))),
       el("div", { class: "card" },
@@ -3449,7 +3449,7 @@ function stockScreen(data, error) {
             onclick: () => {
               const parsed = importArea.value.split("\n").map((line) => line.split(";").map((s) => s.trim()))
                 .filter((p) => p[0] || p[1])
-                .map(([sku, name, qty, unit, price, group, maxQty]) => ({ sku: sku || "", name: name || "", qty: Number(qty) || 0, unit: unit || "шт", price: Number(price) || 0, group: group || "", maxQty: Number(maxQty) || 0 }));
+                .map(([sku, name, qty, unit, price, group, maxQty]) => ({ sku: sku || "", name: name || "", qty: Number(qty) || 0, unit: unit || "", price: Number(price) || 0, group: group || "", maxQty: Number(maxQty) || 0 }));
               if (parsed.length) saveStockItems(parsed);
             },
           }, "Импортировать (заменит список)")))),

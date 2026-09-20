@@ -25,7 +25,7 @@ export default async function handler(req, res) {
             sku: String(it.sku || "").trim(),
             name: String(it.name || "").trim(),
             qty: Number(it.qty) || 0,
-            unit: String(it.unit || "шт").trim(),
+            unit: String(it.unit || "").trim(),
             price: Number(it.price) || 0,
             group: String(it.group || "").trim(),
             maxQty: Number(it.maxQty) || 0,
