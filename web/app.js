@@ -205,8 +205,17 @@ const migrateOrders = (orders) =>
     return next;
   });
 
+// Раньше у велосипеда были отдельные марка и модель — теперь одна строка
+// name. Старые записи (только brand/model, без name) склеиваем в неё разом;
+// сами поля brand/model в новых записях больше нигде не пишутся.
+const migrateBikes = (bikes) =>
+  (bikes || []).map((b) => {
+    if (b.name) return b;
+    return { number: b.number, ownerPhone: b.ownerPhone, name: [b.brand, b.model].filter(Boolean).join(" ") };
+  });
+
 const normalizeDB = (d) => ({
-  clients: d?.clients || [], bikes: d?.bikes || [], orders: migrateOrders(d?.orders),
+  clients: d?.clients || [], bikes: migrateBikes(d?.bikes), orders: migrateOrders(d?.orders),
   counters: { order: 0, bike: 0, ...(d?.counters || {}) },
 });
 
@@ -546,8 +555,10 @@ const billableOps = cat.procedures.filter(
 const BIKE_KINDS = ["шоссе", "гревел", "хардтейл", "двухподвес", "детский", "колесо", "любой другой"];
 // Для одного колеса (без остального велосипеда) имеют смысл только работы по колёсам/втулкам.
 const WHEEL_ONLY_BLOCKS = ["WHL", "HUB"];
-// Марка и модель — одно поле в форме; model может быть пустым (старые записи хранят раздельно).
-const bikeLabel = (b) => (b ? [b.brand, b.model].filter(Boolean).join(" ") : "");
+// Одна строка на весь велосипед («Stels Navigator», «BMX жёлтый» — как
+// удобно, без отдельных полей марка/модель), см. migrateBikes для старых
+// записей, где марка и модель ещё хранились раздельно.
+const bikeLabel = (b) => b?.name || "";
 // Российский номер: 10 цифр без кода страны, либо 11 с ведущей 7/8.
 function isValidPhone(s) {
   const d = (s || "").replace(/\D/g, "");
@@ -1124,7 +1135,7 @@ function viewNewOrder() {
   }
 
   function stepClient() {
-    const f = { phone: applyPhoneMask(""), name: "", bike: "new", brand: "" };
+    const f = { phone: applyPhoneMask(""), name: "", bike: "new", bikeName: "" };
     // Смена клиента (другой телефон) — отдельно от простого f.bike: нужно
     // отличить «сбросить выбор велосипеда, потому что это уже другой
     // клиент» от «перерисовали форму, потому что мастер сам кликнул радио».
@@ -1174,8 +1185,8 @@ function viewNewOrder() {
       bikeFields.replaceChildren();
       if (f.bike === "new")
         bikeFields.append(
-          el("label", {}, "Марка и модель"),
-          el("input", { type: "text", value: f.brand, oninput: (e) => (f.brand = e.target.value) }));
+          el("label", {}, "Велосипед"),
+          el("input", { type: "text", value: f.bikeName, placeholder: "например, Stels Navigator", oninput: (e) => (f.bikeName = e.target.value) }));
       bikeSlot.append(bikeFields);
     }
 
@@ -1206,7 +1217,7 @@ function viewNewOrder() {
             let bn = f.bike;
             if (bn === "new" || !d.bikes.some((b) => b.number === bn)) {
               bn = nextBikeKey(d, p);
-              d.bikes.push({ number: bn, brand: f.brand.trim(), model: "", ownerPhone: p });
+              d.bikes.push({ number: bn, name: f.bikeName.trim(), ownerPhone: p });
             }
             const number = nextOrderNumber(d);
             d.orders.push({
@@ -3195,7 +3206,7 @@ function clientCard(c, onChange) {
     el("div", {}, c.name || "Без имени"),
     el("div", { class: "small muted" }, applyPhoneMask(c.phone)),
     el("div", { class: "small muted", style: "margin-top:6px" },
-      bikes.length ? bikes.map((b) => el("div", {}, bikeLabel(b) || "велосипед (без марки)")) : "Велосипедов нет"));
+      bikes.length ? bikes.map((b) => el("div", {}, bikeLabel(b) || "велосипед (без названия)")) : "Велосипедов нет"));
 }
 
 // Форма правки клиента — телефон тоже редактируемый (используется как ключ
@@ -3222,10 +3233,9 @@ function openClientEditor(c, onChange) {
   const drawBikes = () => {
     bikesBox.replaceChildren(
       ...state.bikes.map((b, i) => el("div", { style: "display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap" },
-        el("input", { value: b.brand || "", placeholder: "Марка", style: "flex:1;min-width:100px", oninput: (e) => (b.brand = e.target.value) }),
-        el("input", { value: b.model || "", placeholder: "Модель", style: "flex:1;min-width:100px", oninput: (e) => (b.model = e.target.value) }),
+        el("input", { value: b.name || "", placeholder: "Велосипед", style: "flex:1;min-width:100px", oninput: (e) => (b.name = e.target.value) }),
         el("button", { onclick: () => { if (b.number) removedBikeNumbers.push(b.number); state.bikes.splice(i, 1); drawBikes(); } }, "✕"))),
-      el("button", { style: "margin-top:8px", onclick: () => { state.bikes.push({ number: null, brand: "", model: "", ownerPhone: state.phone }); drawBikes(); } }, "+ велосипед"));
+      el("button", { style: "margin-top:8px", onclick: () => { state.bikes.push({ number: null, name: "", ownerPhone: state.phone }); drawBikes(); } }, "+ велосипед"));
   };
   drawBikes();
 
@@ -3249,10 +3259,10 @@ function openClientEditor(c, onChange) {
       for (const sb of state.bikes) {
         if (sb.number) {
           const existing = d.bikes.find((b) => b.number === sb.number);
-          if (existing) { existing.brand = sb.brand.trim(); existing.model = sb.model.trim(); existing.ownerPhone = newPhone; }
+          if (existing) { existing.name = sb.name.trim(); existing.ownerPhone = newPhone; }
         } else {
           const number = nextBikeKey(d, newPhone);
-          d.bikes.push({ number, brand: sb.brand.trim(), model: sb.model.trim(), ownerPhone: newPhone });
+          d.bikes.push({ number, name: sb.name.trim(), ownerPhone: newPhone });
           sb.number = number;
         }
       }
