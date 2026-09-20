@@ -3002,7 +3002,7 @@ function viewAllMastersReport() {
     const { content, searchBar } = reportContent(null, percentOf, header);
     host.replaceChildren(content, searchBar);
   });
-  return [bar("Отчёты по мастерам", "/admin"), host];
+  return [bar("Обращения", "/admin"), host];
 }
 
 // ============================================================================
@@ -3016,8 +3016,8 @@ function viewAdmin() {
       el("div", { class: "rows" },
         homeLink("Мастера", "/admin/masters", ICONS.masters),
         homeLink("Клиенты", "/admin/clients", ICONS.clients),
-        homeLink("Отчёты по мастерам", "/admin/reports", ICONS.report),
-        homeLink("Остатки по запчастям", "/admin/stock", ICONS.stock))),
+        homeLink("Обращения", "/admin/reports", ICONS.report),
+        homeLink("Запчасти", "/admin/stock", ICONS.stock))),
   ];
 }
 
@@ -3317,7 +3317,7 @@ async function loadStock() {
 }
 function viewStock() {
   loadStock();
-  return [bar("Остатки по запчастям", "/admin"), el("main", { class: "wrap" }, skeletonRows())];
+  return [bar("Запчасти", "/admin"), el("main", { class: "wrap" }, skeletonRows())];
 }
 
 async function saveStockItems(items) {
@@ -3331,53 +3331,113 @@ async function saveStockItems(items) {
 // Группы остатков — те же узлы, что и в диагностике (WHL/BRK/...), плюс
 // мойка; по ним потом фильтруется подбор запчасти к конкретной работе.
 const STOCK_GROUPS = [...diagBlocks.map((b) => ({ id: b.id, title: b.title })), { id: "WSH", title: "Мойка и консервация" }];
+// Простая эвристика «мало» — не настраивается по позиции (это не то же самое,
+// что maxQty — тот вообще про другое, разовый потолок при списании, а не
+// порог для дозаказа). Не идеально точно, зато сразу видно проблемные позиции
+// без необходимости знать заранее, что именно искать.
+const LOW_STOCK_THRESHOLD = 3;
+const stockLevel = (qty) => (qty <= 0 ? "zero" : qty <= LOW_STOCK_THRESHOLD ? "low" : "ok");
 
 function stockScreen(data, error) {
   const items = (data.items || []).map((it) => ({ ...it }));
   const updated = data.updatedAt ? new Date(data.updatedAt).toLocaleString("ru-RU") : null;
   let q = "";
+  let groupFilter = ""; // "" — все узлы
+  let onlyProblem = false; // только «нет»/«мало»
+
+  const zeroCount = items.filter((it) => stockLevel(it.qty) === "zero").length;
+  const lowCount = items.filter((it) => stockLevel(it.qty) === "low").length;
 
   // Остатков может быть тысячи (реальная выгрузка из 1С) — рендерить сразу
-  // все строки-с-полями браузер не потянет, поэтому редактор построчно
-  // показывает только то, что нашлось по поиску.
-  const searchInput = el("input", { type: "text", placeholder: "Поиск по названию или артикулу, чтобы отредактировать позицию" });
+  // все строки-с-полями браузер не потянет. Раньше единственным способом
+  // сузить список был точный поиск по названию/артикулу — теперь то же самое
+  // можно сделать без набора текста: выбрать узел чипом или включить
+  // «Только проблемные», список сам по себе достаточно небольшой.
+  const searchInput = el("input", { type: "text", placeholder: "Поиск по названию или артикулу" });
+  const clearBtn = el("button", {
+    type: "button", class: "search-clear", html: ICON_CLOSE, style: "display:none",
+    onclick: () => { searchInput.value = ""; q = ""; clearBtn.style.display = "none"; drawRows(); searchInput.focus(); },
+  });
+
+  const chipStyle = (active) => `padding:7px 13px;border-radius:999px;border:.5px solid ${active ? "var(--accent)" : "var(--line)"};` +
+    `background:${active ? "var(--accent)" : "var(--card)"};color:${active ? "var(--accent-ink)" : "var(--ink)"};` +
+    "font-size:13px;white-space:nowrap;cursor:pointer;flex:0 0 auto";
+  const chipsBox = el("div", { style: "display:flex;gap:6px;overflow-x:auto;padding:2px 0 4px;margin-top:10px" });
+  const drawChips = () => {
+    const groupCounts = new Map();
+    for (const it of items) groupCounts.set(it.group || "", (groupCounts.get(it.group || "") || 0) + 1);
+    // chipsBox — обычный DOM-узел, а не обёртка el(): его родной replaceChildren
+    // не разворачивает вложенные массивы сам (в отличие от el()), поэтому
+    // собираем плоский список и раскрываем его спредом при вызове.
+    const chips = [
+      el("div", {
+        style: chipStyle(!onlyProblem && !groupFilter), onclick: () => { onlyProblem = false; groupFilter = ""; drawChips(); drawRows(); },
+      }, `Все · ${items.length}`),
+      (zeroCount + lowCount) > 0 ? el("div", {
+        style: chipStyle(onlyProblem), onclick: () => { onlyProblem = !onlyProblem; drawChips(); drawRows(); },
+      }, `⚠ Проблемные · ${zeroCount + lowCount}`) : null,
+      ...STOCK_GROUPS.filter((g) => groupCounts.get(g.id)).map((g) => el("div", {
+        style: chipStyle(groupFilter === g.id), onclick: () => { groupFilter = groupFilter === g.id ? "" : g.id; drawChips(); drawRows(); },
+      }, `${g.title} · ${groupCounts.get(g.id)}`)),
+    ].filter(Boolean);
+    chipsBox.replaceChildren(...chips);
+  };
+  drawChips();
+
+  const qtyStyle = (qty) => {
+    const lvl = stockLevel(qty);
+    if (lvl === "zero") return "width:70px;text-align:right;border-color:var(--warn);background:var(--warn-weak);color:var(--warn)";
+    if (lvl === "low") return "width:70px;text-align:right;border-color:var(--orange);background:var(--orange-weak);color:var(--orange)";
+    return "width:70px;text-align:right";
+  };
+
   const rowsBox = el("div", { class: "list" });
+  const RESULTS_CAP = 150;
   const drawRows = () => {
     const ql = q.trim().toLowerCase();
-    if (!ql) {
-      rowsBox.replaceChildren(el("p", { class: "muted small" }, `Всего позиций: ${items.length}. Введите поиск, чтобы найти и отредактировать конкретную.`));
+    const active = !!(ql || groupFilter || onlyProblem);
+    if (!active) {
+      rowsBox.replaceChildren(el("p", { class: "muted small" },
+        `Всего позиций: ${items.length}` + (zeroCount ? ` · нет в наличии: ${zeroCount}` : "") + (lowCount ? ` · мало: ${lowCount}` : "") +
+        ". Наберите поиск, выберите узел или «Проблемные» выше, чтобы увидеть и отредактировать позиции."));
       return;
     }
-    const matchedIdx = items
-      .map((it, i) => ({ it, i }))
-      .filter(({ it }) => it.name.toLowerCase().includes(ql) || (it.sku || "").toLowerCase().includes(ql))
-      .slice(0, 60);
+    let matchedIdx = items.map((it, i) => ({ it, i }));
+    if (groupFilter) matchedIdx = matchedIdx.filter(({ it }) => (it.group || "") === groupFilter);
+    if (onlyProblem) matchedIdx = matchedIdx.filter(({ it }) => stockLevel(it.qty) !== "ok");
+    if (ql) matchedIdx = matchedIdx.filter(({ it }) => it.name.toLowerCase().includes(ql) || (it.sku || "").toLowerCase().includes(ql));
+    // Проблемные — худшее сверху (нулевые раньше «мало»); иначе просто по алфавиту.
+    matchedIdx.sort(onlyProblem ? (a, b) => (a.it.qty || 0) - (b.it.qty || 0) : (a, b) => a.it.name.localeCompare(b.it.name, "ru"));
+    const total = matchedIdx.length;
+    matchedIdx = matchedIdx.slice(0, RESULTS_CAP);
     if (!matchedIdx.length) { rowsBox.replaceChildren(emptyState("Ничего не найдено.", EMPTY_ICON_SEARCH)); return; }
     rowsBox.replaceChildren(...matchedIdx.map(({ it, i }) => el("div", { class: "price-row", style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" },
       el("input", { value: it.sku, style: "width:90px", placeholder: "артикул", onchange: (ev) => { items[i].sku = ev.target.value; } }),
       el("input", { value: it.name, style: "flex:1;min-width:120px", placeholder: "название", onchange: (ev) => { items[i].name = ev.target.value; } }),
-      el("input", { type: "number", value: it.qty, style: "width:70px;text-align:right", placeholder: "остаток", onchange: (ev) => { items[i].qty = +ev.target.value || 0; } }),
+      el("input", { type: "number", value: it.qty, style: qtyStyle(it.qty), placeholder: "остаток", onchange: (ev) => { items[i].qty = +ev.target.value || 0; drawRows(); } }),
       el("input", { value: it.unit, style: "width:60px", placeholder: "ед.", onchange: (ev) => { items[i].unit = ev.target.value; } }),
       el("input", { type: "number", value: it.price || 0, style: "width:80px;text-align:right", placeholder: "цена", onchange: (ev) => { items[i].price = +ev.target.value || 0; } }),
       el("select", { style: "width:auto", onchange: (ev) => { items[i].group = ev.target.value; } },
         el("option", { value: "", selected: !it.group }, "без узла"),
         STOCK_GROUPS.map((g) => el("option", { value: g.id, selected: it.group === g.id }, g.title))),
       el("input", { type: "number", value: it.maxQty || "", style: "width:56px;text-align:right", placeholder: "макс", title: "Потолок количества за раз (спицы — 64, цепь — 1 и т.п.), необязательно", onchange: (ev) => { items[i].maxQty = +ev.target.value || 0; } }),
-      el("button", { onclick: () => { items.splice(i, 1); drawRows(); } }, "✕"))));
+      el("button", { onclick: () => { items.splice(i, 1); drawRows(); } }, "✕"))),
+      total > matchedIdx.length ? el("p", { class: "small muted", style: "margin-top:6px" }, `Показаны первые ${matchedIdx.length} из ${total} — уточните поиск.`) : null);
   };
   drawRows();
-  searchInput.addEventListener("input", (e) => { q = e.target.value; drawRows(); });
+  searchInput.addEventListener("input", (e) => { q = e.target.value; clearBtn.style.display = q ? "" : "none"; drawRows(); });
 
   const importArea = el("textarea", { rows: 4 });
   return [
-    bar("Остатки по запчастям", "/admin"),
+    bar("Запчасти", "/admin"),
     el("main", { class: "wrap" },
       error ? el("p", { class: "small", style: "color:var(--warn)" }, error) : null,
       updated ? el("p", { class: "small muted" }, "Обновлено: " + updated) : null,
       el("div", { class: "card" },
-        searchInput,
-        el("div", { style: "margin-top:10px" }, rowsBox),
-        el("button", { style: "margin-top:10px", onclick: () => { items.push({ sku: "", name: "", qty: 0, unit: "шт", price: 0, group: "", maxQty: 0 }); render(stockScreen({ items, updatedAt: data.updatedAt }, "")); } }, "+ строка"),
+        el("div", { class: "search-wrap" }, searchInput, clearBtn),
+        chipsBox,
+        el("div", { style: "margin-top:6px" }, rowsBox),
+        el("button", { style: "margin-top:10px", onclick: () => { items.push({ sku: "", name: "", qty: 0, unit: "шт", price: 0, group: groupFilter, maxQty: 0 }); render(stockScreen({ items, updatedAt: data.updatedAt }, "")); } }, "+ строка"),
         el("div", { class: "btn-row", style: "margin-top:12px" },
           el("button", { class: "btn-primary", onclick: () => saveStockItems(items) }, "Сохранить"))),
       el("div", { class: "card" },
