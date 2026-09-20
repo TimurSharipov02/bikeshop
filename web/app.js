@@ -983,12 +983,15 @@ function viewHome() {
   return [
     el("header", { class: "bar" }, el("h1", {}, "Veloterra"),
       el("a", { class: "sub", href: "#/profile" }, SESSION?.name || SESSION?.login || "")),
-    el("main", { class: "wrap" },
+    el("main", { class: "wrap", style: "min-height:calc(100dvh - 56px);display:flex;flex-direction:column" },
       el("h2", { class: "small muted", style: "margin:0 0 8px;font-weight:600;letter-spacing:.02em" }, "АКТИВНЫЕ ОБРАЩЕНИЯ"),
       active.length === 0
         ? emptyState("Активных обращений нет.")
         : rowsList(active.map((o) => orderRow(o, d, deleteOrderWithAlert))),
-      el("p", { class: "muted small", style: "margin-top:16px" },
+      // margin-top:auto — прижать к низу экрана (над кнопкой), а не сразу
+      // под списком: список может быть коротким, и раньше строка повисала
+      // высоко посреди пустого места.
+      el("p", { class: "muted small", style: "margin-top:auto;padding-top:16px" },
         (serverOK ? "Данные общие для всех устройств." : "Данные хранятся только в этом браузере.")
           + (BUILD_TIME ? ` · версия от ${BUILD_TIME}` : ""))),
     el("div", { class: "actions" }, el("div", { class: "actions-inner" },
