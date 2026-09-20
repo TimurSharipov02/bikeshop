@@ -2546,11 +2546,8 @@ function viewSetup() {
 
 function viewProfile() {
   return [
-    bar("Профиль", "/"),
+    bar(SESSION?.name || SESSION?.login || "Профиль", "/"),
     el("main", { class: "wrap" },
-      el("div", { class: "card" },
-        el("div", {}, SESSION?.name), el("div", { class: "small muted" }, SESSION?.login,
-          SESSION?.role === "admin" ? el("span", { class: "pill" }, "администратор") : el("span", { class: "pill" }, "мастер"))),
       el("div", { class: "rows", style: "margin-bottom:12px" },
         homeLink("Выполненные работы", "/profile/report", ICONS.report),
         SESSION?.role === "admin" ? homeLink("Админка", "/admin", ICONS.admin) : null),
