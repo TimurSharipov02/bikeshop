@@ -661,6 +661,7 @@ const routes = [
   [/^\/profile\/report$/, () => masterReportScreen(SESSION?.id, "/profile")],
   [/^\/admin$/, adminOnly(viewAdmin)],
   [/^\/admin\/masters$/, adminOnly(viewMasters)],
+  [/^\/admin\/clients$/, adminOnly(viewClients)],
   [/^\/admin\/reports$/, adminOnly(viewAllMastersReport)],
   [/^\/admin\/reports\/([^/]+)$/, adminOnly((m) => masterReportScreen(m[1], "/admin/reports"))],
   [/^\/admin\/stock$/, adminOnly(viewStock)],
@@ -774,6 +775,7 @@ const ICONS = {
   admin: ICON_SVG('<path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6l7-3Z"/>'),
   profile: ICON_SVG('<circle cx="12" cy="9" r="3"/><path d="M6 19c1.2-3 3.6-4.5 6-4.5s4.8 1.5 6 4.5"/>'),
   masters: ICON_SVG('<circle cx="9" cy="8" r="2.5"/><path d="M4 19c.8-2.6 2.6-4 5-4s4.2 1.4 5 4"/><circle cx="17" cy="9" r="2"/><path d="M15.5 12c1.9.4 3 1.6 3.5 3.2"/>'),
+  clients: ICON_SVG('<rect x="3.5" y="5.5" width="17" height="13" rx="2.5"/><circle cx="9" cy="11" r="2"/><path d="M6.3 16c.5-1.7 1.8-2.6 3.3-2.6"/><path d="M14 10h4M14 13.5h4"/>'),
   stock: ICON_SVG('<path d="M3.5 7.5 12 3l8.5 4.5V16L12 20.5 3.5 16V7.5Z"/><path d="M3.5 7.5 12 12l8.5-4.5M12 12v8.5"/>'),
   report: ICON_SVG('<path d="M4 20V10"/><path d="M11 20V4"/><path d="M18 20v-7"/>'),
 };
@@ -2966,6 +2968,7 @@ function viewAdmin() {
     el("main", { class: "wrap" },
       el("div", { class: "rows" },
         homeLink("Мастера", "/admin/masters", ICONS.masters),
+        homeLink("Клиенты", "/admin/clients", ICONS.clients),
         homeLink("Отчёты по мастерам", "/admin/reports", ICONS.report),
         homeLink("Остатки по запчастям", "/admin/stock", ICONS.stock))),
   ];
@@ -3117,6 +3120,138 @@ function mastersScreen(list, error) {
         ? el("p", { class: "muted", style: "margin-top:12px" }, "Мастеров пока нет.")
         : el("div", { class: "list", style: "margin-top:12px;gap:12px" }, rows)),
   ];
+}
+
+// ---------------------------- клиенты и их велосипеды -----------------------
+// Клиенты/велосипеды — часть общей DB (см. loadDB/editDB в начале файла),
+// отдельного API для них нет: та же фоновая синхронизация, что и у обращений,
+// поэтому экран строится сразу из loadDB(), без отдельной загрузки.
+
+function viewClients() {
+  const box = el("div", {});
+  let q = "";
+  const redraw = () => {
+    const ql = q.trim().toLowerCase();
+    const qDigits = phoneDigits(q);
+    let list = [...loadDB().clients];
+    if (ql || qDigits)
+      list = list.filter((c) => (c.name || "").toLowerCase().includes(ql) || (qDigits && phoneDigits(c.phone).includes(qDigits)));
+    list.sort((a, b) => (a.name || "").localeCompare(b.name || "", "ru"));
+    box.replaceChildren(
+      list.length === 0
+        ? emptyState(q ? "Ничего не найдено." : "Клиентов пока нет.", q ? EMPTY_ICON_SEARCH : undefined)
+        : el("div", { class: "list", style: "gap:10px" }, list.map((c) => clientCard(c, redraw))));
+  };
+  const searchInput = el("input", { type: "text", placeholder: "Поиск по имени или телефону" });
+  searchInput.addEventListener("input", (e) => { q = e.target.value; redraw(); });
+  redraw();
+  return [
+    bar("Клиенты", "/admin"),
+    el("main", { class: "wrap" },
+      el("div", { class: "card" }, searchInput),
+      el("div", { style: "margin-top:12px" }, box)),
+  ];
+}
+
+function clientCard(c, onChange) {
+  const bikes = loadDB().bikes.filter((b) => b.ownerPhone === c.phone);
+  return el("div", { class: "card card-link", style: "cursor:pointer", onclick: () => openClientEditor(c, onChange) },
+    el("div", {}, c.name || "Без имени"),
+    el("div", { class: "small muted" }, applyPhoneMask(c.phone)),
+    el("div", { class: "small muted", style: "margin-top:6px" },
+      bikes.length ? bikes.map((b) => el("div", {}, bikeLabel(b) || "велосипед (без марки)")) : "Велосипедов нет"));
+}
+
+// Форма правки клиента — телефон тоже редактируемый (используется как ключ
+// в bikes.ownerPhone/orders.clientPhone), поэтому при сохранении с новым
+// номером переносим ссылки во всех велосипедах и обращениях этого клиента,
+// а не заводим тихо второго клиента под старым номером.
+function openClientEditor(c, onChange) {
+  const state = {
+    name: c.name || "",
+    phone: c.phone,
+    bikes: loadDB().bikes.filter((b) => b.ownerPhone === c.phone).map((b) => ({ ...b })),
+  };
+  const removedBikeNumbers = [];
+  let sheet;
+
+  const nameInput = el("input", { type: "text", value: state.name, oninput: (e) => (state.name = e.target.value) });
+  const phoneInput = el("input", { type: "tel", value: applyPhoneMask(state.phone) });
+  attachPhoneMask(phoneInput, (v) => { state.phone = v; });
+
+  const errorEl = el("p", { class: "small", style: "color:var(--warn);display:none" });
+  const showError = (msg) => { errorEl.textContent = msg; errorEl.style.display = ""; };
+
+  const bikesBox = el("div", {});
+  const drawBikes = () => {
+    bikesBox.replaceChildren(
+      ...state.bikes.map((b, i) => el("div", { style: "display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap" },
+        el("input", { value: b.brand || "", placeholder: "Марка", style: "flex:1;min-width:100px", oninput: (e) => (b.brand = e.target.value) }),
+        el("input", { value: b.model || "", placeholder: "Модель", style: "flex:1;min-width:100px", oninput: (e) => (b.model = e.target.value) }),
+        el("button", { onclick: () => { if (b.number) removedBikeNumbers.push(b.number); state.bikes.splice(i, 1); drawBikes(); } }, "✕"))),
+      el("button", { style: "margin-top:8px", onclick: () => { state.bikes.push({ number: null, brand: "", model: "", ownerPhone: state.phone }); drawBikes(); } }, "+ велосипед"));
+  };
+  drawBikes();
+
+  const save = () => {
+    const name = state.name.trim();
+    if (!isValidPhone(state.phone)) return showError("Проверьте номер телефона");
+    const oldPhone = c.phone;
+    const dup = loadDB().clients.find((x) => x.phone !== oldPhone && phoneDigits(x.phone) === phoneDigits(state.phone));
+    if (dup) return showError(`Этот номер уже занят клиентом «${dup.name || dup.phone}»`);
+    const newPhone = state.phone;
+    const phoneChanged = phoneDigits(oldPhone) !== phoneDigits(newPhone);
+    editDB((d) => {
+      const client = d.clients.find((x) => x.phone === oldPhone);
+      if (client) { client.name = name; client.phone = newPhone; }
+      if (phoneChanged) {
+        for (const b of d.bikes) if (b.ownerPhone === oldPhone) b.ownerPhone = newPhone;
+        for (const o of d.orders) if (o.clientPhone === oldPhone) o.clientPhone = newPhone;
+      }
+      for (const num of removedBikeNumbers) {
+        const idx = d.bikes.findIndex((b) => b.number === num);
+        if (idx !== -1) d.bikes.splice(idx, 1);
+      }
+      for (const sb of state.bikes) {
+        if (sb.number) {
+          const existing = d.bikes.find((b) => b.number === sb.number);
+          if (existing) { existing.brand = sb.brand.trim(); existing.model = sb.model.trim(); existing.ownerPhone = newPhone; }
+        } else {
+          const number = nextBikeKey(d, newPhone);
+          d.bikes.push({ number, brand: sb.brand.trim(), model: sb.model.trim(), ownerPhone: newPhone });
+          sb.number = number;
+        }
+      }
+    });
+    toast("Сохранено");
+    sheet.close();
+    onChange();
+  };
+
+  const deleteClient = () => {
+    const usedInOrders = loadDB().orders.some((o) => o.clientPhone === c.phone);
+    const msg = usedInOrders
+      ? `Удалить клиента «${state.name || c.phone}»? У него есть обращения — в них останется только номер телефона, без имени и марки велосипеда.`
+      : `Удалить клиента «${state.name || c.phone}»?`;
+    if (!confirm(msg)) return;
+    editDB((d) => {
+      d.clients = d.clients.filter((x) => x.phone !== c.phone);
+      d.bikes = d.bikes.filter((b) => b.ownerPhone !== c.phone);
+    });
+    toast("Клиент удалён");
+    sheet.close();
+    onChange();
+  };
+
+  sheet = openSheet(c.name || "Клиент", el("div", {},
+    el("label", {}, "Имя"), nameInput,
+    el("label", { style: "margin-top:10px" }, "Телефон"), phoneInput,
+    el("h2", { style: "margin-top:16px" }, "Велосипеды"),
+    bikesBox,
+    errorEl,
+    el("div", { class: "btn-row", style: "margin-top:16px" },
+      el("button", { class: "btn-primary", onclick: save }, "Сохранить")),
+    el("button", { class: "btn-warn", style: "width:100%;margin-top:10px", onclick: deleteClient }, "Удалить клиента")));
 }
 
 // ---------------------------- остатки по запчастям ---------------------------
