@@ -3386,10 +3386,15 @@ function stockScreen(data, error) {
 
   const qtyStyle = (qty) => {
     const lvl = stockLevel(qty);
-    if (lvl === "zero") return "width:70px;text-align:right;border-color:var(--warn);background:var(--warn-weak);color:var(--warn)";
-    if (lvl === "low") return "width:70px;text-align:right;border-color:var(--orange);background:var(--orange-weak);color:var(--orange)";
-    return "width:70px;text-align:right";
+    if (lvl === "zero") return "text-align:right;border-color:var(--warn);background:var(--warn-weak);color:var(--warn)";
+    if (lvl === "low") return "text-align:right;border-color:var(--orange);background:var(--orange-weak);color:var(--orange)";
+    return "text-align:right";
   };
+  // Мелкая подпись над полем — в один ряд на узком экране 6-7 полей не
+  // умещались, подписи-плейсхолдеры пропадали после ввода и значение
+  // переставало быть понятно, что это вообще такое.
+  const labeled = (label, node, flexStyle) => el("div", { style: flexStyle || "flex:1;min-width:70px" },
+    el("div", { class: "small muted", style: "margin-bottom:3px" }, label), node);
 
   const rowsBox = el("div", { class: "list" });
   const RESULTS_CAP = 150;
@@ -3411,17 +3416,32 @@ function stockScreen(data, error) {
     const total = matchedIdx.length;
     matchedIdx = matchedIdx.slice(0, RESULTS_CAP);
     if (!matchedIdx.length) { rowsBox.replaceChildren(emptyState("Ничего не найдено.", EMPTY_ICON_SEARCH)); return; }
-    rowsBox.replaceChildren(...matchedIdx.map(({ it, i }) => el("div", { class: "price-row", style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" },
-      el("input", { value: it.sku, style: "width:90px", placeholder: "артикул", onchange: (ev) => { items[i].sku = ev.target.value; } }),
-      el("input", { value: it.name, style: "flex:1;min-width:120px", placeholder: "название", onchange: (ev) => { items[i].name = ev.target.value; } }),
-      el("input", { type: "number", value: it.qty, style: qtyStyle(it.qty), placeholder: "остаток", onchange: (ev) => { items[i].qty = +ev.target.value || 0; drawRows(); } }),
-      el("span", { class: "small muted", style: "width:60px;flex:0 0 auto" }, it.unit || "штук"),
-      el("input", { type: "number", value: it.price || 0, style: "width:80px;text-align:right", placeholder: "цена", onchange: (ev) => { items[i].price = +ev.target.value || 0; } }),
-      el("select", { style: "width:auto", onchange: (ev) => { items[i].group = ev.target.value; } },
-        el("option", { value: "", selected: !it.group }, "без узла"),
-        STOCK_GROUPS.map((g) => el("option", { value: g.id, selected: it.group === g.id }, g.title))),
-      el("input", { type: "number", value: it.maxQty || "", style: "width:56px;text-align:right", placeholder: "макс", title: "Потолок количества за раз (спицы — 64, цепь — 1 и т.п.), необязательно", onchange: (ev) => { items[i].maxQty = +ev.target.value || 0; } }),
-      el("button", { onclick: () => { items.splice(i, 1); drawRows(); } }, "✕"))),
+    rowsBox.replaceChildren(...matchedIdx.map(({ it, i }) => el("div", { class: "price-row" },
+      // Название — во всю ширину, крупнее и не обрезается: раньше зажатое
+      // в общей строке с ещё 6 полями, оно резалось многоточием, а вместе
+      // со спиннерами у числовых полей строка вообще переставала читаться.
+      el("div", { style: "display:flex;gap:8px;align-items:flex-start" },
+        el("input", { value: it.name, style: "flex:1;min-width:0;font-weight:600", placeholder: "название", onchange: (ev) => { items[i].name = ev.target.value; } }),
+        el("button", { style: iconBtnStyle, onclick: () => { items.splice(i, 1); drawRows(); } }, "✕")),
+      el("div", { style: "display:flex;gap:8px;margin-top:8px;flex-wrap:wrap" },
+        labeled("Артикул", el("input", { value: it.sku, placeholder: "—", onchange: (ev) => { items[i].sku = ev.target.value; } }), "flex:1;min-width:90px"),
+        labeled("Узел", el("select", { onchange: (ev) => { items[i].group = ev.target.value; } },
+          el("option", { value: "", selected: !it.group }, "без узла"),
+          STOCK_GROUPS.map((g) => el("option", { value: g.id, selected: it.group === g.id }, g.title))), "flex:1;min-width:110px")),
+      el("div", { style: "display:flex;gap:8px;margin-top:8px;flex-wrap:wrap" },
+        // Красим строго то самое поле напрямую, а не через полный drawRows():
+        // замена всего списка изнутри onchange/blur этого же инпута иногда
+        // сталкивается с обработкой blur самим браузером (DOMException
+        // «node to be removed is no longer a child»).
+        labeled(`Остаток, ${it.unit || "штук"}`, el("input", {
+          type: "number", value: it.qty, style: qtyStyle(it.qty),
+          onchange: (ev) => { items[i].qty = +ev.target.value || 0; ev.target.setAttribute("style", qtyStyle(items[i].qty)); },
+        }), "flex:1;min-width:90px"),
+        labeled("Цена, ₽", el("input", { type: "number", value: it.price || 0, style: "text-align:right", onchange: (ev) => { items[i].price = +ev.target.value || 0; } }), "flex:1;min-width:80px"),
+        labeled("Макс. за раз", el("input", {
+          type: "number", value: it.maxQty || "", placeholder: "—", style: "text-align:right",
+          title: "Потолок количества за раз (спицы — 64, цепь — 1 и т.п.), необязательно", onchange: (ev) => { items[i].maxQty = +ev.target.value || 0; },
+        }), "flex:1;min-width:80px")))),
       total > matchedIdx.length ? el("p", { class: "small muted", style: "margin-top:6px" }, `Показаны первые ${matchedIdx.length} из ${total} — уточните поиск.`) : null);
   };
   drawRows();
