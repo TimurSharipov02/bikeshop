@@ -351,6 +351,42 @@ async function deleteOrderApi(number) {
     return true;
   } catch { return false; }
 }
+// Тот же принцип — клиента/велосипед тоже нельзя просто убрать локально и
+// дождаться обычного пуша: mergeDB на сервере видит объединение и вернёт
+// удалённую запись обратно на следующем же слиянии.
+async function deleteClientApi(phone) {
+  try {
+    const r = await fetch("/api/db", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ clientPhone: phone }) });
+    if (!r.ok) return false;
+    serverOK = true;
+    adopt(await r.json());
+    return true;
+  } catch { return false; }
+}
+async function deleteBikeApi(number) {
+  try {
+    const r = await fetch("/api/db", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ bikeNumber: number }) });
+    if (!r.ok) return false;
+    serverOK = true;
+    adopt(await r.json());
+    return true;
+  } catch { return false; }
+}
+// Как editDB, но без 250мс-дебаунса и с ожиданием ответа сервера — нужно
+// там, где следующий шаг (например, DELETE вдогонку) должен видеть уже
+// отправленные правки, а не гнаться с ними наперегонки за debounce-таймером
+// обычного pushToServer().
+async function pushDbNow(fn) {
+  fn(DB);
+  writeLocal();
+  try {
+    const r = await fetch("/api/db", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(DB) });
+    if (!r.ok) return false;
+    serverOK = true; dirty = false;
+    adopt(await r.json());
+    return true;
+  } catch { return false; }
+}
 
 // Переопределения работ каталога — правит администратор (общие для всех,
 // хранятся на сервере), см. /api/overrides. Собраны в объект один раз при
@@ -3193,7 +3229,7 @@ function openClientEditor(c, onChange) {
   };
   drawBikes();
 
-  const save = () => {
+  const save = async () => {
     const name = state.name.trim();
     if (!isValidPhone(state.phone)) return showError("Проверьте номер телефона");
     const oldPhone = c.phone;
@@ -3201,16 +3237,14 @@ function openClientEditor(c, onChange) {
     if (dup) return showError(`Этот номер уже занят клиентом «${dup.name || dup.phone}»`);
     const newPhone = state.phone;
     const phoneChanged = phoneDigits(oldPhone) !== phoneDigits(newPhone);
-    editDB((d) => {
+    // Добавления/правки (новое имя, перенос владельца, новые велосипеды) —
+    // обычным пушем, слияние на сервере их прекрасно подхватывает по ключу.
+    const ok = await pushDbNow((d) => {
       const client = d.clients.find((x) => x.phone === oldPhone);
       if (client) { client.name = name; client.phone = newPhone; }
       if (phoneChanged) {
         for (const b of d.bikes) if (b.ownerPhone === oldPhone) b.ownerPhone = newPhone;
         for (const o of d.orders) if (o.clientPhone === oldPhone) o.clientPhone = newPhone;
-      }
-      for (const num of removedBikeNumbers) {
-        const idx = d.bikes.findIndex((b) => b.number === num);
-        if (idx !== -1) d.bikes.splice(idx, 1);
       }
       for (const sb of state.bikes) {
         if (sb.number) {
@@ -3223,21 +3257,26 @@ function openClientEditor(c, onChange) {
         }
       }
     });
+    if (!ok) return showError("Нет соединения — попробуйте ещё раз");
+    // А вот то, что должно пропасть (убранные велосипеды, старая запись
+    // клиента под прежним номером при смене телефона) — только явным DELETE:
+    // слияние само по себе ничего не удаляет, пропавшее из пуша вернулось бы
+    // на сервере обратно при следующей же синхронизации.
+    for (const num of removedBikeNumbers) await deleteBikeApi(num);
+    if (phoneChanged) await deleteClientApi(oldPhone);
     toast("Сохранено");
     sheet.close();
     onChange();
   };
 
-  const deleteClient = () => {
+  const deleteClient = async () => {
     const usedInOrders = loadDB().orders.some((o) => o.clientPhone === c.phone);
     const msg = usedInOrders
       ? `Удалить клиента «${state.name || c.phone}»? У него есть обращения — в них останется только номер телефона, без имени и марки велосипеда.`
       : `Удалить клиента «${state.name || c.phone}»?`;
     if (!confirm(msg)) return;
-    editDB((d) => {
-      d.clients = d.clients.filter((x) => x.phone !== c.phone);
-      d.bikes = d.bikes.filter((b) => b.ownerPhone !== c.phone);
-    });
+    const ok = await deleteClientApi(c.phone);
+    if (!ok) return alert("Не удалось удалить — нет соединения");
     toast("Клиент удалён");
     sheet.close();
     onChange();

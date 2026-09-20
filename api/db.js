@@ -57,14 +57,25 @@ export default async function handler(req, res) {
       return res.status(200).json(merged);
     }
     if (req.method === "DELETE") {
-      // Удаление обращения — отдельно от PUT-слияния выше: слияние всегда
-      // берёт объединение обеих сторон, так что пропавшее в несущей заказ
-      // стороне не удалилось бы на сервере. Тут просто убираем по номеру.
+      // Удаление — отдельно от PUT-слияния выше: слияние всегда берёт
+      // объединение обеих сторон, так что пропавшее в несущей записи
+      // стороне не удалилось бы на сервере (вернулось бы обратно при
+      // следующем же merge-пуше). Тут просто убираем по ключу.
       const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
-      const number = String(body.number || "").trim();
-      if (!number) return res.status(400).json({ error: "не указан номер обращения" });
       const current = (await r.get(KEY)) || empty();
-      current.orders = (current.orders || []).filter((o) => o.number !== number);
+      const number = String(body.number || "").trim();
+      const clientPhone = String(body.clientPhone || "").trim();
+      const bikeNumber = String(body.bikeNumber || "").trim();
+      if (number) {
+        current.orders = (current.orders || []).filter((o) => o.number !== number);
+      } else if (clientPhone) {
+        current.clients = (current.clients || []).filter((c) => c.phone !== clientPhone);
+        current.bikes = (current.bikes || []).filter((b) => b.ownerPhone !== clientPhone);
+      } else if (bikeNumber) {
+        current.bikes = (current.bikes || []).filter((b) => b.number !== bikeNumber);
+      } else {
+        return res.status(400).json({ error: "не указано, что удалить" });
+      }
       await r.set(KEY, current);
       return res.status(200).json(current);
     }
