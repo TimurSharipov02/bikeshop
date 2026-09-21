@@ -735,6 +735,35 @@ function render(nodes, { keepScroll } = {}) {
 }
 window.addEventListener("hashchange", () => { router(); if (SESSION) syncFromServer(); });
 
+// Полноэкранные под-экраны (диагностика, техпроцедура, подбор работы) внутри
+// обращения не меняют #хеш при входе — рисуются прямо поверх текущего экрана
+// через render(). Явная кнопка «‹» в их шапке об этом знает и просто зовёт
+// refresh(), а вот системный жест «смахнуть назад» (и аппаратная кнопка
+// «назад» на Android) смотрит на историю браузера — а там для этого
+// под-экрана нет отдельной записи, так что жест уводит не на один шаг назад
+// (к обращению), а мимо него — туда, где браузер был ДО открытия обращения.
+// Чиним тем же приёмом, что и модалки в обычных SPA: при входе добавляем
+// пустую запись в историю (тот же #хеш, без изменений — используем это,
+// чтобы не задеть обычный hashchange/router()) и слушаем popstate — оно
+// срабатывает что от жеста, что от аппаратной кнопки, что от программного
+// history.back(). Явную кнопку «‹» тоже переводим на history.back(), чтобы
+// оба пути шли одной и той же дорогой и не расходились между собой.
+let subScreenExit = null;
+function enterSubScreen(onExit) {
+  inSubScreen = true;
+  subScreenExit = onExit;
+  history.pushState({ sub: true }, "");
+}
+function leaveSubScreen() {
+  history.back();
+}
+window.addEventListener("popstate", () => {
+  const fn = subScreenExit;
+  subScreenExit = null;
+  inSubScreen = false;
+  if (fn) fn();
+});
+
 // На iOS фикс.-позиционированные панели (.actions — нижняя строка поиска,
 // нижние кнопки) остаются привязаны к низу layout-viewport, который клавиатура
 // не двигает — поэтому панель молча уезжает под клавиатуру, а не поднимается
@@ -1310,7 +1339,7 @@ function viewOrder(number) {
   // -- запуск диагностики / процедуры внутри обращения --
   function subBar(code) {
     return el("header", { class: "bar" },
-      el("button", { class: "back", style: "border:0;background:none", onclick: refresh }, "‹"),
+      el("button", { class: "back", style: "border:0;background:none", onclick: leaveSubScreen }, "‹"),
       el("h1", {}, bike ? bikeLabel(bike) : client?.name || "Обращение"), el("span", { class: "sub" }, code));
   }
   // Новая работа, добавленная тут (не из исходной сметы), попадает в наряд
@@ -1318,9 +1347,9 @@ function viewOrder(number) {
   // прямо в карточке «Ждёт согласования» на экране ремонта (см.
   // pendingAgreementRow), отдельный экран после диагностики не нужен.
   function openDiagnostics() {
-    inSubScreen = true;
     const host = el("div", {});
     render([subBar("Диагностика"), host]);
+    enterSubScreen(refresh);
     mountDiagnostics(host, {
       getItems: () => order.items,
       onCheck: (fa) => addItem(fa),
@@ -1328,7 +1357,7 @@ function viewOrder(number) {
       onEditItem: (code, patch) => editItemQuiet(code, patch),
       onDone: (notes) => {
         if (notes.length) editOrder(number, (o) => { o.diagnosticNotes = [...(o.diagnosticNotes || []), ...notes]; });
-        refresh();
+        leaveSubScreen();
       },
       request: order.request || "",
       onRequest: (v) => editOrder(number, (o) => (o.request = v)),
@@ -1336,14 +1365,18 @@ function viewOrder(number) {
     });
   }
   function openRunner(code) {
-    inSubScreen = true;
     const host = el("div", {});
     render([subBar(cat.byCode.get(code)?.name || code), host]);
-    mountRunner(host, cat.byCode.get(code), { onDone: refresh });
+    enterSubScreen(refresh);
+    mountRunner(host, cat.byCode.get(code), { onDone: leaveSubScreen });
   }
+  // onPick — оборачиваем, а не передаём как есть: выбор работы должен так же
+  // вернуть на экран обращения, как и явная «‹» — иначе после подбора работы
+  // в истории остаётся неизрасходованная запись под этот под-экран, и один
+  // будущий свайп/тап «назад» уйдёт в никуда, ничего не изменив на экране.
   function openPicker(onPick) {
-    inSubScreen = true;
-    openWorkPicker({ existingItems: order.items, bikeKind: bike?.kind, onBack: refresh, onPick });
+    openWorkPicker({ existingItems: order.items, bikeKind: bike?.kind, onBack: leaveSubScreen, onPick: (p) => { onPick(p); leaveSubScreen(); } });
+    enterSubScreen(refresh);
   }
 
   const range = orderRange(order);
