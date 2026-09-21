@@ -27,7 +27,10 @@ const BUILD_TIME = RAW.generatedAt
 // Мойка не диагностируется, но пусть тоже группируется по-человечески, а не в «Прочее».
 const diagBlocks = RAW.diagnosticBlocks || [];
 const training = RAW.training || {};
-const BLOCK_TITLES = [...diagBlocks.map((b) => b.title), "Мойка и консервация"];
+// Разовые услуги — не диагностический блок (нет экрана Норма/Проблема), а
+// отдельная группа для работ вне узлов (см. mountDiagnostics/openWorkPicker).
+const MISC_GROUP = "MISC";
+const BLOCK_TITLES = [...diagBlocks.map((b) => b.title), "Мойка и консервация", "Разовые услуги"];
 const blockByPrefix = { WSH: "Мойка и консервация" };
 for (const b of diagBlocks) for (const pre of b.codes || []) blockByPrefix[pre] = b.title;
 const blockOf = (code) => blockByPrefix[String(code || "").split("-")[0]] || "Прочее";
@@ -39,7 +42,9 @@ const blockIdOf = (code) => blockIdByPrefix[String(code || "").split("-")[0]] ||
 // Свои неисправности (catalog/repairs) привязаны к узлу напрямую через group
 // (id блока), а не через префикс кода (у них у всех один и тот же CF-N) —
 // их так по коду не сгруппировать, нужно смотреть group на самом пункте.
-const blockTitleById = Object.fromEntries([...diagBlocks, { id: "WSH", title: "Мойка и консервация" }].map((b) => [b.id, b.title]));
+const blockTitleById = Object.fromEntries(
+  [...diagBlocks, { id: "WSH", title: "Мойка и консервация" }, { id: MISC_GROUP, title: "Разовые услуги" }].map((b) => [b.id, b.title])
+);
 // it.group — на самом пункте наряда (проставляется при добавлении, см.
 // makeCustomItem); но у пунктов, добавленных ДО того как это поле завели,
 // его нет — тогда для своих неисправностей (CF-id) смотрим узел в текущем
@@ -649,6 +654,44 @@ function openWorkPicker({ existingItems, bikeKind, onBack, onPick }) {
     const host = el("main", { class: "wrap" });
     const q = el("input", { type: "text", placeholder: "поиск по коду или названию" });
     const listBox = el("div", { style: "margin-top:10px" });
+    // Разовая услуга «вне блоков» — быстрое создание прямо тут, без захода в
+    // диагностику: заводим неисправность с group=MISC (та же, что и на
+    // диагностике, см. mountDiagnostics) и сразу отдаём её в наряд.
+    let creating = false;
+    const draftFa = { label: "", price: 0, minutes: 0, multiple: false };
+    const createBox = el("div", { style: "margin-top:10px" });
+    const drawCreate = () => {
+      if (!creating) return createBox.replaceChildren();
+      createBox.replaceChildren(el("div", { class: "card", style: "background:var(--bg)" },
+        el("label", {}, "Название разовой услуги"),
+        el("input", { placeholder: "напр. Мойка велосипеда", value: draftFa.label, oninput: (e) => (draftFa.label = e.target.value) }),
+        el("div", { style: "display:flex;flex-wrap:wrap;gap:8px;margin-top:8px" },
+          el("div", { style: "flex:1;min-width:120px" }, el("label", {}, "Цена, ₽"), el("input", { type: "number", oninput: (e) => (draftFa.price = +e.target.value || 0) })),
+          el("div", { style: "flex:1;min-width:120px" }, el("label", {}, "Минуты"), el("input", { type: "number", oninput: (e) => (draftFa.minutes = +e.target.value || 0) }))),
+        el("label", { class: "opt", style: "margin-top:8px" },
+          el("input", { type: "checkbox", onchange: (e) => (draftFa.multiple = e.target.checked) }),
+          el("span", { class: "small" }, "можно несколько раз на одном велосипеде")),
+        el("div", { class: "btn-row", style: "margin-top:10px" },
+          el("button", { class: "btn-primary", onclick: async () => {
+            if (!draftFa.label.trim()) return alert("Укажите название");
+            const r = await fetch("/api/repairs", {
+              method: "POST", headers: { "content-type": "application/json" },
+              body: JSON.stringify({ group: MISC_GROUP, label: draftFa.label.trim(), price: draftFa.price, minutes: draftFa.minutes, complications: [], multiple: draftFa.multiple }),
+            });
+            const j = await r.json().catch(() => ({}));
+            if (!r.ok) return alert(j.error || "ошибка");
+            repairsCache = null;
+            const it = j.item;
+            onPick({ code: `CF-${it.id}`, name: it.label, label: it.label, custom: true, id: it.id, group: it.group, price: it.price, minutes: it.minutes, complications: it.complications, multiple: it.multiple });
+          } }, "Создать и добавить"),
+          el("button", { onclick: () => { creating = false; drawCreate(); } }, "Отмена"))));
+    };
+    const createToggle = SESSION?.role === "admin"
+      ? el("button", {
+          class: "small", style: "margin-top:10px;border:0;background:none;color:var(--muted);text-decoration:underline;padding:0",
+          onclick: () => { creating = !creating; drawCreate(); },
+        }, "+ разовая услуга")
+      : null;
     const draw = () => {
       const ql = q.value.trim().toLowerCase();
       const rows = pool
@@ -668,7 +711,7 @@ function openWorkPicker({ existingItems, bikeKind, onBack, onPick }) {
       listBox.replaceChildren(...sections);
     };
     q.addEventListener("input", draw);
-    host.append(q, listBox);
+    host.append(...[q, createToggle, createBox, listBox].filter(Boolean));
     draw();
     render([header(), host]);
   });
@@ -2525,6 +2568,55 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
       wrap.append(card);
     }
 
+    // Разовые услуги — работы вне узлов (не про поломку конкретной детали, а
+    // отдельная услуга целиком: см. CLAUDE.md/переписку про учёт разовых
+    // работ). Раздел всегда открыт, без Норма/Проблема — просто список того,
+    // что завёл админ, мастер отмечает нужное и оно сразу попадает в наряд.
+    {
+      const miscRepairs = repairs.filter((r) => r.group === MISC_GROUP);
+      if (miscRepairs.length || SESSION?.role === "admin") {
+        const miscCard = el("div", { class: "card" }, el("h2", { style: "margin:0 0 8px" }, "Разовые услуги"));
+        if (miscRepairs.length) {
+          const items = getItems();
+          const rowNodes = miscRepairs.map((r) => {
+            const f = { label: r.label, code: `CF-${r.id}`, custom: true, id: r.id, price: r.price, minutes: r.minutes, complications: r.complications, multiple: r.multiple };
+            const checked = items.some((it) => it.code === f.code);
+            const editingThis = editOverrideFor.has(r.id);
+            const rowContent = el("div", { style: "display:flex;align-items:center" },
+              el("label", { class: "row opt", style: "flex:1" },
+                el("input", { type: "checkbox", checked,
+                  onchange: () => { if (checked) onUncheck(f); else onCheck(f); draw(); } }),
+                el("span", {}, f.label, el("span", { class: "pill" }, rangeText(customFaultRange(f))))));
+            const isAdmin = SESSION?.role === "admin";
+            return el("div", {},
+              isAdmin
+                ? swipeActions(rowContent, [
+                    { label: ICON_EDIT, onClick: () => { editingThis ? editOverrideFor.delete(r.id) : editOverrideFor.add(r.id); draw(); } },
+                    { label: ICON_CLOSE, className: "warn", onClick: async () => {
+                        if (!confirm(`Убрать «${r.label}» из списка совсем?`)) return;
+                        if (checked) onUncheck(f);
+                        await fetch("/api/repairs", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: r.id }) });
+                        await reloadRepairs();
+                        draw();
+                      } },
+                  ])
+                : rowContent,
+              editingThis ? customFaultEditForm(r, () => { editOverrideFor.delete(r.id); draw(); }) : null);
+          });
+          miscCard.append(rowsList(rowNodes, true));
+        }
+        if (SESSION?.role === "admin") {
+          miscCard.append(addFormOpenFor.has(MISC_GROUP)
+            ? customFaultForm(MISC_GROUP)
+            : el("button", {
+                class: "small", style: "margin-top:8px;border:0;background:none;color:var(--muted);text-decoration:underline;padding:0",
+                onclick: () => { addFormOpenFor.add(MISC_GROUP); draw(); },
+              }, "+ добавить разовую услугу"));
+        }
+        wrap.append(miscCard);
+      }
+    }
+
     host.replaceChildren(wrap,
       el("div", { class: "actions" }, el("div", { class: "actions-inner" },
         el("button", { class: "btn-primary", onclick: finish }, "Готово"))));
@@ -3500,7 +3592,7 @@ function stockScreen(data, error) {
           el("button", { class: "btn-primary", onclick: () => saveStockItems(items) }, "Сохранить"))),
       el("div", { class: "card" },
         el("h2", {}, "Импорт списком"),
-        el("p", { class: "small muted" }, "Пока без прямой связи с 1С — вставьте выгрузку сюда, каждая позиция с новой строки: артикул;название;остаток;единица;цена;узел;макс (узел — WHL/BRK/BB/STR/FRM/DRV/WSH, макс — потолок количества за раз, оба поля можно оставить пустыми). Полностью заменит список выше."),
+        el("p", { class: "small muted" }, "Пока без прямой связи с 1С — вставьте выгрузку сюда, каждая позиция с новой строки: артикул;название;остаток;единица;цена;узел;макс (узел — WHL/BRK/BB/STR/FRM/DRV/TCH/WSH, макс — потолок количества за раз, оба поля можно оставить пустыми). Полностью заменит список выше."),
         importArea,
         el("div", { class: "btn-row", style: "margin-top:10px" },
           el("button", {
