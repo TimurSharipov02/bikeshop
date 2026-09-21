@@ -208,6 +208,11 @@ const migrateOrders = (orders) =>
     // показывает тот же список работ и предлагает «Выдать клиенту», как
     // только всё отмечено готовым; отдельная стадия-подтверждение не нужна.
     if (next.status === "готово к выдаче") next = { ...next, status: "взята в работу" };
+    // «оценка» убрали как отдельный шаг — её функциональность (количество,
+    // усложнения, итог) переехала в диагностику на стадии «приём»; раз
+    // заявка уже дошла до отдельного экрана оценки, дальше остаётся только
+    // один шаг — согласование.
+    if (next.status === "оценка") next = { ...next, status: "согласование" };
     let items = fixDoneDifficulties(next.items);
     items = fixPartsShape(items);
     items = fixDoneBy(items);
@@ -738,7 +743,7 @@ function openWorkPicker({ existingItems, bikeKind, onBack, onPick }) {
 }
 
 const STATUS_TAG_CLASS = {
-  "приём": "tag-new", "оценка": "tag-quote", "согласование": "tag-approve",
+  "приём": "tag-new", "согласование": "tag-approve",
   "взята в работу": "tag-progress", "выдан": "tag-done",
 };
 const statusTag = (status) => el("span", { class: "tag " + (STATUS_TAG_CLASS[status] || "") }, status);
@@ -1378,11 +1383,18 @@ function viewOrder(number) {
   // не должна дёргать страницу вверх — только переход между стадиями наряда.
   const refresh = () => render(viewOrder(number), { keepScroll: true });
 
-  function addItem(fa, notes = "") {
+  // agreed — работы, отмеченные на приёме (диагностика или «+ работа» на
+  // этой же стадии), сразу считаются согласованными: количество и
+  // усложнения уже настраиваются тут же, отдельного шага-подтверждения для
+  // них не нужно. Позиции, добавленные позже («+ доп. работа» в ремонте),
+  // остаются agreed:false и ждут подтверждения через «Ждёт согласования».
+  function addItem(fa, notes = "", agreed = false) {
     editOrder(number, (o) => {
       const ex = o.items.find((i) => i.code === fa.code);
       if (ex) { if (notes) ex.notes = ex.notes ? `${ex.notes}; ${notes}` : notes; return; }
-      o.items.push(fa.custom ? makeCustomItem(fa, notes) : makeItem(fa.code, notes));
+      const item = fa.custom ? makeCustomItem(fa, notes) : makeItem(fa.code, notes);
+      if (agreed) item.agreed = true;
+      o.items.push(item);
     });
   }
   // Тихие версии (без refresh()) — для использования внутри диагностики, где
@@ -1430,16 +1442,18 @@ function viewOrder(number) {
       el("button", { class: "back", style: "border:0;background:none", onclick: leaveSubScreen }, "‹"),
       el("h1", {}, bike ? bikeLabel(bike) : client?.name || "Обращение"), el("span", { class: "sub" }, code));
   }
-  // Новая работа, добавленная тут (не из исходной сметы), попадает в наряд
-  // как agreed:false — уточнить усложнения/запчасти и согласовать можно
-  // прямо в карточке «Ждёт согласования» на экране ремонта (см.
-  // pendingAgreementRow), отдельный экран после диагностики не нужен.
+  // Работа, отмеченная тут (на приёме), попадает в наряд сразу agreed:true —
+  // количество и усложнения настраиваются прямо на диагностике (см. §getItems
+  // ниже), отдельный экран-подтверждение после неё не нужен. Это отличается
+  // от «+ доп. работы» на экране ремонта ниже: там позиция добавляется уже
+  // после того, как наряд согласован с клиентом, и ждёт отдельного явного
+  // подтверждения через карточку «Ждёт согласования» (см. pendingAgreementRow).
   function openDiagnostics() {
     const host = el("div", {});
     render([subBar("Диагностика"), host]);
     enterSubScreen(refresh);
     mountDiagnostics(host, {
-      onCheck: (fa) => addItem(fa),
+      onCheck: (fa) => addItem(fa, "", true),
       onUncheck: (fa) => removeItemQuiet(fa.code),
       onDone: (notes) => {
         if (notes.length) editOrder(number, (o) => { o.diagnosticNotes = [...(o.diagnosticNotes || []), ...notes]; });
@@ -1448,6 +1462,17 @@ function viewOrder(number) {
       request: order.request || "",
       onRequest: (v) => editOrder(number, (o) => (o.request = v)),
       onlyBlocks: bike?.kind === "колесо" ? ["WHL"] : null,
+      getItems: () => (loadDB().orders.find((o) => o.number === number)?.items) || order.items,
+      onItemQty: (code, qty) => editItemQuiet(code, { qty }),
+      onDiffSet: (code, di, st) => editOrder(number, (o) => {
+        const x = o.items.find((i) => i.code === code);
+        if (x?.difficulties?.[di]) x.difficulties[di].state = st;
+      }),
+      onDiffQty: (code, di, qty) => editOrder(number, (o) => {
+        const x = o.items.find((i) => i.code === code);
+        if (x?.difficulties?.[di]) x.difficulties[di].qty = qty;
+      }),
+      showTotal: true,
     });
   }
   function openRunner(code) {
@@ -1514,35 +1539,10 @@ function viewOrder(number) {
     main.append(stage("Диагностика и список работ",
       el("div", { class: "btn-row" },
         el("button", { class: "btn-primary", onclick: () => openDiagnostics() }, "Пройти диагностику"),
-        el("button", { onclick: () => openPicker((pick) => { addItem(pick); refresh(); }) }, "+ работа")),
+        el("button", { onclick: () => openPicker((pick) => { addItem(pick, "", true); refresh(); }) }, "+ работа")),
       itemList(order, false, { onRemove: removeItem, onSave: saveItemEdit, refresh }), order.items.length
-        ? el("button", { class: "btn-primary", style: "width:100%;margin-top:12px", onclick: () => setStatus("оценка") }, "К оценке стоимости")
+        ? el("button", { class: "btn-primary", style: "width:100%;margin-top:12px", onclick: () => setStatus("согласование") }, "К согласованию")
         : null));
-  }
-
-  if (order.status === "оценка") {
-    const body = el("div", {});
-    order.items.forEach((it) => body.append(assessItem(it,
-      (di, st) => {
-        editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x?.difficulties?.[di]) x.difficulties[di].state = st; });
-        refresh();
-      },
-      (val) => {
-        editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) x.partsPrice = val; });
-        refresh();
-      },
-      (qty) => {
-        editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) x.qty = qty; });
-        refresh();
-      })));
-    body.append(
-      el("div", { class: "card card-flush" },
-        el("span", { class: "muted small" }, "Итого клиенту"),
-        el("div", { class: "price-range" }, rangeText(orderRangeAll(order))),
-        minutesText(orderMinutes(order, false)) ? el("div", { class: "small muted", style: "margin-top:4px" }, minutesText(orderMinutes(order, false))) : null),
-      el("button", { onclick: () => openPicker((pick) => { addItem(pick); refresh(); }) }, "+ работа"),
-      el("button", { class: "btn-primary", style: "width:100%;margin-top:12px", onclick: () => setStatus("согласование") }, "К согласованию"));
-    main.append(stage("Оценка трудностей и стоимости", body));
   }
 
   if (order.status === "согласование") {
@@ -2127,19 +2127,16 @@ function difficultyList(difficulties, onSet, onQty, fact) {
   return box;
 }
 
-function assessItem(it, onSet, onParts, onQty) {
+// Карточка работы наряда прямо на диагностике — количество и усложнения
+// настраиваются тут же, без отдельного экрана «оценка» (его больше нет).
+function diagWorkCard(it, { onQty, onDiffSet, onDiffQty }) {
   const cost = "работа " + money(it.workPrice || 0);
   const box = el("div", { class: "assess" },
     el("div", { style: "display:flex;flex-wrap:wrap;align-items:center;gap:8px" },
       el("div", { style: "flex:1" }, el("b", {}, it.name), " ", el("span", { class: "small muted" }, "· " + cost)),
       it.multiple && onQty ? qtyStepper(it.qty, onQty) : null));
-  box.append(el("div", { style: "display:flex;gap:8px;align-items:center;margin-top:6px" },
-    el("span", { class: "small muted", style: "flex:1" }, "Запчасти (детали) в счёт"),
-    el("input", { type: "number", value: it.partsPrice || 0, style: "width:96px;text-align:right",
-      onchange: (e) => onParts(+e.target.value || 0) }),
-    el("span", { class: "muted small" }, "₽")));
   if ((it.difficulties || []).length === 0) box.append(el("p", { class: "small muted" }, "Трудностей не ожидается."));
-  else box.append(difficultyList(it.difficulties, onSet, (di, qty) => { if (it.difficulties[di]) it.difficulties[di].qty = qty; onSet(di, it.difficulties[di].state); }));
+  else box.append(difficultyList(it.difficulties, onDiffSet, onDiffQty, false));
   return box;
 }
 
@@ -2492,7 +2489,14 @@ const DIAG_TOGGLES = [
 // (напр. «+ доп. работа» на «в работе»), а не монтируют как весь экран:
 // тогда не оборачиваем содержимое в свой <main class="wrap"> (иначе он
 // вложился бы во внешний main.wrap — невалидная вложенность и двойные отступы).
-function mountDiagnostics(host, { onCheck, onUncheck, onDone, request = "", onRequest, onlyBlocks, inline = false }) {
+function mountDiagnostics(host, {
+  onCheck, onUncheck, onDone, request = "", onRequest, onlyBlocks, inline = false,
+  // Количество/усложнения работ, уже добавленных в наряд, и итоговая сумма —
+  // раньше жили на отдельном экране «оценка», теперь показываются прямо тут
+  // (см. блок «Работы в наряде» в draw()). Необязательные: без getItems эта
+  // секция просто не рендерится, старые вызовы mountDiagnostics не меняются.
+  getItems, onItemQty, onDiffSet, onDiffQty, showTotal = false,
+}) {
   const toggles = { тормоза: "гидравлика", покрышки: "камера", трансмиссия: "механика" };
   let req = request;
   const states = {}; // instId -> { open, faults:Set<number> }
@@ -2781,6 +2785,18 @@ function mountDiagnostics(host, { onCheck, onUncheck, onDone, request = "", onRe
       wrap.append(card);
     }
 
+    if (getItems) {
+      const items = getItems();
+      if (items.length) {
+        wrap.append(el("h2", {}, "Работы в наряде"));
+        items.forEach((it) => wrap.append(diagWorkCard(it, {
+          onQty: (qty) => { onItemQty(it.code, qty); draw(); },
+          onDiffSet: (di, st) => { onDiffSet(it.code, di, st); draw(); },
+          onDiffQty: (di, qty) => { onDiffQty(it.code, di, qty); draw(); },
+        })));
+      }
+    }
+
     // Разовая услуга — работа вне узлов, только для этого обращения (не
     // заводится в общий каталог неисправностей и никак не всплывёт у другого
     // велосипеда в будущем): просто ещё один пункт наряда, добавляется сразу
@@ -2809,6 +2825,15 @@ function mountDiagnostics(host, { onCheck, onUncheck, onDone, request = "", onRe
           class: "small", style: "margin-top:12px;border:0;background:none;color:var(--muted);text-decoration:underline;padding:0",
           onclick: () => { miscOpen = true; draw(); },
         }, "+ добавить разовую услугу"));
+
+    if (showTotal && getItems && getItems().length) {
+      wrap.append(el("div", { class: "card card-flush" },
+        el("span", { class: "muted small" }, "Итого клиенту"),
+        el("div", { class: "price-range" }, rangeText(orderRangeAll({ items: getItems() }))),
+        minutesText(orderMinutes({ items: getItems() }, false))
+          ? el("div", { class: "small muted", style: "margin-top:4px" }, minutesText(orderMinutes({ items: getItems() }, false)))
+          : null));
+    }
 
     host.replaceChildren(wrap,
       el("div", { class: "actions" }, el("div", { class: "actions-inner" },
