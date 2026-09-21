@@ -154,16 +154,33 @@ const DB_KEY = "vella.db.v1";
 // → «готово к выдаче»). Старые записи приводим к новым статусам при каждой
 // загрузке; исправление уедет на сервер со следующим же пушем (он шлёт всю DB
 // целиком), отдельная разовая миграция не нужна.
-// Для завершённой работы (done:true) усложнение не может оставаться в
-// состоянии «неизвестно» — это прогнозное значение, для факта его больше
-// не предлагают (см. difficultyList с fact:true), но в старых данных оно
-// могло остаться нетронутым. Без него itemRange считает такую работу
-// диапазоном, а не точной ценой, хотя по факту она уже сделана.
-const fixDoneDifficulties = (items) =>
-  (items || []).map((it) => {
-    if (!it.done || !(it.difficulties || []).some((d) => d.state === "unknown")) return it;
-    return { ...it, difficulties: it.difficulties.map((d) => (d.state === "unknown" ? { ...d, state: "no" } : d)) };
-  });
+// Усложнения раньше жили встроенным списком {label, add, addMinutes, state}
+// прямо на пункте наряда — от этого отказались, усложнение теперь просто
+// другая работа (см. relatedWorksOf), которую при необходимости добавляют
+// отдельной позицией. Уже подтверждённые (state:"yes") усложнения переносим
+// в свои отдельные позиции наряда — иначе их цена молча пропадёт из итога
+// при следующем открытии заявки. Неподтверждённые («неизвестно»/«не было»)
+// просто отбрасываем — они не были обязательством, только предположением.
+// Код новой позиции собираем тут же (не через instanceCode — та объявлена
+// ниже по файлу и на момент первого запуска миграции ещё не инициализирована).
+const fixDifficulties = (items) => {
+  if (!(items || []).some((it) => (it.difficulties || []).length)) return items;
+  const out = [];
+  for (const it of items || []) {
+    const { difficulties, ...rest } = it;
+    out.push(rest);
+    for (const d of difficulties || []) {
+      if (d.state !== "yes") continue;
+      out.push({
+        code: `${it.code}~${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+        name: d.label, agreed: !!it.agreed, done: !!it.done, doneBy: it.doneBy || null,
+        waitingForPart: null, parts: [], partsPrice: 0,
+        workPrice: d.add || 0, estimateMinutes: d.addMinutes || 0, multiple: false, qty: 1,
+      });
+    }
+  }
+  return out;
+};
 
 // Запчасти раньше были просто названиями (строками) без цены и количества —
 // приводим к {name, price, qty}, иначе itemRange не может посчитать их
@@ -208,7 +225,7 @@ const migrateOrders = (orders) =>
     // показывает тот же список работ и предлагает «Выдать клиенту», как
     // только всё отмечено готовым; отдельная стадия-подтверждение не нужна.
     if (next.status === "готово к выдаче") next = { ...next, status: "взята в работу" };
-    let items = fixDoneDifficulties(next.items);
+    let items = fixDifficulties(next.items);
     items = fixPartsShape(items);
     items = fixDoneBy(items);
     if (items !== next.items) next = { ...next, items };
@@ -447,8 +464,8 @@ function effectivePrice(code) {
   return {
     work: ov.price ?? base.work,
     minutes: ov.minutes ?? base.minutes,
-    difficulties: ov.complications ?? base.difficulties,
     multiple: ov.multiple ?? base.multiple,
+    relatedWorks: ov.relatedWorks ?? base.relatedWorks,
   };
 }
 const priceOf = effectivePrice;
@@ -461,28 +478,19 @@ const nextBikeKey = (d, phone) => `${phone}#${d.bikes.filter((b) => b.ownerPhone
 
 // ---------------------------- расчёт цен ------------------------------------
 
-// qty у работы и у каждого усложнения — сколько раз это сделано (несколько
-// колёс, несколько спиц и т.п.); значимо только когда у работы/усложнения
-// стоит галочка «несколько», иначе всегда 1 и ни на что не влияет.
+// qty у работы — сколько раз она сделана (несколько колёс, несколько спиц
+// и т.п.); значимо только когда у работы стоит галочка «несколько», иначе
+// всегда 1 и ни на что не влияет. Цена пункта наряда теперь всегда точная
+// (не диапазон) — усложнение больше не «может случиться, а может нет» флагом
+// на этом же пункте, а либо не добавлено вовсе, либо уже добавлено отдельной
+// полноценной позицией со своей точной ценой (см. relatedWorksOf ниже).
 const partsCost = (parts) => (parts || []).reduce((s, p) => s + (p.price || 0) * (p.qty || 1), 0);
 function itemRange(it) {
   const base = (it.workPrice || 0) * (it.qty || 1) + (it.partsPrice || 0) + partsCost(it.parts);
-  let min = base, max = base;
-  for (const d of it.difficulties || []) {
-    const amt = (d.add || 0) * (d.qty || 1);
-    if (d.state === "yes") { min += amt; max += amt; }
-    else if (d.state === "unknown") max += amt;
-  }
-  return { min, max };
+  return { min: base, max: base };
 }
-// Ориентировочное время работы с учётом отмеченных трудностей (будет/неизвестно
-// тоже добавляют время, как и цену — на «неизвестно» берём время по максимуму).
 function itemMinutes(it) {
-  let m = (it.estimateMinutes || 0) * (it.qty || 1);
-  for (const d of it.difficulties || []) {
-    if (d.state === "yes" || d.state === "unknown") m += (d.addMinutes || 0) * (d.qty || 1);
-  }
-  return m;
+  return (it.estimateMinutes || 0) * (it.qty || 1);
 }
 const orderRange = (o) =>
   o.items.filter((i) => i.agreed).reduce(
@@ -516,13 +524,10 @@ const orderWaitingLast = (a, b) => (orderWaitingForPart(a) ? 1 : 0) - (orderWait
 // несколькими мастерами — она оформляется отдельными позициями наряда, а не
 // дележом одной (см. instanceCode ниже и openRepairSheet).
 // Стоимость самой работы (без запчастей) — то, на что начисляется процент
-// мастера: цена работы за все качественные единицы плюс подтвердившиеся
-// усложнения. Запчасти — расходники, в доход мастера не идут.
-const itemWorkValue = (it) => {
-  let v = (it.workPrice || 0) * (it.qty || 1);
-  for (const d of it.difficulties || []) if (d.state === "yes") v += (d.add || 0) * (d.qty || 1);
-  return v;
-};
+// мастера. Запчасти — расходники, в доход мастера не идут. Усложнения
+// (relatedWorks) в этой сумме не участвуют — если усложнение реально
+// понадобилось, оно уже отдельный пункт наряда со своим itemWorkValue.
+const itemWorkValue = (it) => (it.workPrice || 0) * (it.qty || 1);
 const completionsSummary = (it) => it.doneBy?.masterName || "";
 // «Код» позиции наряда, добавляемой не из каталога напрямую, а как копия
 // уже существующей работы (кнопка «+ ещё раз» — когда реально нужен второй
@@ -543,17 +548,38 @@ function minutesText(m) {
   const h = Math.floor(m / 60), mm = m % 60;
   return "ориентировочно " + (h ? `${h} ч${mm ? " " + mm + " мин" : ""}` : `${mm} мин`);
 }
-// Возможная вилка цены операции: от работы без надбавок до работы со всеми трудностями.
+// Приводим запись из repairsCache («своя» неисправность) к тому же виду fa,
+// что и обычная каталожная работа в пикере «+ работа» — общий формат,
+// который принимает addItem/makeCustomItem (см. loadWorkPool).
+const repairToFa = (r) => ({ code: `CF-${r.id}`, name: r.label, label: r.label, custom: true, id: r.id, group: r.group, price: r.price, minutes: r.minutes, multiple: r.multiple });
+// Усложнение — не флаг «было/не было» на самой работе, а другая работа,
+// которую обычно делают заодно (relatedWorks — id записей в repairsCache,
+// см. api/overrides.js и api/repairs.js). Разрешается что для каталожной
+// работы (через переопределение), что для «своей» неисправности (прямо на
+// её же записи). Отдаёт готовые fa-объекты — их можно сразу пропустить
+// через makeCustomItem, как любую другую работу из пикера.
+function relatedWorksOf(code) {
+  if (!code) return [];
+  const ids = code.startsWith("CF-")
+    ? (repairsCache || []).find((r) => `CF-${r.id}` === code)?.relatedWorks
+    : priceOf(code).relatedWorks;
+  return (ids || [])
+    .map((id) => (repairsCache || []).find((r) => r.id === id))
+    .filter(Boolean)
+    .map(repairToFa);
+}
+// Возможная вилка цены операции для превью в пикере — точная цена самой
+// работы плюс «по максимуму», если добавить вообще все связанные работы
+// (честная верхняя оценка того, во что это МОЖЕТ вылиться, не факт).
 function codeRange(code) {
-  const p = priceOf(code);
-  const base = p.work || 0;
-  const max = base + (p.difficulties || []).reduce((s, d) => s + (d.add || 0), 0);
+  const base = priceOf(code).work || 0;
+  const max = base + relatedWorksOf(code).reduce((s, r) => s + (r.price || 0), 0);
   return { min: base, max };
 }
 // То же для неисправности, заведённой админом вручную (цена лежит в ней самой).
 function customFaultRange(f) {
   const base = f.price || 0;
-  const max = base + (f.complications || []).reduce((s, c) => s + (c.add || 0), 0);
+  const max = base + relatedWorksOf(f.code).reduce((s, r) => s + (r.price || 0), 0);
   return { min: base, max };
 }
 
@@ -566,12 +592,11 @@ function makeItem(code, notes = "") {
     estimateMinutes: price.minutes || 0,
     partsPrice: 0,
     multiple: !!price.multiple, qty: 1,
-    difficulties: (price.difficulties || []).map((d) => ({ label: d.label, add: d.add, addMinutes: d.addMinutes || 0, multiple: !!d.multiple, qty: 1, state: "unknown" })),
   };
 }
 
 // Неисправность, заведённая администратором вручную (без кода .proc-процедуры) —
-// цена/время/усложнения лежат прямо в ней самой.
+// цена/время лежат прямо в ней самой.
 function makeCustomItem(fa, notes = "") {
   return {
     code: fa.code, name: fa.label, group: fa.group || "", agreed: false, done: false, parts: [], notes,
@@ -579,7 +604,6 @@ function makeCustomItem(fa, notes = "") {
     estimateMinutes: fa.minutes || 0,
     partsPrice: 0,
     multiple: !!fa.multiple, qty: 1,
-    difficulties: (fa.complications || []).map((c) => ({ label: c.label, add: c.add, addMinutes: c.addMinutes || 0, multiple: !!c.multiple, qty: 1, state: "unknown" })),
   };
 }
 
@@ -655,10 +679,7 @@ function attachPhoneMask(input, onChange) {
 // диагностики при оформлении нового обращения.
 async function loadWorkPool(bikeKind) {
   const repairs = await ensureRepairs();
-  const custom = repairs.map((r) => ({
-    code: `CF-${r.id}`, name: r.label, label: r.label, custom: true, id: r.id, group: r.group,
-    price: r.price, minutes: r.minutes, complications: r.complications, multiple: r.multiple,
-  }));
+  const custom = repairs.map(repairToFa);
   return [
     ...billableOps
       .filter((p) => !OVERRIDES[p.code]?.hidden)
@@ -703,7 +724,7 @@ function openWorkPicker({ existingItems, bikeKind, onBack, onPick }) {
             onPick({
               code: `MISC-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`,
               name: draftFa.label.trim(), label: draftFa.label.trim(), custom: true,
-              price: draftFa.price, minutes: draftFa.minutes, complications: [], multiple: false,
+              price: draftFa.price, minutes: draftFa.minutes, multiple: false,
             });
           } }, "Создать и добавить"),
           el("button", { onclick: () => { creating = false; drawCreate(); } }, "Отмена"))));
@@ -1407,8 +1428,6 @@ function viewOrder(number) {
   const pendingHandlers = {
     onAgree: (code) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x) x.agreed = true; }); refresh(); toast("Согласовано"); },
     onRemove: (code) => { editOrder(number, (o) => { o.items = o.items.filter((i) => i.code !== code); }); refresh(); },
-    onSet: (code, di, st) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x?.difficulties?.[di]) x.difficulties[di].state = st; }); refresh(); },
-    onDiffQty: (code, di, qty) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x?.difficulties?.[di]) x.difficulties[di].qty = qty; }); refresh(); },
     onParts: (code, parts) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x) x.parts = parts; }); refresh(); },
     onQty: (code, qty) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x) x.qty = qty; }); refresh(); },
     refresh,
@@ -1523,10 +1542,6 @@ function viewOrder(number) {
   if (order.status === "оценка") {
     const body = el("div", {});
     order.items.forEach((it) => body.append(assessItem(it,
-      (di, st) => {
-        editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x?.difficulties?.[di]) x.difficulties[di].state = st; });
-        refresh();
-      },
       (val) => {
         editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) x.partsPrice = val; });
         refresh();
@@ -1918,30 +1933,42 @@ function qtyStepper(value, onChange, max, onRemove) {
     el("button", { style: iconBtnStyle + ";font-size:15px", disabled: atMax, onclick: () => onChange(max > 0 ? Math.min(max, (value || 1) + 1) : (value || 1) + 1) }, "+"));
 }
 
-// Редактор списка усложнений (название + надбавка к цене + надбавка к времени
-// + «неск.») — общий для форм правки работы каталога, своей неисправности и
-// позиции наряда. Мутирует list на месте, box перерисовывается сам.
-function complicationsEditor(list) {
+// Редактор связанных работ (усложнений) — поиск среди уже существующих
+// «своих» неисправностей и добавление по клику; общий для форм правки
+// каталожной работы, своей неисправности и позиции наряда. Усложнение —
+// не отдельная запись со своей ценой тут же, а просто ссылка (id) на
+// такую же работу из общего списка (см. relatedWorksOf) — так одну и ту же
+// «погнутый обод» не приходится набирать заново в каждой работе, где она
+// может понадобиться. Мутирует relatedWorks (список id) на месте.
+function relatedWorksPicker(relatedWorks, excludeId) {
   const box = el("div", {});
-  const draw = () => {
-    box.replaceChildren(
-      ...list.map((c, ci) => el("div", { style: "margin-top:8px;padding:8px;background:var(--fill);border-radius:var(--radius-sm)" },
-        el("div", { style: "display:flex;gap:6px;align-items:center" },
-          el("input", { placeholder: "усложнение", value: c.label, style: "flex:1;min-width:0", oninput: (e) => (c.label = e.target.value) }),
-          el("button", { style: iconBtnStyle, onclick: () => { list.splice(ci, 1); draw(); } }, "✕")),
-        el("div", { style: "display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px" },
-          el("span", { class: "muted small", style: "flex:0 0 auto" }, "надбавка"),
-          el("input", { type: "number", value: c.add, style: "width:64px;text-align:right", oninput: (e) => (c.add = +e.target.value || 0) }),
-          el("span", { class: "muted small" }, "₽"),
-          el("input", { type: "number", value: c.addMinutes || 0, style: "width:56px;text-align:right", oninput: (e) => (c.addMinutes = +e.target.value || 0) }),
-          el("span", { class: "muted small" }, "мин")),
-        el("label", { class: "opt", style: "margin-top:6px" },
-          el("input", { type: "checkbox", checked: !!c.multiple, onchange: (e) => (c.multiple = e.target.checked) }),
-          el("span", { class: "small" }, "можно несколько раз")))),
-      el("button", { style: "margin-top:6px", onclick: () => { list.push({ label: "", add: 0, addMinutes: 0, multiple: false }); draw(); } }, "+ усложнение"),
-    );
+  const q = el("input", { type: "text", placeholder: "Поиск работы по названию" });
+  const results = el("div", { class: "rows", style: "max-height:200px;overflow-y:auto;margin-top:8px;display:none" });
+  const added = el("div", { class: "rows", style: "margin-top:8px" });
+  const drawAdded = () => {
+    const items = relatedWorks.map((id) => (repairsCache || []).find((r) => r.id === id)).filter(Boolean);
+    added.replaceChildren(...items.map((r) => el("div", { class: "row", style: "cursor:default" },
+      el("span", { style: "flex:1" }, r.label, " ", el("span", { class: "muted small" }, `+${money(r.price)}`)),
+      el("button", { style: iconBtnStyle, onclick: () => { relatedWorks.splice(relatedWorks.indexOf(r.id), 1); drawAdded(); } }, "✕"))));
   };
-  draw();
+  const drawResults = () => {
+    const query = q.value.trim().toLowerCase();
+    if (!query) { results.style.display = "none"; results.replaceChildren(); return; }
+    results.style.display = "";
+    const matched = (repairsCache || [])
+      .filter((r) => r.id !== excludeId && !relatedWorks.includes(r.id) && r.label.toLowerCase().includes(query))
+      .slice(0, 20);
+    const rows = matched.map((r) => el("div", { class: "row", style: "cursor:pointer",
+      onclick: () => { relatedWorks.push(r.id); q.value = ""; drawResults(); drawAdded(); } },
+      el("span", { style: "flex:1" }, r.label),
+      el("span", { class: "small muted" }, money(r.price))));
+    if (!matched.length) rows.push(el("p", { class: "small muted" }, "Ничего не найдено."));
+    results.replaceChildren(...rows);
+  };
+  q.addEventListener("input", drawResults);
+  drawAdded();
+  box.append(el("label", { style: "margin-top:14px" }, "Связанные работы (усложнения)"), q, results, added,
+    el("p", { class: "small muted", style: "margin-top:4px" }, "Работы, которые обычно нужны заодно — своя неисправность (см. «+ своя неисправность») с ценой и временем."));
   return box;
 }
 
@@ -1967,9 +1994,7 @@ function editableItemRow(it, { onRemove, onSave, refresh }) {
 
   const d = {
     name: it.name, workPrice: it.workPrice || 0, estimateMinutes: it.estimateMinutes || 0, notes: it.notes || "",
-    difficulties: JSON.parse(JSON.stringify(it.difficulties || [])),
   };
-  const compsBox = complicationsEditor(d.difficulties);
   const form = el("div", { class: "card card-flush", style: "margin-top:8px" },
     el("label", {}, "Название"),
     el("input", { value: d.name, oninput: (e) => (d.name = e.target.value) }),
@@ -1978,12 +2003,10 @@ function editableItemRow(it, { onRemove, onSave, refresh }) {
       el("div", { style: "flex:1;min-width:120px" }, el("label", {}, "Минуты"), el("input", { type: "number", value: d.estimateMinutes, oninput: (e) => (d.estimateMinutes = +e.target.value || 0) }))),
     el("label", { style: "margin-top:8px" }, "Заметка"),
     el("input", { value: d.notes, oninput: (e) => (d.notes = e.target.value) }),
-    el("label", { style: "margin-top:8px" }, "Усложнения"),
-    compsBox,
     el("div", { class: "btn-row", style: "margin-top:10px" },
       el("button", { class: "btn-primary", onclick: () => onSave(it.code, {
         name: d.name.trim() || it.name, workPrice: d.workPrice, estimateMinutes: d.estimateMinutes,
-        notes: d.notes.trim(), difficulties: d.difficulties,
+        notes: d.notes.trim(),
       }) }, "Сохранить"),
       el("button", { onclick: () => { editingItemCode = null; refresh(); } }, "Отмена")));
   return el("div", {}, header, form);
@@ -2011,17 +2034,15 @@ function itemList(order, showFacts, edit, detailed, grouped = true) {
   return box;
 }
 
-// Разбивка стоимости работы по составляющим — сама работа, каждая запчасть
-// (с ценой и количеством) и каждое подтвердившееся усложнение отдельной
-// строкой. Общая для списков «в работе» и «выдан», чтобы мастер сразу видел,
-// из чего складывается сумма, не открывая форму по каждому пункту.
+// Разбивка стоимости работы по составляющим — сама работа и каждая запчасть
+// (с ценой и количеством) отдельной строкой. Общая для списков «в работе» и
+// «выдан», чтобы мастер сразу видел, из чего складывается сумма, не
+// открывая форму по каждому пункту. Усложнение сюда не входит — оно теперь
+// отдельная позиция наряда со своей строкой в общем списке (см. историю).
 function costLines(it) {
   const lines = [`работы ${money((it.workPrice || 0) * (it.qty || 1))}`];
   for (const p of it.parts || []) lines.push(`${partLabel(p)} ${money((p.price || 0) * (p.qty || 1))}`);
   if (it.partsPrice) lines.push(`запчасти ${money(it.partsPrice)}`);
-  for (const d of it.difficulties || []) {
-    if (d.state === "yes") lines.push(`${d.label} ${money((d.add || 0) * (d.qty || 1))}`);
-  }
   return lines;
 }
 
@@ -2099,47 +2120,19 @@ function openHandedItemEdit(orderNumber, it, onSaved) {
   ensureUsers().then((u) => { masters = u.filter((x) => x.active !== false); draw(); });
 }
 
-// Список усложнений — на «Оценке» (прикидка для клиента, ещё не известно
-// наверняка) три варианта: будет/не будет/неизвестно. При отметке работы
-// готовой (fact=true) — уже по факту, там только было/не было, «неизвестно»
-// не бывает для завершённой работы.
-const DIFFICULTY_STATE_LABELS = { yes: "будет", no: "не будет", unknown: "неизвестно" };
-const DIFFICULTY_FACT_LABELS = { yes: "было", no: "не было" };
-function difficultyList(difficulties, onSet, onQty, fact, onMaterialize) {
-  const labels = fact ? DIFFICULTY_FACT_LABELS : DIFFICULTY_STATE_LABELS;
-  const box = el("div", {});
-  (difficulties || []).forEach((d, di) => {
-    // «Несколько» + факт (мастер отмечает по ходу ремонта, не на оценке) —
-    // это усложнение может понадобиться поделить между разными мастерами.
-    // Вместо было/не было + счётчика — кнопка, добавляющая усложнение
-    // отдельной независимой позицией наряда (см. openRepairSheet); нажать
-    // можно сколько угодно раз — по разу на каждого, кто реально этим
-    // занимался. Само усложнение на этой работе цену больше не считает —
-    // теперь она целиком в добавленных позициях (иначе задвоится).
-    if (fact && d.multiple && onMaterialize) {
-      box.append(el("div", { style: "margin-top:8px" },
-        el("div", { class: "small" }, d.label, " ", el("span", { class: "muted" }, `(+${money(d.add)}${d.addMinutes ? `, +${d.addMinutes} мин` : ""})`)),
-        el("button", {
-          class: "small", style: "margin-top:4px;border:0;background:none;color:var(--accent);text-decoration:underline;padding:0",
-          onclick: () => onMaterialize(di),
-        }, "+ добавить как отдельную работу")));
-      return;
-    }
-    box.append(el("div", { style: "margin-top:8px" },
-      el("div", { class: "small" }, d.label, " ", el("span", { class: "muted" }, `(+${money(d.add)}${d.addMinutes ? `, +${d.addMinutes} мин` : ""})`)),
-      // Свой ряд на всю ширину — сегментед-контрол (тот же паттерн, что и
-      // везде в приложении), один тап сразу меняет состояние, без открытия
-      // выпадающего списка. Счётчик количества — отдельной строкой ниже,
-      // чтобы не тесниться с кнопками.
-      el("div", { class: "segmented", style: "margin-top:4px" },
-        Object.entries(labels).map(([v, lbl]) =>
-          el("button", { class: d.state === v ? `active sel-${v}` : "", onclick: () => onSet(di, v) }, lbl))),
-      d.multiple && onQty && d.state !== "no" ? el("div", { style: "margin-top:6px" }, qtyStepper(d.qty, (qty) => onQty(di, qty))) : null));
-  });
-  return box;
+// Список «возможно потребуется» — работы, которые обычно нужны заодно с
+// этой (relatedWorks, см. выше), для честной вилки цены на оценке. Тут их
+// нельзя добавить — это ещё не обязательство, только подсказка; по факту
+// добавляются уже во время ремонта (см. openRepairSheet).
+function relatedWorksHint(code) {
+  const related = relatedWorksOf(code);
+  if (!related.length) return el("p", { class: "small muted" }, "Доп. работ не ожидается.");
+  return el("div", {},
+    el("p", { class: "small muted" }, "Возможно потребуется:"),
+    ...related.map((r) => el("p", { class: "small", style: "margin:2px 0" }, `${r.name} (+${money(r.price)})`)));
 }
 
-function assessItem(it, onSet, onParts, onQty) {
+function assessItem(it, onParts, onQty) {
   const cost = "работа " + money(it.workPrice || 0);
   const box = el("div", { class: "assess" },
     el("div", { style: "display:flex;flex-wrap:wrap;align-items:center;gap:8px" },
@@ -2150,8 +2143,7 @@ function assessItem(it, onSet, onParts, onQty) {
     el("input", { type: "number", value: it.partsPrice || 0, style: "width:96px;text-align:right",
       onchange: (e) => onParts(+e.target.value || 0) }),
     el("span", { class: "muted small" }, "₽")));
-  if ((it.difficulties || []).length === 0) box.append(el("p", { class: "small muted" }, "Трудностей не ожидается."));
-  else box.append(difficultyList(it.difficulties, onSet, (di, qty) => { if (it.difficulties[di]) it.difficulties[di].qty = qty; onSet(di, it.difficulties[di].state); }));
+  box.append(relatedWorksHint(it.code));
   return box;
 }
 
@@ -2161,12 +2153,12 @@ function assessItem(it, onSet, onParts, onQty) {
 // (позвонив клиенту). Без этого шага работа просто предлагается молча —
 // то как «+ доп. работа», то как невидимая навсегда, — и тут явный шаг
 // нужен в обоих случаях одинаково.
-function pendingAgreementRow(it, { onAgree, onRemove, onSet, onDiffQty, onParts, onQty }, stock) {
+function pendingAgreementRow(it, { onAgree, onRemove, onParts, onQty }, stock) {
   const r = itemRange(it);
   const box = el("div", { class: "assess" });
   const nameRow = el("div", {
     style: "display:flex;align-items:center;gap:8px;cursor:pointer",
-    onclick: () => openPendingSheet(it, stock, { onSet, onDiffQty, onParts, onQty }),
+    onclick: () => openPendingSheet(it, stock, { onParts, onQty }),
   },
     el("b", { style: "flex:1;min-width:0" }, it.name, it.multiple && (it.qty || 1) > 1 ? el("span", { class: "small muted" }, ` × ${it.qty}`) : null),
     el("span", { style: "flex:0 0 auto;color:var(--line);font-size:19px" }, "›"));
@@ -2179,21 +2171,21 @@ function pendingAgreementRow(it, { onAgree, onRemove, onSet, onDiffQty, onParts,
   return box;
 }
 
-// Форма деталей для «Ждёт согласования» — усложнения (прогноз) и запчасти
-// на вкладках, тем же bottom sheet, что и у согласованной работы.
-function openPendingSheet(it, stock, { onSet, onDiffQty, onParts, onQty }) {
-  const hasDiffs = (it.difficulties || []).length > 0;
-  let tab = hasDiffs ? "diff" : "parts";
+// Форма деталей для «Ждёт согласования» — связанные работы (прогноз, только
+// подсказка) и запчасти на вкладках, тем же bottom sheet, что и у
+// согласованной работы.
+function openPendingSheet(it, stock, { onParts, onQty }) {
+  const hasRelated = relatedWorksOf(it.code).length > 0;
+  let tab = hasRelated ? "diff" : "parts";
   const content = el("div", {});
   function draw() {
     content.replaceChildren(...[
       it.multiple ? el("div", { style: "margin-bottom:14px" }, qtyStepper(it.qty, (qty) => { onQty(it.code, qty); draw(); })) : null,
-      hasDiffs ? el("div", { class: "segmented", style: "margin-bottom:14px" },
+      hasRelated ? el("div", { class: "segmented", style: "margin-bottom:14px" },
         el("button", { class: tab === "diff" ? "active" : "", onclick: () => { tab = "diff"; draw(); } }, "Усложнения"),
         el("button", { class: tab === "parts" ? "active" : "", onclick: () => { tab = "parts"; draw(); } }, "Запчасти")) : null,
       tab === "diff"
-        ? (hasDiffs ? difficultyList(it.difficulties, (di, st) => { onSet(it.code, di, st); draw(); }, (di, qty) => { onDiffQty(it.code, di, qty); draw(); })
-          : el("p", { class: "small muted" }, "Трудностей не ожидается."))
+        ? relatedWorksHint(it.code)
         : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(it.parts, stock, () => { onParts(it.code, it.parts); draw(); }, partBlockIdOf(it))),
     ].filter(Boolean));
   }
@@ -2205,20 +2197,17 @@ function openPendingSheet(it, stock, { onSet, onDiffQty, onParts, onQty }) {
 // обращения, до появления самого наряда: правки идут прямо в draft.items,
 // onChange — просто перерисовать список работ позади.
 function openAssessSheet(it, stock, onChange) {
-  const hasDiffs = (it.difficulties || []).length > 0;
-  let tab = hasDiffs ? "diff" : "parts";
+  const hasRelated = relatedWorksOf(it.code).length > 0;
+  let tab = hasRelated ? "diff" : "parts";
   const content = el("div", {});
   function draw() {
     content.replaceChildren(...[
       it.multiple ? el("div", { style: "margin-bottom:14px" }, qtyStepper(it.qty, (qty) => { it.qty = qty; draw(); onChange(); })) : null,
-      hasDiffs ? el("div", { class: "segmented", style: "margin-bottom:14px" },
+      hasRelated ? el("div", { class: "segmented", style: "margin-bottom:14px" },
         el("button", { class: tab === "diff" ? "active" : "", onclick: () => { tab = "diff"; draw(); } }, "Усложнения"),
         el("button", { class: tab === "parts" ? "active" : "", onclick: () => { tab = "parts"; draw(); } }, "Запчасти")) : null,
       tab === "diff"
-        ? (hasDiffs ? difficultyList(it.difficulties,
-            (di, st) => { it.difficulties[di].state = st; draw(); onChange(); },
-            (di, qty) => { if (it.difficulties[di]) it.difficulties[di].qty = qty; draw(); onChange(); })
-          : el("p", { class: "small muted" }, "Трудностей не ожидается."))
+        ? relatedWorksHint(it.code)
         : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(it.parts, stock, () => { draw(); onChange(); }, partBlockIdOf(it))),
     ].filter(Boolean));
   }
@@ -2274,40 +2263,30 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove }) {
 // это финальное действие по этому пункту, дальше по нему обычно нечего
 // делать, форму саму закрыть тоже незачем.
 function openRepairSheet(it, stock, onSave) {
-  // «неизвестно» — прогнозное состояние (по умолчанию у новой работы), тут
-  // такого выбора нет (см. fact:true ниже) — приводим к «не было», иначе
-  // помеченная «готово» работа продолжала бы считаться диапазоном цены,
-  // а не точной суммой.
-  const diffs = JSON.parse(JSON.stringify(it.difficulties || [])).map((d) => (d.state === "unknown" ? { ...d, state: "no" } : d));
   const pickedParts = (it.parts || []).map((p) => ({ ...p }));
-  const save = (extra) => onSave({ parts: pickedParts, difficulties: diffs, ...extra });
-  const hasDiffs = diffs.length > 0;
-  let tab = hasDiffs ? "diff" : "parts";
+  const save = (extra) => onSave({ parts: pickedParts, ...extra });
+  // Связанные работы (усложнения) — не флаг на этом пункте, а другие
+  // работы, которые обычно делают заодно (см. relatedWorksOf); список
+  // статичен для данного кода, пересчитывать на каждый draw() незачем.
+  const related = relatedWorksOf(it.code);
+  const hasRelated = related.length > 0;
+  let tab = hasRelated ? "diff" : "parts";
 
   const content = el("div", {});
   function draw() {
-    const diffBox = el("div", {});
-    // Усложнение с «несколько» тут материализуется отдельной позицией наряда
-    // (см. difficultyList/instanceCode) — родительская работа его цену
-    // больше не считает, поэтому state сбрасываем в «не было».
-    const materializeDifficulty = (di) => {
-      const d = diffs[di];
-      const newItem = {
-        code: instanceCode(it.code), name: d.label, agreed: true, done: false, parts: [],
-        workPrice: d.add || 0, estimateMinutes: d.addMinutes || 0, partsPrice: 0,
-        multiple: false, qty: 1, difficulties: [],
-      };
-      diffs[di] = { ...d, state: "no", qty: 0 };
-      save({ newItems: [newItem] });
-      toast(`«${d.label}» добавлено отдельной работой`);
-      drawDiffs();
+    // Добавляет связанную работу отдельной, независимой позицией наряда —
+    // нажать можно сколько угодно раз (по разу на каждого, кто ей реально
+    // занимался), это не переключатель «было/не было» на текущем пункте.
+    const addRelated = (fa) => {
+      save({ newItems: [{ ...makeCustomItem(fa), code: instanceCode(fa.code), agreed: true }] });
+      toast(`«${fa.name}» добавлено отдельной работой`);
     };
-    // Тут уже не прогноз, а факт — работа сделана, известно точно, было
-    // усложнение или нет. Третий вариант («неизвестно») тут ни к чему.
-    const drawDiffs = () => diffBox.replaceChildren(difficultyList(diffs,
-      (di, st) => { diffs[di].state = st; drawDiffs(); save(); },
-      (di, qty) => { diffs[di].qty = qty; drawDiffs(); save(); }, true, materializeDifficulty));
-    drawDiffs();
+    const diffBox = hasRelated
+      ? el("div", {},
+          ...related.map((fa) => el("div", { class: "row", style: "cursor:pointer", onclick: () => addRelated(fa) },
+            el("span", { style: "flex:1" }, fa.name),
+            el("span", { class: "small muted" }, `+${money(fa.price)}`))))
+      : null;
     // Пункт неделим — один мастер отмечает «готово» целиком, независимо от
     // qty (qty влияет только на цену, см. itemRange). Если по факту нужен
     // второй мастер на то же самое — «+ ещё раз» ниже добавляет копию этой
@@ -2332,7 +2311,6 @@ function openRepairSheet(it, stock, onSave) {
         ...JSON.parse(JSON.stringify(it)),
         code: instanceCode(it.code),
         done: false, doneBy: null, waitingForPart: null, parts: [], partsPrice: 0,
-        difficulties: (it.difficulties || []).map((d) => ({ ...d, state: "unknown", qty: 1 })),
       };
       save({ newItems: [dup] });
       toast("Добавлена копия этой работы для другого мастера");
@@ -2366,7 +2344,7 @@ function openRepairSheet(it, stock, onSave) {
       onclick: duplicateItem,
     }, "+ ещё раз (для другого мастера)");
     content.replaceChildren(...[
-      hasDiffs ? el("div", { class: "segmented", style: "margin-bottom:14px" },
+      hasRelated ? el("div", { class: "segmented", style: "margin-bottom:14px" },
         el("button", { class: tab === "diff" ? "active" : "", onclick: () => { tab = "diff"; draw(); } }, "Усложнения"),
         el("button", { class: tab === "parts" ? "active" : "", onclick: () => { tab = "parts"; draw(); } }, "Запчасти")) : null,
       tab === "diff" ? diffBox : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(pickedParts, stock, save, partBlockIdOf(it))),
@@ -2547,7 +2525,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onDone, request = "", onRe
     })).filter((f) => !OVERRIDES[f.overrideKey]?.hidden),
     ...repairs.filter((r) => r.group === b.id).map((r) => ({
       label: r.label, code: `CF-${r.id}`, custom: true, id: r.id,
-      price: r.price, minutes: r.minutes, complications: r.complications, multiple: r.multiple,
+      price: r.price, minutes: r.minutes, multiple: r.multiple,
     })),
   ];
   const faultVisible = (f) => !f.if || toggles[f.if.param] === f.if.value;
@@ -2573,20 +2551,20 @@ function mountDiagnostics(host, { onCheck, onUncheck, onDone, request = "", onRe
   }
 
   // Форма правки встроенной (из каталога) неисправности — переопределяет
-  // название/цену/время/усложнения поверх дефолта, хранится на сервере.
+  // название/цену/время/связанные работы поверх дефолта, хранится на сервере.
   function overrideForm(f, onClose) {
-    // У неисправности без кода (f.code === "") нет ни цены, ни усложнений —
-    // конкретная операция и её стоимость определяются на разборке; тут можно
-    // только переименовать формулировку.
+    // У неисправности без кода (f.code === "") нет ни цены, ни связанных
+    // работ — конкретная операция и её стоимость определяются на разборке;
+    // тут можно только переименовать формулировку.
     const hasPrice = !!f.code;
     const eff = hasPrice ? priceOf(f.code) : {};
     const draftOv = {
       name: OVERRIDES[f.overrideKey]?.name || f.label,
       price: eff.work || 0, minutes: eff.minutes || 0,
-      complications: JSON.parse(JSON.stringify(eff.difficulties || [])),
+      relatedWorks: [...(eff.relatedWorks || [])],
       multiple: !!eff.multiple,
     };
-    const compsBox = hasPrice ? complicationsEditor(draftOv.complications) : null;
+    const relBox = hasPrice ? relatedWorksPicker(draftOv.relatedWorks) : null;
     return el("div", { class: "card card-flush", style: "margin-top:8px" },
       el("label", {}, "Название"),
       el("input", { value: draftOv.name, oninput: (e) => (draftOv.name = e.target.value) }),
@@ -2597,12 +2575,11 @@ function mountDiagnostics(host, { onCheck, onUncheck, onDone, request = "", onRe
       hasPrice ? el("label", { class: "opt", style: "margin-top:8px" },
         el("input", { type: "checkbox", checked: draftOv.multiple, onchange: (e) => (draftOv.multiple = e.target.checked) }),
         el("span", { class: "small" }, "можно несколько раз на одном велосипеде")) : null,
-      hasPrice ? el("label", { style: "margin-top:8px" }, "Усложнения (надбавка к цене и времени)") : null,
-      hasPrice ? compsBox : null,
+      hasPrice ? relBox : null,
       el("div", { class: "btn-row", style: "margin-top:10px" },
         el("button", { class: "btn-primary", onclick: async () => {
           const patch = { code: f.overrideKey, name: draftOv.name.trim() || null };
-          if (hasPrice) Object.assign(patch, { price: draftOv.price, minutes: draftOv.minutes || null, complications: draftOv.complications, multiple: draftOv.multiple });
+          if (hasPrice) Object.assign(patch, { price: draftOv.price, minutes: draftOv.minutes || null, relatedWorks: draftOv.relatedWorks, multiple: draftOv.multiple });
           const ok = await overridesApi("PUT", patch);
           if (ok) onClose();
         } }, "Сохранить"),
@@ -2610,10 +2587,10 @@ function mountDiagnostics(host, { onCheck, onUncheck, onDone, request = "", onRe
   }
 
   // Форма добавления своей неисправности (только у администратора) — цена,
-  // время и усложнения задаются сразу тут же, без .proc-процедуры.
+  // время и связанные работы задаются сразу тут же, без .proc-процедуры.
   function customFaultForm(blockId) {
-    const draftFa = { label: "", price: 0, minutes: 0, complications: [], multiple: false };
-    const compsBox = complicationsEditor(draftFa.complications);
+    const draftFa = { label: "", price: 0, minutes: 0, relatedWorks: [], multiple: false };
+    const relBox = relatedWorksPicker(draftFa.relatedWorks);
     return el("div", { class: "card card-flush", style: "margin-top:8px" },
       el("label", {}, "Название неисправности"),
       el("input", { placeholder: "напр. Восьмёрка", oninput: (e) => (draftFa.label = e.target.value) }),
@@ -2623,14 +2600,13 @@ function mountDiagnostics(host, { onCheck, onUncheck, onDone, request = "", onRe
       el("label", { class: "opt", style: "margin-top:8px" },
         el("input", { type: "checkbox", onchange: (e) => (draftFa.multiple = e.target.checked) }),
         el("span", { class: "small" }, "можно несколько раз на одном велосипеде")),
-      el("label", { style: "margin-top:8px" }, "Усложнения (надбавка к цене и времени, необязательно)"),
-      compsBox,
+      relBox,
       el("div", { class: "btn-row", style: "margin-top:10px" },
         el("button", { class: "btn-primary", onclick: async () => {
           if (!draftFa.label.trim()) return alert("Укажите название");
           const r = await fetch("/api/repairs", {
             method: "POST", headers: { "content-type": "application/json" },
-            body: JSON.stringify({ group: blockId, label: draftFa.label.trim(), price: draftFa.price, minutes: draftFa.minutes, complications: draftFa.complications, multiple: draftFa.multiple }),
+            body: JSON.stringify({ group: blockId, label: draftFa.label.trim(), price: draftFa.price, minutes: draftFa.minutes, relatedWorks: draftFa.relatedWorks, multiple: draftFa.multiple }),
           });
           const j = await r.json().catch(() => ({}));
           if (!r.ok) return alert(j.error || "ошибка");
@@ -2644,8 +2620,8 @@ function mountDiagnostics(host, { onCheck, onUncheck, onDone, request = "", onRe
   // Правка своей неисправности (заведённой через «+ своя неисправность»,
   // хранится в catalog/repairs) — то же самое, что и при создании, но PUT.
   function customFaultEditForm(f, onClose) {
-    const draftFa = { label: f.label, price: f.price || 0, minutes: f.minutes || 0, complications: JSON.parse(JSON.stringify(f.complications || [])), multiple: !!f.multiple };
-    const compsBox = complicationsEditor(draftFa.complications);
+    const draftFa = { label: f.label, price: f.price || 0, minutes: f.minutes || 0, relatedWorks: [...(f.relatedWorks || [])], multiple: !!f.multiple };
+    const relBox = relatedWorksPicker(draftFa.relatedWorks, f.id);
     return el("div", { class: "card card-flush", style: "margin-top:8px" },
       el("label", {}, "Название неисправности"),
       el("input", { value: draftFa.label, oninput: (e) => (draftFa.label = e.target.value) }),
@@ -2655,14 +2631,13 @@ function mountDiagnostics(host, { onCheck, onUncheck, onDone, request = "", onRe
       el("label", { class: "opt", style: "margin-top:8px" },
         el("input", { type: "checkbox", checked: draftFa.multiple, onchange: (e) => (draftFa.multiple = e.target.checked) }),
         el("span", { class: "small" }, "можно несколько раз на одном велосипеде")),
-      el("label", { style: "margin-top:8px" }, "Усложнения (надбавка к цене и времени, необязательно)"),
-      compsBox,
+      relBox,
       el("div", { class: "btn-row", style: "margin-top:10px" },
         el("button", { class: "btn-primary", onclick: async () => {
           if (!draftFa.label.trim()) return alert("Укажите название");
           const r = await fetch("/api/repairs", {
             method: "PUT", headers: { "content-type": "application/json" },
-            body: JSON.stringify({ id: f.id, label: draftFa.label.trim(), price: draftFa.price, minutes: draftFa.minutes, complications: draftFa.complications, multiple: draftFa.multiple }),
+            body: JSON.stringify({ id: f.id, label: draftFa.label.trim(), price: draftFa.price, minutes: draftFa.minutes, relatedWorks: draftFa.relatedWorks, multiple: draftFa.multiple }),
           });
           const j = await r.json().catch(() => ({}));
           if (!r.ok) return alert(j.error || "ошибка");
@@ -2818,7 +2793,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onDone, request = "", onRe
               onCheck({
                 code: `MISC-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`,
                 label: miscDraft.label.trim(), custom: true,
-                price: miscDraft.price, minutes: miscDraft.minutes, complications: [], multiple: false,
+                price: miscDraft.price, minutes: miscDraft.minutes, multiple: false,
               });
               miscOpen = false;
               miscDraft.label = ""; miscDraft.price = 0; miscDraft.minutes = 0;
@@ -3391,7 +3366,7 @@ function overridesScreen(byCode, error) {
     if (ov.name) bits.push(`название: «${ov.name}»`);
     if (ov.price != null) bits.push(`цена: ${money(ov.price)}`);
     if (ov.minutes != null) bits.push(`время: ${ov.minutes} мин`);
-    if (ov.complications?.length) bits.push(`усложнений: ${ov.complications.length}`);
+    if (ov.relatedWorks?.length) bits.push(`связанных работ: ${ov.relatedWorks.length}`);
     if (ov.multiple) bits.push("можно несколько раз");
     return el("div", { class: "card" },
       el("div", {}, el("b", {}, ov.name || proc?.name || code), " ", el("span", { class: "small muted" }, code)),
@@ -3408,7 +3383,7 @@ function overridesScreen(byCode, error) {
     bar("Переопределения работ", "/admin"),
     el("main", { class: "wrap" },
       error ? el("p", { class: "small", style: "color:var(--warn)" }, error) : null,
-      el("p", { class: "small muted" }, "Название/цену/усложнения работы или её скрытие правят прямо на экране диагностики (✎ / ✕ у неисправности). Здесь — только то, что уже изменено, с возможностью вернуть как было."),
+      el("p", { class: "small muted" }, "Название/цену/связанные работы или скрытие работы правят прямо на экране диагностики (✎ / ✕ у неисправности). Здесь — только то, что уже изменено, с возможностью вернуть как было."),
       codes.length === 0 ? el("p", { class: "muted small" }, "Пока ничего не переопределено.") : el("div", { class: "list", style: "gap:12px" }, rows)),
   ];
 }
