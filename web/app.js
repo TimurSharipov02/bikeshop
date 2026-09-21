@@ -1654,7 +1654,20 @@ function viewOrder(number) {
 
   if (order.status === "выдан") {
     main.append(pendingCardHost());
-    main.append(stage("Выдан", itemList({ items: order.items.filter((i) => i.agreed) }, true, null, true, false),
+    const agreedItems = order.items.filter((i) => i.agreed);
+    // Админ может задним числом поправить пункт наряда (название/цену/кто
+    // выполнил) прямо тут, без «Вернуть в работу» — тапом открывается форма
+    // (см. openHandedItemEdit). У остальных список остаётся тем же
+    // read-only itemList, что и на «другой мастер ведёт».
+    const itemsBlock = SESSION?.role === "admin"
+      ? el("div", { class: "rows", style: "margin-top:8px" }, agreedItems.map((it) => {
+          const row = detailedItemRow(it);
+          row.style.cursor = "pointer";
+          row.onclick = () => openHandedItemEdit(number, it, refresh);
+          return row;
+        }))
+      : itemList({ items: agreedItems }, true, null, true, false);
+    main.append(stage("Выдан", itemsBlock,
       el("div", { class: "card", style: "background:var(--bg)" },
         el("span", { class: "muted small" }, "Итого"),
         el("div", { class: "total" }, rangeText(range))),
@@ -2004,6 +2017,74 @@ function detailedItemRow(it) {
     el("div", { class: "price-tag", style: "margin-top:2px" }, rangeText(r)),
     el("div", { class: "small muted", style: "margin-top:4px" }, costLines(it).map((l) => el("div", {}, "– " + l))),
     it.notes ? el("p", { class: "small muted", style: "margin-top:4px" }, it.notes) : null);
+}
+
+// Правка пункта уже выданного (оплаченного) обращения — только для админа:
+// исправить название/цену работы задним числом и то, кто её по факту
+// выполнил (перевесить на другого мастера, если отметил не тот), а на
+// «размноженных» пунктах (needQty > 1) — долю каждого из тех, кто
+// поучаствовал. Открывается прямо со стадии «Выдан» самого обращения
+// (тапом по пункту), без «Вернуть в работу» — статус заявки не трогаем.
+// Сохранение — через editOrder(orderNumber, ...), как и everywhere else в
+// приложении: sheet живёт своим элементом на body (см. openSheet) и может
+// пережить фоновый syncFromServer() (он летит на каждый hashchange), который
+// подменяет саму DB на свежий объект с сервера — держать прямую ссылку на
+// «it», захваченную при открытии формы, и мутировать её при сохранении
+// небезопасно, эта ссылка к тому моменту может уже не быть частью живой DB
+// (правка молча потеряется). Поэтому тут только черновик (draft), а на
+// «Сохранить» — переоткрытие свежего item по коду в ТЕКУЩЕЙ DB.
+function openHandedItemEdit(orderNumber, it, onSaved) {
+  const itemCode = it.code;
+  const draft = { name: it.name, price: it.workPrice || 0,
+    completions: (it.completions || []).map((c) => ({ masterId: c.masterId, masterName: c.masterName, qty: c.qty })) };
+  let masters = [];
+  const content = el("div", {});
+  let sheet;
+  const draw = () => {
+    const needQty = itemNeedsQty(it);
+    content.replaceChildren(
+      el("label", {}, "Название работы"),
+      el("input", { value: draft.name, oninput: (e) => (draft.name = e.target.value) }),
+      el("label", { style: "margin-top:8px" }, "Цена работы, ₽"),
+      el("input", { type: "number", value: draft.price, oninput: (e) => (draft.price = +e.target.value || 0) }),
+      el("label", { style: "margin-top:8px" }, "Кто выполнил"),
+      masters.length
+        ? el("div", { class: "rows" }, draft.completions.map((dc) => el("div", { class: "row", style: "gap:8px" },
+            el("select", {
+              style: "flex:1", onchange: (e) => {
+                dc.masterId = e.target.value;
+                dc.masterName = masters.find((m) => m.id === e.target.value)?.name || dc.masterName;
+              },
+            }, masters.map((m) => el("option", { value: m.id, selected: m.id === dc.masterId }, m.name))),
+            needQty > 1
+              ? el("input", { type: "number", value: dc.qty || 1, min: 1, style: "width:60px;flex:0 0 auto",
+                  oninput: (e) => (dc.qty = Math.max(1, +e.target.value || 1)) })
+              : null)))
+        : el("p", { class: "small muted" }, "Загрузка мастеров…"),
+      el("div", { class: "btn-row", style: "margin-top:12px" },
+        el("button", {
+          class: "btn-primary", onclick: () => {
+            editOrder(orderNumber, (o) => {
+              const freshIt = o.items.find((i) => i.code === itemCode);
+              if (!freshIt) return;
+              freshIt.name = draft.name.trim() || freshIt.name;
+              freshIt.workPrice = draft.price;
+              (freshIt.completions || []).forEach((c, idx) => {
+                const dc = draft.completions[idx];
+                if (!dc) return;
+                c.masterId = dc.masterId; c.masterName = dc.masterName; c.qty = dc.qty;
+              });
+              freshIt.done = totalCompletedQty(freshIt) >= itemNeedsQty(freshIt);
+            });
+            sheet.close();
+            onSaved();
+          },
+        }, "Сохранить"),
+        el("button", { onclick: () => sheet.close() }, "Отмена")));
+  };
+  draw();
+  sheet = openSheet(it.name, content);
+  ensureUsers().then((u) => { masters = u.filter((x) => x.active !== false); draw(); });
 }
 
 // Список усложнений — на «Оценке» (прикидка для клиента, ещё не известно
@@ -2943,71 +3024,13 @@ function historyList(masterId, percentOf) {
         if (!byOrder.has(o.number)) byOrder.set(o.number, { order: o, bike, client, lines: [], earned: 0, latest: c.at, handedAt: o.handedOverAt });
         const rec = byOrder.get(o.number);
         const earned = entryEarned({ item: it, completion: c }, percentOf);
-        // item/completion — живые ссылки на объекты в DB (loadDB() отдаёт её
-        // без копирования), не копии: правка прямо в них — это и есть
-        // сохранение, дальше только pushToServer() (см. редактирование
-        // истории в reportContent).
-        rec.lines.push({ name: it.name, qty: c.qty, needQty: itemNeedsQty(it), earned, masterName: c.masterName, item: it, completion: c });
+        rec.lines.push({ name: it.name, qty: c.qty, needQty: itemNeedsQty(it), earned, masterName: c.masterName });
         rec.earned += earned;
         if (c.at > rec.latest) rec.latest = c.at;
       }
     }
   }
   return [...byOrder.values()].sort((a, b) => b.handedAt.localeCompare(a.handedAt));
-}
-
-// Правка строки в истории уже выданных обращений — только для админа: можно
-// исправить, кто по факту выполнил работу (например, отметил не тот мастер),
-// её название и цену, а на «размноженных» пунктах (needQty > 1) — и долю
-// количества. Работает прямо тут, без «Вернуть в работу»: line.item/
-// line.completion — живые ссылки в саму DB, правим их на месте и сразу
-// пушим, как обычный editDB/editOrder.
-function openHistoryLineEdit(line, onSaved) {
-  const { item, completion } = line;
-  const draft = { name: item.name, price: item.workPrice || 0, masterId: completion.masterId, qty: completion.qty || 1 };
-  let masters = [];
-  const content = el("div", {});
-  let sheet;
-  const draw = () => {
-    const needQty = itemNeedsQty(item);
-    const otherQty = totalCompletedQty(item) - (completion.qty || 0);
-    const maxQty = Math.max(1, needQty - otherQty);
-    content.replaceChildren(
-      el("label", {}, "Название работы"),
-      el("input", { value: draft.name, oninput: (e) => (draft.name = e.target.value) }),
-      el("label", { style: "margin-top:8px" }, "Цена работы, ₽"),
-      el("input", { type: "number", value: draft.price, oninput: (e) => (draft.price = +e.target.value || 0) }),
-      el("label", { style: "margin-top:8px" }, "Кто выполнил"),
-      masters.length
-        ? el("select", { onchange: (e) => (draft.masterId = e.target.value) },
-            masters.map((m) => el("option", { value: m.id, selected: m.id === draft.masterId }, m.name)))
-        : el("p", { class: "small muted" }, "Загрузка мастеров…"),
-      needQty > 1
-        ? el("div", {}, el("label", { style: "margin-top:8px" }, `Количество (из ${needQty})`),
-            el("input", { type: "number", value: draft.qty, min: 1, max: maxQty,
-              oninput: (e) => (draft.qty = Math.max(1, Math.min(maxQty, +e.target.value || 1))) }))
-        : null,
-      el("div", { class: "btn-row", style: "margin-top:12px" },
-        el("button", {
-          class: "btn-primary", onclick: () => {
-            item.name = draft.name.trim() || item.name;
-            item.workPrice = draft.price;
-            const m = masters.find((x) => x.id === draft.masterId);
-            completion.masterId = draft.masterId;
-            completion.masterName = m?.name || completion.masterName;
-            completion.qty = draft.qty;
-            item.done = totalCompletedQty(item) >= itemNeedsQty(item);
-            writeLocal();
-            pushToServer();
-            sheet.close();
-            onSaved();
-          },
-        }, "Сохранить"),
-        el("button", { onclick: () => sheet.close() }, "Отмена")));
-  };
-  draw();
-  sheet = openSheet("Правка записи", content);
-  ensureUsers().then((u) => { masters = u.filter((x) => x.active !== false); draw(); });
 }
 
 // Тело отчёта (переключатель периода + график + история) — общее что для
@@ -3162,20 +3185,8 @@ function buildReportTab(masterId, percentOf, tab) {
                 rec.latest ? el("div", { class: "small muted" }, formatDateShort(rec.latest)) : null),
               el("div", { class: "price-tag" }, money(rec.earned))),
             el("div", { class: "small muted", style: "margin-top:6px" },
-              rec.lines.map((l) => el("div", { style: "display:flex;align-items:center;gap:4px" },
-                el("span", { style: "flex:1" },
-                  masterId == null ? `${l.masterName} — ` : "", l.name, l.needQty > 1 ? ` ×${l.qty} из ${l.needQty}` : "", " — ", money(l.earned)),
-                // Правка задним числом — только у админа: перевесить работу на
-                // другого мастера, поправить название/цену, без «Вернуть в
-                // работу» (см. openHistoryLineEdit). preventDefault/
-                // stopPropagation — вся карточка сама ссылка на обращение.
-                SESSION?.role === "admin"
-                  ? el("button", {
-                      class: "small", style: "border:0;background:none;color:var(--muted);padding:0;flex:0 0 auto",
-                      html: ICON_EDIT,
-                      onclick: (e) => { e.preventDefault(); e.stopPropagation(); openHistoryLineEdit(l, redrawHistory); },
-                    })
-                  : null))))))
+              rec.lines.map((l) => el("div", {},
+                masterId == null ? `${l.masterName} — ` : "", l.name, l.needQty > 1 ? ` ×${l.qty} из ${l.needQty}` : "", " — ", money(l.earned)))))))
     );
   };
 
