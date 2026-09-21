@@ -816,17 +816,28 @@ window.addEventListener("popstate", () => {
 (function setupKeyboardOffset() {
   if (!window.visualViewport) return;
   const vv = window.visualViewport;
-  // Только "resize" — клавиатура меняет именно высоту visualViewport.
-  // Раньше слушали ещё и "scroll", а в формулу подмешивали vv.offsetTop —
-  // но offsetTop плавает и от обычного оттягивания страницы вниз до упора
-  // (резиновый bounce-скролл iOS), из-за чего панель поиска на секунду
-  // подпрыгивала вверх при долистывании страницы, а не только при
-  // появлении клавиатуры.
+  // Высоты недостаточно: как только клавиатура открылась, iOS следом сам
+  // прокручивает страницу, чтобы поднять сфокусированное поле над ней — от
+  // этого visualViewport ещё и сдвигается внутри layout-viewport
+  // (vv.offsetTop), а «resize» на это уже не срабатывает повторно. Без
+  // поправки на offsetTop панель после этого доскролла зависает
+  // где-то в середине экрана, оторвавшись от настоящей клавиатуры.
+  // Раньше слушали offsetTop и через "scroll" тоже, но без привязки к тому,
+  // открыта ли вообще клавиатура — то же событие летит и от обычного
+  // оттягивания страницы вниз до упора (резиновый bounce-скролл iOS), из-за
+  // чего панель на секунду подпрыгивала вверх при долистывании. Поэтому
+  // "scroll" пересчитывает панель, только пока по высоте видно, что
+  // клавиатура правда открыта — во время bounce-скролла без клавиатуры этот
+  // пересчёт просто не включается.
+  let kbOpen = false;
   const update = () => {
-    const offset = Math.max(0, window.innerHeight - vv.height);
+    const heightDiff = Math.max(0, window.innerHeight - vv.height);
+    kbOpen = heightDiff > 50;
+    const offset = kbOpen ? Math.max(0, heightDiff - vv.offsetTop) : 0;
     document.documentElement.style.setProperty("--kb-offset", offset + "px");
   };
   vv.addEventListener("resize", update);
+  vv.addEventListener("scroll", () => { if (kbOpen) update(); });
   update();
 })();
 
