@@ -691,7 +691,7 @@ function openWorkPicker({ existingItems, bikeKind, onBack, onPick }) {
     const createBox = el("div", { style: "margin-top:10px" });
     const drawCreate = () => {
       if (!creating) return createBox.replaceChildren();
-      createBox.replaceChildren(el("div", { class: "card", style: "background:var(--bg)" },
+      createBox.replaceChildren(el("div", { class: "card card-flush" },
         el("label", {}, "Название разовой услуги"),
         el("input", { placeholder: "напр. Мойка велосипеда", value: draftFa.label, oninput: (e) => (draftFa.label = e.target.value) }),
         el("div", { style: "display:flex;flex-wrap:wrap;gap:8px;margin-top:8px" },
@@ -1235,7 +1235,7 @@ function viewNewOrder() {
         body.append(row);
       });
       body.append(
-        el("div", { class: "card", style: "background:var(--bg)" },
+        el("div", { class: "card card-flush" },
           el("span", { class: "muted small" }, "Согласовано на"),
           el("div", { class: "price-range" }, rangeText(orderRange({ items: draft.items }))),
           minutesText(orderMinutes({ items: draft.items }, true)) ? el("div", { class: "small muted", style: "margin-top:4px" }, minutesText(orderMinutes({ items: draft.items }, true))) : null));
@@ -1536,7 +1536,7 @@ function viewOrder(number) {
         refresh();
       })));
     body.append(
-      el("div", { class: "card", style: "background:var(--bg)" },
+      el("div", { class: "card card-flush" },
         el("span", { class: "muted small" }, "Итого клиенту"),
         el("div", { class: "price-range" }, rangeText(orderRangeAll(order))),
         minutesText(orderMinutes(order, false)) ? el("div", { class: "small muted", style: "margin-top:4px" }, minutesText(orderMinutes(order, false))) : null),
@@ -1555,7 +1555,7 @@ function viewOrder(number) {
           el("span", { class: "small muted" }, rangeText(r)))));
     });
     body.append(
-      el("div", { class: "card", style: "background:var(--bg)" },
+      el("div", { class: "card card-flush" },
         el("span", { class: "muted small" }, "Согласовано на"),
         el("div", { class: "price-range" }, rangeText(range)),
         minutesText(orderMinutes(order, true)) ? el("div", { class: "small muted", style: "margin-top:4px" }, minutesText(orderMinutes(order, true))) : null),
@@ -1591,7 +1591,7 @@ function viewOrder(number) {
       main.append(stage("Ремонт",
         el("p", { class: "small muted" }, `Заявку сейчас ведёт: ${order.occupiedByName || "другой мастер"}.`),
         itemList({ items: agreedItems }, true, null, true, false),
-        agreedItems.length ? el("div", { class: "card", style: "background:var(--bg);margin-top:12px" },
+        agreedItems.length ? el("div", { class: "card card-flush", style: "margin-top:12px" },
           el("span", { class: "muted small" }, "Итого"),
           el("div", { class: "total" }, rangeText(range))) : null));
     } else {
@@ -1625,7 +1625,7 @@ function viewOrder(number) {
         // экране-смете, теперь его увели вместе с самим экраном; тут он нужен
         // так же, звонить клиенту с итоговой суммой можно прямо отсюда.
         if (order.items.some((i) => i.agreed)) b.append(
-          el("div", { class: "card", style: "background:var(--bg);margin-top:12px" },
+          el("div", { class: "card card-flush", style: "margin-top:12px" },
             el("span", { class: "muted small" }, "Итого"),
             el("div", { class: "total" }, rangeText(range))));
         // «+ доп. работа» разворачивает список узлов (Колёса, Тормоз…) прямо
@@ -1692,7 +1692,7 @@ function viewOrder(number) {
         }))
       : itemList({ items: agreedItems }, true, null, true, false);
     main.append(stage("Выдан", itemsBlock,
-      el("div", { class: "card", style: "background:var(--bg)" },
+      el("div", { class: "card card-flush" },
         el("span", { class: "muted small" }, "Итого"),
         el("div", { class: "total" }, rangeText(range))),
       // Выдали по ошибке раньше времени или нашлась недоделка — можно
@@ -1795,7 +1795,7 @@ function partsEditor(parts, stock, onChange, blockId) {
   const manualBox = el("div", { style: "margin-top:8px" });
   const drawManual = () => {
     if (!manualOpen) return manualBox.replaceChildren();
-    manualBox.replaceChildren(el("div", { class: "card", style: "background:var(--bg)" },
+    manualBox.replaceChildren(el("div", { class: "card card-flush" },
       el("label", {}, "Название запчасти"),
       el("input", { placeholder: "напр. Прокладка", value: manualDraft.name, oninput: (e) => (manualDraft.name = e.target.value) }),
       el("label", { style: "margin-top:8px" }, "Цена, ₽"),
@@ -1970,7 +1970,7 @@ function editableItemRow(it, { onRemove, onSave, refresh }) {
     difficulties: JSON.parse(JSON.stringify(it.difficulties || [])),
   };
   const compsBox = complicationsEditor(d.difficulties);
-  const form = el("div", { class: "card", style: "background:var(--bg);margin-top:8px" },
+  const form = el("div", { class: "card card-flush", style: "margin-top:8px" },
     el("label", {}, "Название"),
     el("input", { value: d.name, oninput: (e) => (d.name = e.target.value) }),
     el("div", { style: "display:flex;flex-wrap:wrap;gap:8px;margin-top:8px" },
@@ -2587,7 +2587,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onDone, request = "", onRe
       multiple: !!eff.multiple,
     };
     const compsBox = hasPrice ? complicationsEditor(draftOv.complications) : null;
-    return el("div", { class: "card", style: "background:var(--bg);margin-top:8px" },
+    return el("div", { class: "card card-flush", style: "margin-top:8px" },
       el("label", {}, "Название"),
       el("input", { value: draftOv.name, oninput: (e) => (draftOv.name = e.target.value) }),
       !hasPrice ? el("p", { class: "small muted", style: "margin-top:6px" }, "Без кода операции — цена определяется на разборке, тут доступно только название.") : null,
@@ -2614,7 +2614,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onDone, request = "", onRe
   function customFaultForm(blockId) {
     const draftFa = { label: "", price: 0, minutes: 0, complications: [], multiple: false };
     const compsBox = complicationsEditor(draftFa.complications);
-    return el("div", { class: "card", style: "background:var(--bg);margin-top:8px" },
+    return el("div", { class: "card card-flush", style: "margin-top:8px" },
       el("label", {}, "Название неисправности"),
       el("input", { placeholder: "напр. Восьмёрка", oninput: (e) => (draftFa.label = e.target.value) }),
       el("div", { style: "display:flex;flex-wrap:wrap;gap:8px;margin-top:8px" },
@@ -2646,7 +2646,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onDone, request = "", onRe
   function customFaultEditForm(f, onClose) {
     const draftFa = { label: f.label, price: f.price || 0, minutes: f.minutes || 0, complications: JSON.parse(JSON.stringify(f.complications || [])), multiple: !!f.multiple };
     const compsBox = complicationsEditor(draftFa.complications);
-    return el("div", { class: "card", style: "background:var(--bg);margin-top:8px" },
+    return el("div", { class: "card card-flush", style: "margin-top:8px" },
       el("label", {}, "Название неисправности"),
       el("input", { value: draftFa.label, oninput: (e) => (draftFa.label = e.target.value) }),
       el("div", { style: "display:flex;flex-wrap:wrap;gap:8px;margin-top:8px" },
@@ -2806,7 +2806,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onDone, request = "", onRe
     // велосипеда в будущем): просто ещё один пункт наряда, добавляется сразу
     // через onCheck, как и обычная отмеченная неисправность.
     wrap.append(miscOpen
-      ? el("div", { class: "card", style: "background:var(--bg)" },
+      ? el("div", { class: "card card-flush" },
           el("label", {}, "Название разовой услуги"),
           el("input", { placeholder: "напр. Мойка велосипеда", value: miscDraft.label, oninput: (e) => (miscDraft.label = e.target.value) }),
           el("div", { style: "display:flex;flex-wrap:wrap;gap:8px;margin-top:8px" },

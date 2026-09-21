@@ -67,6 +67,11 @@ header.bar .bar-title-lg { font-size:19px; font-weight:700; }
 .card { background:var(--card); border:.5px solid var(--line); border-radius:var(--radius); padding:var(--sp-4);
   margin-bottom:var(--sp-4); box-shadow:var(--shadow-sm); }
 .card h2 { margin:0 0 var(--sp-3); font-size:var(--fs-lg); font-weight:700; letter-spacing:-.01em; }
+/* «Тихая» карточка — итоговая сумма или встроенная форма добавления,
+   фон которой специально совпадает с фоном страницы, чтобы не читаться
+   отдельной приподнятой плашкой. С обычной рамкой+тенью у .card такие
+   блоки выглядели как рамка внутри рамки — здесь убираем и то, и другое. */
+.card-flush { background:var(--bg); border:0; box-shadow:none; }
 .muted { color:var(--muted); } .small { font-size:14px; }
 
 /* «сгруппированный список» — один контур, тонкие разделители между строками (как в Настройках iOS) */
