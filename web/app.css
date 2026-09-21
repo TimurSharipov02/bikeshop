@@ -6,9 +6,21 @@
   --orange:#ff9500; --orange-weak:#fff2e0; --purple:#af52de; --purple-weak:#f6ecfc;
   --teal:#30b0c7; --teal-weak:#e6f6f8; --fill:#e9e9ee;
   --yellow:#ffcc00; --yellow-weak:#fff6cc; --yellow-ink:#8a6d00;
-  --radius:14px; --radius-sm:10px;
-  --shadow-sm:0 1px 2px rgba(0,0,0,.04);
-  --shadow-md:0 12px 28px rgba(0,0,0,.12);
+  --on-accent:#fff;
+  --radius-sm:12px; --radius:16px; --radius-lg:22px;
+  /* --shadow-sm раньше был почти не виден (0 1px 2px alpha .04) — карточки
+     и списки выглядели плоскими, без «отрыва» от фона. */
+  --shadow-sm:0 1px 3px rgba(0,0,0,.08), 0 4px 10px rgba(0,0,0,.05);
+  --shadow-md:0 8px 24px rgba(0,0,0,.12);
+  --shadow-lg:0 20px 48px rgba(0,0,0,.18);
+  /* Шкала отступов (4pt grid) — раньше margin/padding расставлялись на
+     глаз без системы, из-за этого местами тесно и хаотично. */
+  --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:20px; --sp-6:24px; --sp-7:32px;
+  /* Шкала размеров шрифта — используется там, где раньше был ad hoc px
+     без чёткой иерархии (заголовки карточек/шторок). Остальной текст
+     (мелкие подписи, цены и т.п.) шкалу не использует намеренно —
+     трогать вообще всё было бы избыточным риском для живого прода. */
+  --fs-xs:12px; --fs-sm:14px; --fs-base:16px; --fs-md:17px; --fs-lg:20px; --fs-xl:24px; --fs-2xl:28px;
   color-scheme:light dark;
 }
 @media (prefers-color-scheme: dark) {
@@ -19,7 +31,8 @@
     --orange:#ff9f0a; --orange-weak:#3a2708; --purple:#bf5af2; --purple-weak:#2c1c38;
     --teal:#40c8e0; --teal-weak:#0e2b30; --fill:#2c2c2e;
     --yellow:#ffd60a; --yellow-weak:#3a3008; --yellow-ink:#ffd60a;
-    --shadow-sm:0 1px 2px rgba(0,0,0,.5); --shadow-md:0 14px 32px rgba(0,0,0,.6);
+    --shadow-sm:0 1px 3px rgba(0,0,0,.6), 0 4px 10px rgba(0,0,0,.4);
+    --shadow-md:0 8px 24px rgba(0,0,0,.55); --shadow-lg:0 20px 48px rgba(0,0,0,.7);
   }
 }
 * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
@@ -27,7 +40,7 @@ html,body { margin:0; padding:0; }
 body { background:var(--bg); color:var(--ink); font:17px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif; -webkit-text-size-adjust:100%; }
 a { color:var(--accent); text-decoration:none; }
 
-.wrap { max-width:640px; margin:0 auto; padding:20px 16px 112px; }
+.wrap { max-width:640px; margin:0 auto; padding:var(--sp-5) var(--sp-4) 112px; }
 
 /* Заголовок по центру, а не мелко слева от кнопки назад — так современнее
    выглядит, и на главном, на что смотрят на ходу, сразу фокус. Назад/правая
@@ -51,20 +64,20 @@ header.bar .bar-title-lg { font-size:19px; font-weight:700; }
 
 .card-link { display:block; color:inherit; text-decoration:none; transition:background .1s ease; }
 .card-link:active { background:var(--fill); }
-.card { background:var(--card); border:.5px solid var(--line); border-radius:var(--radius); padding:16px;
-  margin-bottom:14px; box-shadow:var(--shadow-sm); }
-.card h2 { margin:0 0 10px; font-size:16px; font-weight:650; letter-spacing:-.005em; }
+.card { background:var(--card); border:.5px solid var(--line); border-radius:var(--radius); padding:var(--sp-4);
+  margin-bottom:var(--sp-4); box-shadow:var(--shadow-sm); }
+.card h2 { margin:0 0 var(--sp-3); font-size:var(--fs-lg); font-weight:700; letter-spacing:-.01em; }
 .muted { color:var(--muted); } .small { font-size:14px; }
 
 /* «сгруппированный список» — один контур, тонкие разделители между строками (как в Настройках iOS) */
 .rows { display:flex; flex-direction:column; background:var(--card); border:.5px solid var(--line);
-  border-radius:var(--radius); box-shadow:var(--shadow-sm); overflow:hidden; margin-bottom:14px; }
+  border-radius:var(--radius); box-shadow:var(--shadow-sm); overflow:hidden; margin-bottom:var(--sp-4); }
 /* вложенный в .card список — карточка уже даёт рамку/тень, строкам нужны только разделители */
 .card .rows { border:0; box-shadow:none; border-radius:0; margin-bottom:0; }
-.list { display:flex; flex-direction:column; gap:9px; }
+.list { display:flex; flex-direction:column; gap:var(--sp-3); }
 
-.row { display:flex; align-items:center; gap:12px; background:transparent; border:0; border-bottom:.5px solid var(--line);
-  border-radius:0; padding:13px 16px; width:100%; text-align:left; color:var(--ink); font-size:16px;
+.row { display:flex; align-items:center; gap:var(--sp-3); background:transparent; border:0; border-bottom:.5px solid var(--line);
+  border-radius:0; padding:var(--sp-4); width:100%; text-align:left; color:var(--ink); font-size:16px;
   cursor:pointer; transition:background .1s ease; }
 .rows .row:last-child { border-bottom:0; }
 .row:active { background:var(--fill); }
@@ -72,7 +85,7 @@ header.bar .bar-title-lg { font-size:19px; font-weight:700; }
 .row .tag { margin-left:auto; font-size:12px; font-weight:600; padding:3px 9px; border-radius:999px;
   background:var(--fill); color:var(--muted); border:0; white-space:nowrap; }
 .row-icon { flex:0 0 auto; width:30px; height:30px; border-radius:8px; background:var(--accent);
-  color:#fff; display:flex; align-items:center; justify-content:center; }
+  color:var(--on-accent); display:flex; align-items:center; justify-content:center; }
 .row-icon svg { width:17px; height:17px; }
 
 .empty-state { text-align:center; padding:26px 16px; }
@@ -121,13 +134,13 @@ header.bar .bar-title-lg { font-size:19px; font-weight:700; }
   opacity:0; transition:opacity .22s ease; }
 .sheet-backdrop.show { opacity:1; }
 .sheet { position:fixed; left:0; right:0; bottom:0; z-index:91; max-width:640px; margin:0 auto;
-  background:var(--card); border-radius:20px 20px 0 0; box-shadow:var(--shadow-md);
+  background:var(--card); border-radius:var(--radius-lg) var(--radius-lg) 0 0; box-shadow:var(--shadow-lg);
   max-height:85vh; display:flex; flex-direction:column; overflow:hidden;
   transform:translateY(100%); transition:transform .28s cubic-bezier(.32,.72,0,1); }
 .sheet.show { transform:translateY(0); }
 .sheet-handle { width:36px; height:5px; border-radius:999px; background:var(--line); margin:10px auto 0; flex:0 0 auto; }
 .sheet-header { display:flex; align-items:center; justify-content:space-between; padding:6px 10px 6px 20px; flex:0 0 auto; }
-.sheet-header h2 { margin:0; font-size:17px; font-weight:650; letter-spacing:-.005em; }
+.sheet-header h2 { margin:0; font-size:var(--fs-lg); font-weight:700; letter-spacing:-.01em; }
 .sheet-body { padding:0 20px calc(20px + env(safe-area-inset-bottom)); overflow-y:auto; }
 
 /* Тост — короткое всплывающее подтверждение действия. */
@@ -147,7 +160,7 @@ header.bar .bar-title-lg { font-size:19px; font-weight:700; }
   -webkit-user-drag:none; user-select:none; -webkit-user-select:none; }
 .swipe-action { position:absolute; top:0; right:0; bottom:0; width:88px; border:0;
   border-radius:0 var(--radius-sm) var(--radius-sm) 0;
-  min-height:0; padding:0; background:var(--warn); color:#fff; font-size:14px; font-weight:600; cursor:pointer; }
+  min-height:0; padding:0; background:var(--warn); color:var(--on-accent); font-size:14px; font-weight:600; cursor:pointer; }
 
 /* То же, но несколько узких кнопок-иконок подряд (правка + удаление) вместо
    одной с текстом — для строк, где эти кнопки раньше жили прямо в строке и
@@ -157,7 +170,7 @@ header.bar .bar-title-lg { font-size:19px; font-weight:700; }
   display:flex; align-items:center; justify-content:center; font-size:19px; cursor:pointer;
   background:var(--fill); color:var(--ink); }
 .swipe-action-btn:last-child { border-radius:0 var(--radius-sm) var(--radius-sm) 0; }
-.swipe-action-btn.warn { background:var(--warn); color:#fff; }
+.swipe-action-btn.warn { background:var(--warn); color:var(--on-accent); }
 
 /* статус обращения — цвет для быстрого сканирования списка */
 .tag.tag-new     { background:var(--fill); color:var(--muted); }
@@ -174,27 +187,28 @@ header.bar .bar-title-lg { font-size:19px; font-weight:700; }
    задержку и жест зума, оставляя обычный тап и скролл как есть. */
 button, .opt { touch-action: manipulation; }
 button { font:inherit; border:.5px solid var(--line); background:var(--card); color:var(--ink); border-radius:var(--radius-sm);
-  padding:13px 16px; cursor:pointer; min-height:46px; transition:transform .1s ease, opacity .1s ease; }
+  padding:var(--sp-3) var(--sp-4); cursor:pointer; min-height:46px; transition:transform .1s ease, opacity .1s ease; }
 button:active { transform:scale(.98); opacity:.85; }
 button:disabled { opacity:.4; cursor:default; }
 button:disabled:active { transform:none; }
-.btn-primary { background:var(--accent); color:var(--accent-ink); border-color:var(--accent); font-weight:600; }
-.btn-ok { background:var(--ok); color:#fff; border-color:var(--ok); font-weight:600; }
-.btn-warn { background:var(--warn); color:#fff; border-color:var(--warn); font-weight:600; }
-.btn-row { display:flex; gap:10px; flex-wrap:wrap; }
+/* Заливные кнопки — с собственной мягкой тенью, вместо плоской заливки:
+   ощущение «нажимаемости», а не просто цветного прямоугольника. */
+.btn-primary { background:var(--accent); color:var(--accent-ink); border-color:var(--accent); font-weight:600; box-shadow:var(--shadow-sm); }
+.btn-ok { background:var(--ok); color:var(--on-accent); border-color:var(--ok); font-weight:600; box-shadow:var(--shadow-sm); }
+.btn-warn { background:var(--warn); color:var(--on-accent); border-color:var(--warn); font-weight:600; box-shadow:var(--shadow-sm); }
+.btn-row { display:flex; gap:var(--sp-3); flex-wrap:wrap; }
 .btn-row button { flex:1; min-width:120px; }
 
 /* сегментированный переключатель (режим показа и т.п.) */
 .segmented { display:flex; gap:2px; background:var(--fill); border-radius:var(--radius-sm); padding:2px; }
 .segmented button { flex:1; border:0; background:transparent; color:var(--ink); min-height:38px; padding:7px 10px;
   font-size:14px; font-weight:500; border-radius:8px; box-shadow:none; }
-.segmented button.active { background:var(--card); font-weight:600; box-shadow:0 1px 3px rgba(0,0,0,.15); }
-@media (prefers-color-scheme: dark) { .segmented button.active { box-shadow:0 1px 3px rgba(0,0,0,.5); } }
+.segmented button.active { background:var(--card); font-weight:600; box-shadow:var(--shadow-sm); }
 /* Будет/не будет/неизвестно — цвет держится и на активном сегменте, чтобы
    состояние читалось с одного взгляда, как раньше у трёх отдельных кнопок. */
-.segmented button.active.sel-yes { background:var(--warn); color:#fff; box-shadow:none; }
-.segmented button.active.sel-no { background:var(--ok); color:#fff; box-shadow:none; }
-.segmented button.active.sel-unknown { background:var(--muted); color:#fff; box-shadow:none; }
+.segmented button.active.sel-yes { background:var(--warn); color:var(--on-accent); box-shadow:none; }
+.segmented button.active.sel-no { background:var(--ok); color:var(--on-accent); box-shadow:none; }
+.segmented button.active.sel-unknown { background:var(--muted); color:var(--on-accent); box-shadow:none; }
 
 /* bottom — не просто 0: на весу над открытой клавиатурой (--kb-offset
    ставит app.js через VisualViewport, иначе на iOS фикс. панель остаётся
@@ -204,10 +218,10 @@ button:disabled:active { transform:none; }
 .actions { position:fixed; left:0; right:0; bottom:var(--kb-offset, 0px); z-index:40; background:color-mix(in srgb, var(--card) 85%, transparent);
   -webkit-backdrop-filter:saturate(180%) blur(18px); backdrop-filter:saturate(180%) blur(18px);
   border-top:.5px solid var(--line); padding:12px 16px calc(16px + env(safe-area-inset-bottom)); }
-.actions-inner { max-width:640px; margin:0 auto; display:flex; gap:10px; width:100%; }
+.actions-inner { max-width:640px; margin:0 auto; display:flex; gap:var(--sp-3); width:100%; }
 .actions-inner > button { flex:1; }
 
-input,textarea,select { font:inherit; width:100%; padding:12px 13px; border:.5px solid var(--line); border-radius:var(--radius-sm);
+input,textarea,select { font:inherit; width:100%; padding:var(--sp-3); border:.5px solid var(--line); border-radius:var(--radius-sm);
   background:var(--fill); color:var(--ink); transition:border-color .12s ease, box-shadow .12s ease; }
 input:focus,textarea:focus,select:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-weak); }
 /* Родные стрелки +/- у number-полей на узком экране только крадут место у
@@ -216,7 +230,7 @@ input:focus,textarea:focus,select:focus { outline:none; border-color:var(--accen
    них. */
 input[type=number] { min-width:0; -moz-appearance:textfield; }
 input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance:none; margin:0; }
-label { display:block; font-size:13px; color:var(--muted); margin:14px 0 5px; font-weight:500; }
+label { display:block; font-size:13px; color:var(--muted); margin:var(--sp-4) 0 var(--sp-1); font-weight:500; }
 
 /* Крестик очистки поиска — виден, только пока есть что стирать. */
 .search-wrap { position:relative; }
@@ -280,9 +294,9 @@ label { display:block; font-size:13px; color:var(--muted); margin:14px 0 5px; fo
 .opt input[type="radio"] { border-radius:50%; }
 .opt input[type="checkbox"]:checked, .opt input[type="radio"]:checked, input.chk:checked { background:var(--accent); border-color:var(--accent); }
 .opt input[type="checkbox"]:checked::after, input.chk:checked::after {
-  content:""; width:6px; height:10px; border:solid #fff; border-width:0 2px 2px 0; transform:rotate(45deg) translate(-1px,-1.5px);
+  content:""; width:6px; height:10px; border:solid var(--on-accent); border-width:0 2px 2px 0; transform:rotate(45deg) translate(-1px,-1.5px);
 }
-.opt input[type="radio"]:checked::after { content:""; width:8px; height:8px; border-radius:50%; background:#fff; }
+.opt input[type="radio"]:checked::after { content:""; width:8px; height:8px; border-radius:50%; background:var(--on-accent); }
 
 .check-item { padding:10px 0; border-bottom:.5px solid var(--line); }
 .hint-toggle { border:0; background:none; padding:4px 0; color:var(--accent); min-height:auto; }
