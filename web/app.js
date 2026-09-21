@@ -998,9 +998,15 @@ function swipeToDelete(rowNode, onDelete, label = "Удалить") {
   };
   rowNode.addEventListener("pointerup", finish);
   rowNode.addEventListener("pointercancel", finish);
+  // stopImmediatePropagation — не только preventDefault(): rowNode может сам
+  // по себе иметь собственный click-обработчик (строка-переключатель, см.
+  // диагностику), зарегистрированный ДО этого. preventDefault гасит только
+  // штатное поведение (например переключение чекбокса через label), но не
+  // чужие addEventListener-слушатели — без stopImmediatePropagation
+  // свайп-жест долетал бы до них как обычный тап и срабатывал бы заодно.
   rowNode.addEventListener("click", (e) => {
-    if (moved) { e.preventDefault(); return; }
-    if (x !== 0) { e.preventDefault(); close(); if (openSwipeClose === close) openSwipeClose = null; }
+    if (moved) { e.preventDefault(); e.stopImmediatePropagation(); return; }
+    if (x !== 0) { e.preventDefault(); e.stopImmediatePropagation(); close(); if (openSwipeClose === close) openSwipeClose = null; }
   });
 
   return wrap;
@@ -1061,9 +1067,15 @@ function swipeActions(rowNode, actions) {
   };
   rowNode.addEventListener("pointerup", finish);
   rowNode.addEventListener("pointercancel", finish);
+  // stopImmediatePropagation — не только preventDefault(): rowNode может сам
+  // по себе иметь собственный click-обработчик (строка-переключатель, см.
+  // диагностику), зарегистрированный ДО этого. preventDefault гасит только
+  // штатное поведение (например переключение чекбокса через label), но не
+  // чужие addEventListener-слушатели — без stopImmediatePropagation
+  // свайп-жест долетал бы до них как обычный тап и срабатывал бы заодно.
   rowNode.addEventListener("click", (e) => {
-    if (moved) { e.preventDefault(); return; }
-    if (x !== 0) { e.preventDefault(); close(); if (openSwipeClose === close) openSwipeClose = null; }
+    if (moved) { e.preventDefault(); e.stopImmediatePropagation(); return; }
+    if (x !== 0) { e.preventDefault(); e.stopImmediatePropagation(); close(); if (openSwipeClose === close) openSwipeClose = null; }
   });
 
   return wrap;
@@ -2602,21 +2614,32 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
           const isAdmin = SESSION?.role === "admin";
           const editKey = f.custom ? f.id : f.overrideKey;
           const editingThis = editOverrideFor.has(editKey);
-          const rowContent = el("div", { style: "display:flex;align-items:center" },
-            el("label", { class: "row opt", style: "flex:1" },
-              el("input", { type: "checkbox", checked: s.faults.has(i),
-                onchange: () => {
-                  // Без code — неисправность без привязанной операции (определяется
-                  // на разборке), в наряд не превращается, только в заметку.
-                  // Один и тот же код может быть отмечен и спереди, и сзади —
-                  // убираем работу из наряда, только когда код больше нигде не отмечен.
-                  if (s.faults.has(i)) { s.faults.delete(i); if (f.code && !codeCheckedElsewhere(f.code, inst.id)) onUncheck(f); }
-                  else { s.faults.add(i); if (f.code) onCheck(f); }
-                  draw();
-                } }),
-              el("span", {}, f.label,
-                f.code && !f.custom ? el("span", { class: "pill" }, rangeText(codeRange(f.code))) : null,
-                f.custom ? el("span", { class: "pill" }, rangeText(customFaultRange(f))) : null)));
+          // Раньше — чекбокс внутри строки: на плотном списке из многих строк
+          // подряд промах мимо мелкого квадратика по пальцу ощущался как
+          // «всё съезжает» (задевали соседнюю строку/скролл). Теперь тап в
+          // любом месте строки — сама заливка и есть индикатор выбора,
+          // отдельного элемента для галочки нет.
+          const checked = s.faults.has(i);
+          const rowContent = el("div", { class: "row opt" + (checked ? " selected" : ""), style: "cursor:pointer" },
+            el("span", { style: "flex:1" }, f.label,
+              f.code && !f.custom ? el("span", { class: "pill" }, rangeText(codeRange(f.code))) : null,
+              f.custom ? el("span", { class: "pill" }, rangeText(customFaultRange(f))) : null));
+          // Слушатель добавлен ПОСЛЕ swipeActions(rowContent, ...) ниже (не
+          // через onclick в el() при создании) — важен порядок регистрации:
+          // у swipeActions есть свой click-обработчик на этом же узле,
+          // который при свайпе гасит клик через stopImmediatePropagation, но
+          // только для слушателей, зарегистрированных ПОСЛЕ него. Если бы
+          // тут стоял просто onclick в el(), он сработал бы раньше свайпа
+          // и отмечал бы галочку даже во время жеста «смахнуть для правки».
+          const toggle = () => {
+            // Без code — неисправность без привязанной операции (определяется
+            // на разборке), в наряд не превращается, только в заметку.
+            // Один и тот же код может быть отмечен и спереди, и сзади —
+            // убираем работу из наряда, только когда код больше нигде не отмечен.
+            if (checked) { s.faults.delete(i); if (f.code && !codeCheckedElsewhere(f.code, inst.id)) onUncheck(f); }
+            else { s.faults.add(i); if (f.code) onCheck(f); }
+            draw();
+          };
           // Раньше ✎/✕ жили прямо в строке — с плотным списком смотрелись
           // мелко и тесно. Теперь открываются свайпом влево, как удаление
           // в других списках приложения.
@@ -2653,6 +2676,7 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
             editingThis
               ? (f.custom ? customFaultEditForm(f, () => { editOverrideFor.delete(editKey); draw(); }) : overrideForm(f, () => { editOverrideFor.delete(editKey); draw(); }))
               : null));
+          rowContent.addEventListener("click", toggle);
         });
         if (faultNodes.length) fb.append(rowsList(faultNodes, true));
         if (SESSION?.role === "admin") {

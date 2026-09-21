@@ -250,6 +250,11 @@ label { display:block; font-size:13px; color:var(--muted); margin:14px 0 5px; fo
    плоская строка списка с разделителем, отмеченная просто заливкой. */
 .row.opt { border:0; border-radius:0; margin:0; padding:13px 16px; background:transparent; }
 .row.opt:has(input:checked) { border-color:transparent; background:var(--accent-weak); }
+/* Список неисправностей узла (диагностика) — без чекбокса: сама строка
+   и есть кнопка-переключатель, тап в любом месте строки отмечает/снимает,
+   заливка — единственный индикатор выбора (без отдельной галочки сбоку,
+   которую на плотном списке легко было промазать пальцем). */
+.row.opt.selected { background:var(--accent-weak); }
 /* Свой чекбокс/радио вместо голого системного — квадрат со скруглением или
    кружок, заливка акцентом и белая галочка/точка при выборе. */
 .opt input[type="checkbox"], .opt input[type="radio"], input.chk {
