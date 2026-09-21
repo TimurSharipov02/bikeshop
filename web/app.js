@@ -2063,8 +2063,7 @@ function openHandedItemEdit(orderNumber, it, onSaved) {
               },
             }, masters.map((m) => el("option", { value: m.id, selected: m.id === dc.masterId }, m.name))),
             needQty > 1
-              ? el("input", { type: "number", value: dc.qty || 1, min: 1, style: "width:60px;flex:0 0 auto",
-                  oninput: (e) => (dc.qty = Math.max(1, +e.target.value || 1)) })
+              ? qtyStepper(dc.qty || 1, (qty) => { dc.qty = qty; draw(); }, 0)
               : null)))
         : el("p", { class: "small muted" }, "Загрузка мастеров…"),
       el("div", { class: "btn-row", style: "margin-top:12px" },
@@ -2261,6 +2260,7 @@ function openRepairSheet(it, stock, onSave) {
   const save = (extra) => onSave({ parts: pickedParts, difficulties: diffs, ...extra });
   const hasDiffs = diffs.length > 0;
   let tab = hasDiffs ? "diff" : "parts";
+  let qty = null; // выбранное количество для частичной сдачи (needQty > 1)
 
   const content = el("div", {});
   function draw() {
@@ -2278,6 +2278,7 @@ function openRepairSheet(it, stock, onSave) {
     const needQty = itemNeedsQty(it);
     const doneQty = totalCompletedQty(it);
     const remaining = needQty - doneQty;
+    if (qty == null || qty > remaining) qty = remaining;
     const removeCompletion = (i) => {
       it.completions = it.completions.filter((_, idx) => idx !== i);
       it.done = totalCompletedQty(it) >= needQty;
@@ -2320,7 +2321,6 @@ function openRepairSheet(it, stock, onSave) {
         ? el("button", { style: "width:100%;margin-top:16px", onclick: () => removeCompletion(0) }, "Снять отметку «готово»")
         : el("button", { class: "btn-ok", style: "width:100%;margin-top:16px", onclick: () => addCompletion(1) }, "Отметить готово");
     } else {
-      let qtyInput;
       doneBlock = el("div", { style: "margin-top:16px" },
         (it.completions || []).length ? el("div", { class: "rows" },
           it.completions.map((c, i) => el("div", { class: "row", style: "cursor:default" },
@@ -2328,10 +2328,10 @@ function openRepairSheet(it, stock, onSave) {
             el("button", { style: iconBtnStyle, onclick: () => removeCompletion(i) }, "✕")))) : null,
         remaining > 0
           ? el("div", { style: "display:flex;gap:8px;align-items:center;margin-top:10px" },
-              qtyInput = el("input", { type: "number", value: remaining, min: 1, max: remaining, style: "width:70px" }),
+              qtyStepper(qty, (v) => { qty = v; draw(); }, remaining),
               el("button", {
                 class: "btn-ok", style: "flex:1",
-                onclick: () => addCompletion(Math.max(1, Math.min(remaining, +qtyInput.value || remaining))),
+                onclick: () => addCompletion(qty),
               }, "Отметить готово"))
           : el("p", { class: "small", style: "color:var(--ok);margin-top:4px" }, "Всё сделано"));
     }
