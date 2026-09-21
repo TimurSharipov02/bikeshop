@@ -164,6 +164,7 @@ header.bar .bar-title-lg { font-size:19px; font-weight:700; }
 .tag.tag-progress{ background:var(--accent-weak); color:var(--accent); }
 .tag.tag-check   { background:var(--teal-weak); color:var(--teal); }
 .tag.tag-done    { background:var(--ok-weak); color:var(--ok); }
+.tag.tag-block   { background:var(--warn-weak); color:var(--warn); }
 
 /* Без этого быстрые повторные тапы (счётчик количества и т.п.) иногда
    распознаются как двойной тап — браузер ждёт, не жест ли это масштабирования,

@@ -473,6 +473,11 @@ const orderAllDone = (o) => {
   const agreed = o.items.filter((i) => i.agreed);
   return agreed.length > 0 && agreed.every((i) => i.done);
 };
+// Хотя бы одна согласованная и ещё не готовая работа помечена «ждёт
+// запчасть» (см. openRepairSheet) — заявка фактически стоит, даже если
+// статус в базе всё ещё «взята в работу»: отдельной стадии для этого нет,
+// это только отображаемый тег (см. orderStatusTag), как и «Готово к выдаче».
+const orderWaitingForPart = (o) => o.items.some((i) => i.agreed && !i.done && i.waitingForPart);
 // Работу мог сделать не один мастер сразу, а по частям, если пункт
 // «размножен» (multiple, qty > 1) — каждый застолбил свою долю в
 // it.completions: [{masterId, masterName, qty, at}]. Для обычного пункта
@@ -715,6 +720,7 @@ const statusTag = (status) => el("span", { class: "tag " + (STATUS_TAG_CLASS[sta
 // или освобождена кнопкой «Выйти») — «Свободна».
 const orderStatusTag = (o) => {
   if (o.status === "взята в работу" && orderAllDone(o)) return el("span", { class: "tag tag-check" }, "Готово к выдаче");
+  if (o.status === "взята в работу" && orderWaitingForPart(o)) return el("span", { class: "tag tag-block" }, "Ожидает запчасть");
   if (o.status === "взята в работу" && !o.occupiedBy) return el("span", { class: "tag tag-new" }, "Свободна");
   return statusTag(o.status);
 };
@@ -1904,6 +1910,7 @@ function detailedItemRow(it) {
   const r = itemRange(it);
   const nameRow = el("div", { style: "display:flex;align-items:center;gap:8px" },
     el("b", { style: "flex:1;min-width:0" }, it.name, it.multiple && (it.qty || 1) > 1 ? el("span", { class: "small muted" }, ` × ${it.qty}`) : null),
+    it.waitingForPart && !it.done ? el("span", { class: "pill", style: "background:var(--warn-weak);color:var(--warn)" }, "ждёт запчасть") : null,
     it.done ? el("span", { class: "pill" }, completionsSummary(it) || "готово") : null);
   return el("div", { class: "assess" },
     nameRow,
@@ -2042,6 +2049,7 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove }) {
   const box = el("div", { class: "assess" });
   const nameRow = el("div", { style: "display:flex;align-items:center;gap:8px" },
     el("b", { style: "flex:1;min-width:0" }, it.name),
+    it.waitingForPart && !it.done ? el("span", { class: "pill", style: "background:var(--warn-weak);color:var(--warn)" }, "ждёт запчасть") : null,
     it.done ? el("span", { class: "pill" }, completionsSummary(it) || "готово") : null,
     el("span", { style: "flex:0 0 auto;color:var(--line);font-size:19px" }, "›"));
   // Кликабельна вся карточка (имя + сумма + разбивка по составляющим), а не
@@ -2105,10 +2113,33 @@ function openRepairSheet(it, stock, onSave) {
     const addCompletion = (qty) => {
       it.completions = [...(it.completions || []), { masterId: SESSION?.id || null, masterName: SESSION?.name || "—", qty, at: new Date().toISOString() }];
       it.done = totalCompletedQty(it) >= needQty;
-      save({ completions: it.completions, done: it.done });
+      // Готово — значит запчасть, если её ждали, уже не при делах.
+      if (it.done) it.waitingForPart = null;
+      save({ completions: it.completions, done: it.done, waitingForPart: it.waitingForPart });
       toast(it.done ? "Отмечено готово" : `Отмечено ${qty} из ${needQty}`);
       if (it.done) sheet.close(); else draw();
     };
+    // «Жду запчасть» — мастер начал работу, но встал из-за отсутствующей
+    // детали; занимает эту пометку тот, кто её поставил (кто начал — тот и
+    // занял), снять/продолжить может он же или админ — остальные видят
+    // только факт и чьё имя, без кнопки.
+    const canManageWait = it.waitingForPart && (it.waitingForPart.masterId === (SESSION?.id || null) || SESSION?.role === "admin");
+    const waitBlock = it.done ? null : el("div", { style: "margin-top:16px" },
+      it.waitingForPart
+        ? el("div", {},
+            el("p", { class: "small", style: "color:var(--warn)" }, `Ждёт запчасть — ${it.waitingForPart.masterName || "—"}`),
+            canManageWait ? el("button", {
+              style: "width:100%;margin-top:6px",
+              onclick: () => { it.waitingForPart = null; save({ waitingForPart: null }); draw(); },
+            }, "Запчасть пришла — продолжить") : null)
+        : el("button", {
+            style: "width:100%",
+            onclick: () => {
+              it.waitingForPart = { masterId: SESSION?.id || null, masterName: SESSION?.name || "—", at: new Date().toISOString() };
+              save({ waitingForPart: it.waitingForPart });
+              draw();
+            },
+          }, "Жду запчасть"));
     let doneBlock;
     if (needQty <= 1) {
       doneBlock = it.done
@@ -2135,6 +2166,7 @@ function openRepairSheet(it, stock, onSave) {
         el("button", { class: tab === "diff" ? "active" : "", onclick: () => { tab = "diff"; draw(); } }, "Усложнения"),
         el("button", { class: tab === "parts" ? "active" : "", onclick: () => { tab = "parts"; draw(); } }, "Запчасти")) : null,
       tab === "diff" ? diffBox : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(pickedParts, stock, save, partBlockIdOf(it))),
+      waitBlock,
       doneBlock,
     ].filter(Boolean));
   }
