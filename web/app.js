@@ -1659,7 +1659,12 @@ function partsEditor(parts, stock, onChange, blockId) {
   const addPart = (s) => {
     const existing = parts.find((p) => p.name === s.name && p.price === (s.price || 0));
     if (existing) existing.qty = Math.min((existing.qty || 1) + 1, existing.maxQty || Infinity);
-    else parts.push({ name: s.name, price: s.price || 0, qty: 1, maxQty: s.maxQty || 0 });
+    // sku — артикул со склада, тот же, что видит 1С: без него списанную
+    // запчасть в наряде нечем сопоставить с позицией номенклатуры при
+    // выгрузке (см. api/1c-export.js), сверяться по одному названию
+    // ненадёжно — оно может разойтись, если название в остатках потом
+    // поправят.
+    else parts.push({ name: s.name, sku: s.sku || "", price: s.price || 0, qty: 1, maxQty: s.maxQty || 0 });
     drawList();
     drawResults();
     onChange();
