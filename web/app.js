@@ -2105,26 +2105,10 @@ function openHandedItemEdit(orderNumber, it, onSaved) {
 // не бывает для завершённой работы.
 const DIFFICULTY_STATE_LABELS = { yes: "будет", no: "не будет", unknown: "неизвестно" };
 const DIFFICULTY_FACT_LABELS = { yes: "было", no: "не было" };
-function difficultyList(difficulties, onSet, onQty, fact, onMaterialize) {
+function difficultyList(difficulties, onSet, onQty, fact) {
   const labels = fact ? DIFFICULTY_FACT_LABELS : DIFFICULTY_STATE_LABELS;
   const box = el("div", {});
   (difficulties || []).forEach((d, di) => {
-    // «Несколько» + факт (мастер отмечает по ходу ремонта, не на оценке) —
-    // это усложнение может понадобиться поделить между разными мастерами.
-    // Вместо было/не было + счётчика — кнопка, добавляющая усложнение
-    // отдельной независимой позицией наряда (см. openRepairSheet); нажать
-    // можно сколько угодно раз — по разу на каждого, кто реально этим
-    // занимался. Само усложнение на этой работе цену больше не считает —
-    // теперь она целиком в добавленных позициях (иначе задвоится).
-    if (fact && d.multiple && onMaterialize) {
-      box.append(el("div", { style: "margin-top:8px" },
-        el("div", { class: "small" }, d.label, " ", el("span", { class: "muted" }, `(+${money(d.add)}${d.addMinutes ? `, +${d.addMinutes} мин` : ""})`)),
-        el("button", {
-          class: "small", style: "margin-top:4px;border:0;background:none;color:var(--accent);text-decoration:underline;padding:0",
-          onclick: () => onMaterialize(di),
-        }, "+ добавить как отдельную работу")));
-      return;
-    }
     box.append(el("div", { style: "margin-top:8px" },
       el("div", { class: "small" }, d.label, " ", el("span", { class: "muted" }, `(+${money(d.add)}${d.addMinutes ? `, +${d.addMinutes} мин` : ""})`)),
       // Свой ряд на всю ширину — сегментед-контрол (тот же паттерн, что и
@@ -2287,26 +2271,11 @@ function openRepairSheet(it, stock, onSave) {
   const content = el("div", {});
   function draw() {
     const diffBox = el("div", {});
-    // Усложнение с «несколько» тут материализуется отдельной позицией наряда
-    // (см. difficultyList/instanceCode) — родительская работа его цену
-    // больше не считает, поэтому state сбрасываем в «не было».
-    const materializeDifficulty = (di) => {
-      const d = diffs[di];
-      const newItem = {
-        code: instanceCode(it.code), name: d.label, agreed: true, done: false, parts: [],
-        workPrice: d.add || 0, estimateMinutes: d.addMinutes || 0, partsPrice: 0,
-        multiple: false, qty: 1, difficulties: [],
-      };
-      diffs[di] = { ...d, state: "no", qty: 0 };
-      save({ newItems: [newItem] });
-      toast(`«${d.label}» добавлено отдельной работой`);
-      drawDiffs();
-    };
     // Тут уже не прогноз, а факт — работа сделана, известно точно, было
     // усложнение или нет. Третий вариант («неизвестно») тут ни к чему.
     const drawDiffs = () => diffBox.replaceChildren(difficultyList(diffs,
       (di, st) => { diffs[di].state = st; drawDiffs(); save(); },
-      (di, qty) => { diffs[di].qty = qty; drawDiffs(); save(); }, true, materializeDifficulty));
+      (di, qty) => { diffs[di].qty = qty; drawDiffs(); save(); }, true));
     drawDiffs();
     // Пункт неделим — один мастер отмечает «готово» целиком, независимо от
     // qty (qty влияет только на цену, см. itemRange). Если по факту нужен
