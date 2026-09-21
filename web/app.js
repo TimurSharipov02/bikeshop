@@ -1432,8 +1432,7 @@ function viewOrder(number) {
     // То же поле, что и на диагностике (order.request) — тут его тоже можно
     // менять, без захода в диагностику.
     el("div", { style: "margin-top:8px" },
-      el("label", { style: "margin-top:0" }, "Уточнения"),
-      el("textarea", { rows: 2, value: order.request || "", placeholder: "с чем пришёл, со слов клиента",
+      el("textarea", { rows: 2, value: order.request || "", placeholder: "Уточнения",
         onchange: (e) => { editOrder(number, (o) => (o.request = e.target.value.trim())); refresh(); } })));
 
   if ((order.diagnosticNotes || []).length) {
@@ -2481,10 +2480,9 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
     // на экране обращения (см. viewOrder/head) — там его тоже можно менять.
     if (!inline) {
       wrap.append(el("div", { class: "card" },
-        el("h2", {}, "Уточнения"),
         // DIAG_TOGGLES (гидравлика/механика и т.п.) пока скрыты — переключатели
         // остаются в коде с дефолтными значениями, faultVisible ими и пользуется.
-        onRequest ? el("textarea", { rows: 2, value: req, placeholder: "с чем пришёл, со слов клиента", style: "margin-top:10px",
+        onRequest ? el("textarea", { rows: 2, value: req, placeholder: "Уточнения",
           onchange: (e) => { req = e.target.value.trim(); onRequest(req); } }) : null));
 
       const items = getItems();
