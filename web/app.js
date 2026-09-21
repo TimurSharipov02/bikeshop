@@ -482,6 +482,10 @@ const orderWaitingForPart = (o) => o.items.some((i) => i.agreed && !i.done && i.
 // список того, что реально ещё предстоит сделать: опускаем её в конец
 // (sort стабильный, порядок остального не трогает).
 const waitingLast = (a, b) => (a.waitingForPart && !a.done ? 1 : 0) - (b.waitingForPart && !b.done ? 1 : 0);
+// То же самое, но для списка обращений целиком (главный экран) — заявка,
+// которая стоит из-за запчасти, не должна закрывать собой те, что можно
+// делать прямо сейчас.
+const orderWaitingLast = (a, b) => (orderWaitingForPart(a) ? 1 : 0) - (orderWaitingForPart(b) ? 1 : 0);
 // Работу мог сделать не один мастер сразу, а по частям, если пункт
 // «размножен» (multiple, qty > 1) — каждый застолбил свою долю в
 // it.completions: [{masterId, masterName, qty, at}]. Для обычного пункта
@@ -1096,7 +1100,7 @@ async function deleteOrderWithAlert(o) {
 // приложении), архив выданных — по ссылке отдельно.
 function viewHome() {
   const d = loadDB();
-  const active = [...d.orders].reverse().filter((o) => o.status !== "выдан");
+  const active = [...d.orders].reverse().filter((o) => o.status !== "выдан").sort(orderWaitingLast);
   return [
     el("header", { class: "bar" }, el("h1", {}, "Veloterra"),
       el("a", { class: "sub", href: "#/profile" }, SESSION?.name || SESSION?.login || "")),
