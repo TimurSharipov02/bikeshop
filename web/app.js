@@ -2783,6 +2783,9 @@ function workLog(masterId) {
   const d = loadDB();
   const out = [];
   for (const o of d.orders) {
+    // Пока обращение не выдано (не оплачено) — работа в отчёт не попадает,
+    // хоть бы она уже и была отмечена готовой: деньги ещё не пришли.
+    if (!o.handedOverAt) continue;
     for (const it of o.items) {
       for (const c of it.completions || []) {
         if (!c.at || (masterId != null && c.masterId !== masterId)) continue;
@@ -2846,15 +2849,17 @@ function historyList(masterId, percentOf) {
   const d = loadDB();
   const byOrder = new Map();
   for (const o of d.orders) {
+    // Пока обращение не выдано (не оплачено) — в историю не попадает.
+    if (!o.handedOverAt) continue;
     const bike = d.bikes.find((b) => b.number === o.bikeNumber);
     const client = d.clients.find((c) => c.phone === o.clientPhone);
     for (const it of o.items) {
       for (const c of it.completions || []) {
         if (!c.at || (masterId != null && c.masterId !== masterId)) continue;
-        // handedAt — только для сортировки списка (как в бывшем архиве, «по
-        // дате выдачи»); latest (когда фактически сделана работа) — для
-        // фильтра по выбранному периоду в графике выше, не путать местами.
-        if (!byOrder.has(o.number)) byOrder.set(o.number, { order: o, bike, client, lines: [], earned: 0, latest: c.at, handedAt: o.handedOverAt || null });
+        // latest (когда фактически сделана работа) — для фильтра по
+        // выбранному периоду в графике выше; handedAt — для сортировки
+        // списка (как в бывшем архиве, «по дате выдачи»).
+        if (!byOrder.has(o.number)) byOrder.set(o.number, { order: o, bike, client, lines: [], earned: 0, latest: c.at, handedAt: o.handedOverAt });
         const rec = byOrder.get(o.number);
         const earned = entryEarned({ item: it, completion: c }, percentOf);
         rec.lines.push({ name: it.name, qty: c.qty, needQty: itemNeedsQty(it), earned, masterName: c.masterName });
@@ -2863,9 +2868,7 @@ function historyList(masterId, percentOf) {
       }
     }
   }
-  // Ещё не выданные заявки (handedAt нет) — по дате последней сделанной в
-  // них работы, чтобы не проваливались в конец списка.
-  return [...byOrder.values()].sort((a, b) => (b.handedAt || b.latest || "").localeCompare(a.handedAt || a.latest || ""));
+  return [...byOrder.values()].sort((a, b) => b.handedAt.localeCompare(a.handedAt));
 }
 
 // Тело отчёта (переключатель периода + график + история) — общее что для
