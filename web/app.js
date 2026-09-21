@@ -478,6 +478,10 @@ const orderAllDone = (o) => {
 // статус в базе всё ещё «взята в работу»: отдельной стадии для этого нет,
 // это только отображаемый тег (см. orderStatusTag), как и «Готово к выдаче».
 const orderWaitingForPart = (o) => o.items.some((i) => i.agreed && !i.done && i.waitingForPart);
+// Встали, ждём деталь — работа пока не актуальна, не должна мешать сканировать
+// список того, что реально ещё предстоит сделать: опускаем её в конец
+// (sort стабильный, порядок остального не трогает).
+const waitingLast = (a, b) => (a.waitingForPart && !a.done ? 1 : 0) - (b.waitingForPart && !b.done ? 1 : 0);
 // Работу мог сделать не один мастер сразу, а по частям, если пункт
 // «размножен» (multiple, qty > 1) — каждый застолбил свою долю в
 // it.completions: [{masterId, masterName, qty, at}]. Для обычного пункта
@@ -1554,7 +1558,7 @@ function viewOrder(number) {
         const b = el("div", {});
         const pendingCard = pendingAgreementCard(order, pendingHandlers, stock);
         if (pendingCard) b.append(pendingCard);
-        order.items.filter((i) => i.agreed).forEach((it) => b.append(repairItem(it, stock, {
+        order.items.filter((i) => i.agreed).sort(waitingLast).forEach((it) => b.append(repairItem(it, stock, {
           onRun: () => openRunner(it.code),
           onSave: (patch) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) Object.assign(x, patch); }); refresh(); },
           onQty: (qty) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) x.qty = qty; }); refresh(); },
@@ -1874,7 +1878,7 @@ function editableItemRow(it, { onRemove, onSave, refresh }) {
 function itemList(order, showFacts, edit, detailed, grouped = true) {
   if (order.items.length === 0) return emptyState("Работ пока нет.");
   const row = (it) => (edit ? editableItemRow(it, edit) : detailed ? detailedItemRow(it) : itemRow(it, showFacts));
-  if (!grouped) return el("div", { class: "rows", style: "margin-top:8px" }, order.items.map(row));
+  if (!grouped) return el("div", { class: "rows", style: "margin-top:8px" }, [...order.items].sort(waitingLast).map(row));
   const groups = groupBy(order.items, (it) => blockOf(it.code));
   const box = el("div", { style: "margin-top:8px" });
   for (const title of [...BLOCK_TITLES, "Прочее"]) {
@@ -1882,7 +1886,7 @@ function itemList(order, showFacts, edit, detailed, grouped = true) {
     if (!list || !list.length) continue;
     box.append(
       el("p", { class: "small muted", style: "margin:14px 0 4px;letter-spacing:.05em" }, title.toUpperCase()),
-      el("div", { class: "rows" }, list.map(row)));
+      el("div", { class: "rows" }, [...list].sort(waitingLast).map(row)));
   }
   return box;
 }
@@ -1910,7 +1914,7 @@ function detailedItemRow(it) {
   const r = itemRange(it);
   const nameRow = el("div", { style: "display:flex;align-items:center;gap:8px" },
     el("b", { style: "flex:1;min-width:0" }, it.name, it.multiple && (it.qty || 1) > 1 ? el("span", { class: "small muted" }, ` × ${it.qty}`) : null),
-    it.waitingForPart && !it.done ? el("span", { class: "pill", style: "background:var(--warn-weak);color:var(--warn)" }, "ждёт запчасть") : null,
+    it.waitingForPart && !it.done ? el("span", { class: "pill", style: "background:var(--yellow-weak);color:var(--yellow-ink)" }, "ждёт запчасть") : null,
     it.done ? el("span", { class: "pill" }, completionsSummary(it) || "готово") : null);
   return el("div", { class: "assess" },
     nameRow,
@@ -2049,7 +2053,7 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove }) {
   const box = el("div", { class: "assess" });
   const nameRow = el("div", { style: "display:flex;align-items:center;gap:8px" },
     el("b", { style: "flex:1;min-width:0" }, it.name),
-    it.waitingForPart && !it.done ? el("span", { class: "pill", style: "background:var(--warn-weak);color:var(--warn)" }, "ждёт запчасть") : null,
+    it.waitingForPart && !it.done ? el("span", { class: "pill", style: "background:var(--yellow-weak);color:var(--yellow-ink)" }, "ждёт запчасть") : null,
     it.done ? el("span", { class: "pill" }, completionsSummary(it) || "готово") : null,
     el("span", { style: "flex:0 0 auto;color:var(--line);font-size:19px" }, "›"));
   // Кликабельна вся карточка (имя + сумма + разбивка по составляющим), а не
@@ -2127,7 +2131,7 @@ function openRepairSheet(it, stock, onSave) {
     const waitBlock = it.done ? null : el("div", { style: "margin-top:16px" },
       it.waitingForPart
         ? el("div", {},
-            el("p", { class: "small", style: "color:var(--warn)" }, `Ждёт запчасть — ${it.waitingForPart.masterName || "—"}`),
+            el("p", { class: "small", style: "color:var(--yellow-ink)" }, `Ждёт запчасть — ${it.waitingForPart.masterName || "—"}`),
             canManageWait ? el("button", {
               style: "width:100%;margin-top:6px",
               onclick: () => { it.waitingForPart = null; save({ waitingForPart: null }); draw(); },

@@ -5,6 +5,7 @@
   --ok:#34c759; --ok-weak:#e7f8ec; --warn:#ff3b30; --warn-weak:#ffece9;
   --orange:#ff9500; --orange-weak:#fff2e0; --purple:#af52de; --purple-weak:#f6ecfc;
   --teal:#30b0c7; --teal-weak:#e6f6f8; --fill:#e9e9ee;
+  --yellow:#ffcc00; --yellow-weak:#fff6cc; --yellow-ink:#8a6d00;
   --radius:14px; --radius-sm:10px;
   --shadow-sm:0 1px 2px rgba(0,0,0,.04);
   --shadow-md:0 12px 28px rgba(0,0,0,.12);
@@ -17,6 +18,7 @@
     --ok:#30d158; --ok-weak:#0f2a17; --warn:#ff453a; --warn-weak:#3a1210;
     --orange:#ff9f0a; --orange-weak:#3a2708; --purple:#bf5af2; --purple-weak:#2c1c38;
     --teal:#40c8e0; --teal-weak:#0e2b30; --fill:#2c2c2e;
+    --yellow:#ffd60a; --yellow-weak:#3a3008; --yellow-ink:#ffd60a;
     --shadow-sm:0 1px 2px rgba(0,0,0,.5); --shadow-md:0 14px 32px rgba(0,0,0,.6);
   }
 }
@@ -164,7 +166,7 @@ header.bar .bar-title-lg { font-size:19px; font-weight:700; }
 .tag.tag-progress{ background:var(--accent-weak); color:var(--accent); }
 .tag.tag-check   { background:var(--teal-weak); color:var(--teal); }
 .tag.tag-done    { background:var(--ok-weak); color:var(--ok); }
-.tag.tag-block   { background:var(--warn-weak); color:var(--warn); }
+.tag.tag-block   { background:var(--yellow-weak); color:var(--yellow-ink); }
 
 /* Без этого быстрые повторные тапы (счётчик количества и т.п.) иногда
    распознаются как двойной тап — браузер ждёт, не жест ли это масштабирования,
