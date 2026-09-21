@@ -2279,8 +2279,8 @@ function openRepairSheet(it, stock, onSave) {
     drawDiffs();
     // Пункт неделим — один мастер отмечает «готово» целиком, независимо от
     // qty (qty влияет только на цену, см. itemRange). Если по факту нужен
-    // второй мастер на то же самое — «+ ещё раз» ниже добавляет копию этой
-    // работы отдельной позицией наряда, а не делит одну.
+    // второй мастер на то же самое — «Дублировать» ниже добавляет копию
+    // этой работы отдельной позицией наряда, а не делит одну.
     const markDone = () => {
       it.done = true;
       it.doneBy = { masterId: SESSION?.id || null, masterName: SESSION?.name || "—", at: new Date().toISOString() };
@@ -2297,14 +2297,20 @@ function openRepairSheet(it, stock, onSave) {
       draw();
     };
     const duplicateItem = () => {
+      // Копия наследует усложнения и запчасти ровно в том виде, какой они
+      // сейчас на экране (pickedParts/diffs — живые черновики, могут быть
+      // ещё не сохранены) — второй мастер начинает не с чистого листа, а с
+      // того же самого набора, что уже был у оригинала на момент дубля.
+      // Готовность/ожидание запчасти — своё, отдельное для новой позиции.
       const dup = {
         ...JSON.parse(JSON.stringify(it)),
         code: instanceCode(it.code),
-        done: false, doneBy: null, waitingForPart: null, parts: [], partsPrice: 0,
-        difficulties: (it.difficulties || []).map((d) => ({ ...d, state: "unknown", qty: 1 })),
+        done: false, doneBy: null, waitingForPart: null,
+        parts: JSON.parse(JSON.stringify(pickedParts)),
+        difficulties: JSON.parse(JSON.stringify(diffs)),
       };
       save({ newItems: [dup] });
-      toast("Добавлена копия этой работы для другого мастера");
+      toast("Работа дублирована");
     };
     // «Жду запчасть» — мастер начал работу, но встал из-за отсутствующей
     // детали; занимает эту пометку тот, кто её поставил (кто начал — тот и
@@ -2333,7 +2339,7 @@ function openRepairSheet(it, stock, onSave) {
     const duplicateBlock = el("button", {
       class: "small", style: "width:100%;margin-top:10px;border:0;background:none;color:var(--muted);text-decoration:underline;padding:0",
       onclick: duplicateItem,
-    }, "+ ещё раз (для другого мастера)");
+    }, "Дублировать");
     content.replaceChildren(...[
       hasDiffs ? el("div", { class: "segmented", style: "margin-bottom:14px" },
         el("button", { class: tab === "diff" ? "active" : "", onclick: () => { tab = "diff"; draw(); } }, "Усложнения"),
