@@ -2328,7 +2328,7 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
   const toggles = { тормоза: "гидравлика", покрышки: "камера", трансмиссия: "механика" };
   let req = request;
   const states = {}; // instId -> { open, faults:Set<number>, comment }
-  const st = (id) => (states[id] ||= { open: false, faults: new Set(), comment: "" });
+  const st = (id) => (states[id] ||= { open: false, faults: new Set() });
   let repairs = []; // неисправности, заведённые админом вручную (общие для всех)
   const addFormOpenFor = new Set(); // id блоков, где сейчас открыта форма «+ своя неисправность»
   const editOverrideFor = new Set(); // коды работ каталога, у которых сейчас открыта форма правки
@@ -2606,8 +2606,6 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
                 onclick: () => { addFormOpenFor.add(inst.b.id); draw(); },
               }, "+ своя неисправность"));
         }
-        fb.append(el("input", { type: "text", placeholder: "комментарий", value: s.comment,
-          style: "margin-top:6px", oninput: (e) => (s.comment = e.target.value) }));
         card.append(fb);
       }
       wrap.append(card);
@@ -2648,19 +2646,16 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
   }
 
   // Работы с кодом уже добавлены живьём по каждому чекбоксу — тут собираем
-  // текстовые заметки: неисправности без кода (определяются на разборке) и
-  // свободный комментарий по узлу.
+  // текстовые заметки: неисправности без кода (определяются на разборке).
   function finish() {
     const notes = [];
     for (const inst of instances()) {
       const s = st(inst.id);
-      if (!s.faults.size && !s.comment.trim()) continue;
+      if (!s.faults.size) continue;
       const faults = blockFaults(inst.b);
       const noCode = [...s.faults].map((i) => faults[i]).filter(Boolean).filter(faultVisible).filter((f) => !f.code)
         .map((f) => [f.label, f.note].filter(Boolean).join(" — "));
-      const c = (s.comment || "").trim();
-      const parts = c ? [...noCode, c] : noCode;
-      if (parts.length) notes.push(`${inst.label}: ${parts.join("; ")}`);
+      if (noCode.length) notes.push(`${inst.label}: ${noCode.join("; ")}`);
     }
     onDone(notes);
   }
