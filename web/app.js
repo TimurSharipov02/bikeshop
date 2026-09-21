@@ -2646,7 +2646,6 @@ function mountDiagnostics(host, { onCheck, onUncheck, onDone, request = "", onRe
 
     for (const inst of list) {
       const s = st(inst.id);
-      const count = s.faults.size;
       const header = el("div", {
         style: "display:flex;align-items:center;gap:10px;cursor:pointer",
         onclick: () => { s.open = !s.open; draw(); },
@@ -2656,7 +2655,6 @@ function mountDiagnostics(host, { onCheck, onUncheck, onDone, request = "", onRe
         // (b.prompt) не трогаем — пригодятся для отдельной версии для новичков.
         el("div", { style: "flex:1" },
           el("h2", { style: "margin:0" }, inst.label)),
-        count ? el("span", { class: "pill", style: "background:var(--warn-weak);color:var(--warn)" }, String(count)) : null,
         el("span", {
           style: `flex:0 0 auto;color:var(--line);font-size:19px;transform:rotate(${s.open ? "90deg" : "0deg"});transition:transform .15s ease`,
         }, "›"));
