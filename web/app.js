@@ -174,16 +174,26 @@ const fixPartsShape = (items) =>
     return { ...it, parts: it.parts.map((p) => (typeof p === "string" ? { name: p, price: 0, qty: 1 } : p)) };
   });
 
-// Раньше «кто сделал» — просто имя строкой (doneBy), одно на весь пункт.
-// Теперь completions — список {masterId, masterName, qty, at}, чтобы можно
-// было отметить, кто сколько из размноженного пункта сделал. Старые
-// завершённые пункты без completions получают один синтетический элемент
-// (masterId неизвестен — это было до разделения по мастерам).
-const fixCompletions = (items) =>
+// «Кто сделал» прошло два формата: сперва просто имя строкой (doneBy),
+// потом — список completions {masterId, masterName, qty, at}, чтобы делить
+// размноженный пункт между несколькими мастерами по qty. От дележа по qty
+// отказались (см. историю): пункт либо неразделим — один мастер на весь
+// пункт, либо, если реально нужно несколько человек, оформляется отдельными
+// позициями наряда (см. instanceCode). Приводим оба старых формата к
+// единственному doneBy-объекту {masterId, masterName, at}; если completions
+// было несколько (старые записи до отказа от дележа) — берём самую позднюю.
+const fixDoneBy = (items) =>
   (items || []).map((it) => {
-    if (!it.done || (it.completions || []).length) return it;
-    const qty = it.multiple ? it.qty || 1 : 1;
-    return { ...it, completions: [{ masterId: null, masterName: it.doneBy || "—", qty, at: null }] };
+    if (!it.completions && (!it.doneBy || typeof it.doneBy !== "string")) return it;
+    let doneBy = null;
+    if (it.completions && it.completions.length) {
+      const last = it.completions.reduce((a, b) => (!a.at || (b.at && b.at > a.at) ? b : a));
+      doneBy = { masterId: last.masterId || null, masterName: last.masterName || "—", at: last.at || null };
+    } else if (typeof it.doneBy === "string") {
+      doneBy = { masterId: null, masterName: it.doneBy || "—", at: null };
+    }
+    const { completions, ...rest } = it;
+    return { ...rest, doneBy };
   });
 
 const migrateOrders = (orders) =>
@@ -200,7 +210,7 @@ const migrateOrders = (orders) =>
     if (next.status === "готово к выдаче") next = { ...next, status: "взята в работу" };
     let items = fixDoneDifficulties(next.items);
     items = fixPartsShape(items);
-    items = fixCompletions(items);
+    items = fixDoneBy(items);
     if (items !== next.items) next = { ...next, items };
     return next;
   });
@@ -500,14 +510,11 @@ const waitingLast = (a, b) => (a.waitingForPart && !a.done ? 1 : 0) - (b.waiting
 // которая стоит из-за запчасти, не должна закрывать собой те, что можно
 // делать прямо сейчас.
 const orderWaitingLast = (a, b) => (orderWaitingForPart(a) ? 1 : 0) - (orderWaitingForPart(b) ? 1 : 0);
-// Работу мог сделать не один мастер сразу, а по частям, если пункт
-// «размножен» (multiple, qty > 1) — каждый застолбил свою долю в
-// it.completions: [{masterId, masterName, qty, at}]. Для обычного пункта
-// (qty 1) это просто один элемент. it.done по-прежнему хранимый булев флаг
-// (не пересчитывается на лету по всему приложению) — обновляется в одном
-// месте вместе с completions (см. openRepairSheet, markItemProgress).
-const itemNeedsQty = (it) => (it.multiple ? it.qty || 1 : 1);
-const totalCompletedQty = (it) => (it.completions || []).reduce((s, c) => s + (c.qty || 0), 0);
+// Пункт наряда неделим — его делает один мастер целиком, от начала до конца
+// (qty > 1, если стоит «несколько», влияет только на цену/время, не на то,
+// сколько человек его выполняли). Если работу реально нужно поделить между
+// несколькими мастерами — она оформляется отдельными позициями наряда, а не
+// дележом одной (см. instanceCode ниже и openRepairSheet).
 // Стоимость самой работы (без запчастей) — то, на что начисляется процент
 // мастера: цена работы за все качественные единицы плюс подтвердившиеся
 // усложнения. Запчасти — расходники, в доход мастера не идут.
@@ -516,14 +523,14 @@ const itemWorkValue = (it) => {
   for (const d of it.difficulties || []) if (d.state === "yes") v += (d.add || 0) * (d.qty || 1);
   return v;
 };
-// «Тимур» — если всё сделал один мастер целиком, «Тимур ×2, Даня ×1» —
-// если размноженный пункт поделили.
-const completionsSummary = (it) => {
-  const list = it.completions || [];
-  if (!list.length) return "";
-  if (list.length === 1 && (list[0].qty || 1) >= itemNeedsQty(it)) return list[0].masterName;
-  return list.map((c) => `${c.masterName} ×${c.qty || 1}`).join(", ");
-};
+const completionsSummary = (it) => it.doneBy?.masterName || "";
+// «Код» позиции наряда, добавляемой не из каталога напрямую, а как копия
+// уже существующей работы (кнопка «+ ещё раз» — когда реально нужен второй
+// мастер) или как материализованное усложнение (см. openRepairSheet). Метка
+// времени + случайный хвост — коллизии с обычными кодами каталога и друг с
+// другом на практике исключены, без необходимости смотреть на весь список
+// позиций заявки.
+const instanceCode = (base) => `${base}~${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 // До согласования ничего ещё не отмечено agreed — считаем по всему списку целиком.
 const orderRangeAll = (o) =>
   o.items.reduce((a, it) => { const r = itemRange(it); return { min: a.min + r.min, max: a.max + r.max }; }, { min: 0, max: 0 });
@@ -1599,7 +1606,18 @@ function viewOrder(number) {
         if (pendingCard) b.append(pendingCard);
         order.items.filter((i) => i.agreed).sort(waitingLast).forEach((it) => b.append(repairItem(it, stock, {
           onRun: () => openRunner(it.code),
-          onSave: (patch) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) Object.assign(x, patch); }); refresh(); },
+          onSave: (patch) => {
+            // newItems — копия этой же работы или материализованное
+            // усложнение (см. openRepairSheet): отдельная позиция наряда,
+            // не правка текущей.
+            const { newItems, ...rest } = patch;
+            editOrder(number, (o) => {
+              const x = o.items.find((i) => i.code === it.code);
+              if (x) Object.assign(x, rest);
+              if (newItems) o.items.push(...newItems);
+            });
+            refresh();
+          },
           onQty: (qty) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) x.qty = qty; }); refresh(); },
           onRemove: (code) => removeItem(code),
         })));
@@ -1866,7 +1884,7 @@ function itemRow(it, showFacts) {
       it.multiple && (it.qty || 1) > 1 ? el("span", { class: "small muted" }, ` × ${it.qty}`) : null,
       showFacts && !it.agreed ? el("span", { class: "pill", style: "background:var(--fill);color:var(--muted)" }, "не согласовано") : null,
       it.notes ? el("span", { class: "small muted" }, el("br"), it.notes) : null,
-      showFacts && it.done && (it.parts.length || it.completions?.length) ? el("span", { class: "small muted" }, el("br"),
+      showFacts && it.done && (it.parts.length || it.doneBy) ? el("span", { class: "small muted" }, el("br"),
         [it.parts.length ? it.parts.map(partLabel).join(", ") : null, completionsSummary(it)].filter(Boolean).join(" · ")) : null),
     el("span", { class: "price-tag" }, rangeText(r)));
 }
@@ -2027,9 +2045,8 @@ function detailedItemRow(it) {
 
 // Правка пункта уже выданного (оплаченного) обращения — только для админа:
 // исправить название/цену работы задним числом и то, кто её по факту
-// выполнил (перевесить на другого мастера, если отметил не тот), а на
-// «размноженных» пунктах (needQty > 1) — долю каждого из тех, кто
-// поучаствовал. Открывается прямо со стадии «Выдан» самого обращения
+// выполнил (перевесить на другого мастера, если отметил не тот). Открывается
+// прямо со стадии «Выдан» самого обращения
 // (тапом по пункту), без «Вернуть в работу» — статус заявки не трогаем.
 // Сохранение — через editOrder(orderNumber, ...), как и everywhere else в
 // приложении: sheet живёт своим элементом на body (см. openSheet) и может
@@ -2042,12 +2059,11 @@ function detailedItemRow(it) {
 function openHandedItemEdit(orderNumber, it, onSaved) {
   const itemCode = it.code;
   const draft = { name: it.name, price: it.workPrice || 0,
-    completions: (it.completions || []).map((c) => ({ masterId: c.masterId, masterName: c.masterName, qty: c.qty })) };
+    masterId: it.doneBy?.masterId || null, masterName: it.doneBy?.masterName || "" };
   let masters = [];
   const content = el("div", {});
   let sheet;
   const draw = () => {
-    const needQty = itemNeedsQty(it);
     content.replaceChildren(
       el("label", {}, "Название работы"),
       el("input", { value: draft.name, oninput: (e) => (draft.name = e.target.value) }),
@@ -2055,16 +2071,12 @@ function openHandedItemEdit(orderNumber, it, onSaved) {
       el("input", { type: "number", value: draft.price, oninput: (e) => (draft.price = +e.target.value || 0) }),
       el("label", { style: "margin-top:8px" }, "Кто выполнил"),
       masters.length
-        ? el("div", { class: "rows" }, draft.completions.map((dc) => el("div", { class: "row", style: "gap:8px" },
-            el("select", {
-              style: "flex:1", onchange: (e) => {
-                dc.masterId = e.target.value;
-                dc.masterName = masters.find((m) => m.id === e.target.value)?.name || dc.masterName;
-              },
-            }, masters.map((m) => el("option", { value: m.id, selected: m.id === dc.masterId }, m.name))),
-            needQty > 1
-              ? qtyStepper(dc.qty || 1, (qty) => { dc.qty = qty; draw(); }, 0)
-              : null)))
+        ? el("select", {
+            onchange: (e) => {
+              draft.masterId = e.target.value;
+              draft.masterName = masters.find((m) => m.id === e.target.value)?.name || draft.masterName;
+            },
+          }, masters.map((m) => el("option", { value: m.id, selected: m.id === draft.masterId }, m.name)))
         : el("p", { class: "small muted" }, "Загрузка мастеров…"),
       el("div", { class: "btn-row", style: "margin-top:12px" },
         el("button", {
@@ -2074,12 +2086,7 @@ function openHandedItemEdit(orderNumber, it, onSaved) {
               if (!freshIt) return;
               freshIt.name = draft.name.trim() || freshIt.name;
               freshIt.workPrice = draft.price;
-              (freshIt.completions || []).forEach((c, idx) => {
-                const dc = draft.completions[idx];
-                if (!dc) return;
-                c.masterId = dc.masterId; c.masterName = dc.masterName; c.qty = dc.qty;
-              });
-              freshIt.done = totalCompletedQty(freshIt) >= itemNeedsQty(freshIt);
+              if (freshIt.doneBy) freshIt.doneBy = { ...freshIt.doneBy, masterId: draft.masterId, masterName: draft.masterName };
             });
             sheet.close();
             onSaved();
@@ -2098,10 +2105,26 @@ function openHandedItemEdit(orderNumber, it, onSaved) {
 // не бывает для завершённой работы.
 const DIFFICULTY_STATE_LABELS = { yes: "будет", no: "не будет", unknown: "неизвестно" };
 const DIFFICULTY_FACT_LABELS = { yes: "было", no: "не было" };
-function difficultyList(difficulties, onSet, onQty, fact) {
+function difficultyList(difficulties, onSet, onQty, fact, onMaterialize) {
   const labels = fact ? DIFFICULTY_FACT_LABELS : DIFFICULTY_STATE_LABELS;
   const box = el("div", {});
   (difficulties || []).forEach((d, di) => {
+    // «Несколько» + факт (мастер отмечает по ходу ремонта, не на оценке) —
+    // это усложнение может понадобиться поделить между разными мастерами.
+    // Вместо было/не было + счётчика — кнопка, добавляющая усложнение
+    // отдельной независимой позицией наряда (см. openRepairSheet); нажать
+    // можно сколько угодно раз — по разу на каждого, кто реально этим
+    // занимался. Само усложнение на этой работе цену больше не считает —
+    // теперь она целиком в добавленных позициях (иначе задвоится).
+    if (fact && d.multiple && onMaterialize) {
+      box.append(el("div", { style: "margin-top:8px" },
+        el("div", { class: "small" }, d.label, " ", el("span", { class: "muted" }, `(+${money(d.add)}${d.addMinutes ? `, +${d.addMinutes} мин` : ""})`)),
+        el("button", {
+          class: "small", style: "margin-top:4px;border:0;background:none;color:var(--accent);text-decoration:underline;padding:0",
+          onclick: () => onMaterialize(di),
+        }, "+ добавить как отдельную работу")));
+      return;
+    }
     box.append(el("div", { style: "margin-top:8px" },
       el("div", { class: "small" }, d.label, " ", el("span", { class: "muted" }, `(+${money(d.add)}${d.addMinutes ? `, +${d.addMinutes} мин` : ""})`)),
       // Свой ряд на всю ширину — сегментед-контрол (тот же паттерн, что и
@@ -2260,39 +2283,59 @@ function openRepairSheet(it, stock, onSave) {
   const save = (extra) => onSave({ parts: pickedParts, difficulties: diffs, ...extra });
   const hasDiffs = diffs.length > 0;
   let tab = hasDiffs ? "diff" : "parts";
-  let qty = null; // выбранное количество для частичной сдачи (needQty > 1)
 
   const content = el("div", {});
   function draw() {
     const diffBox = el("div", {});
+    // Усложнение с «несколько» тут материализуется отдельной позицией наряда
+    // (см. difficultyList/instanceCode) — родительская работа его цену
+    // больше не считает, поэтому state сбрасываем в «не было».
+    const materializeDifficulty = (di) => {
+      const d = diffs[di];
+      const newItem = {
+        code: instanceCode(it.code), name: d.label, agreed: true, done: false, parts: [],
+        workPrice: d.add || 0, estimateMinutes: d.addMinutes || 0, partsPrice: 0,
+        multiple: false, qty: 1, difficulties: [],
+      };
+      diffs[di] = { ...d, state: "no", qty: 0 };
+      save({ newItems: [newItem] });
+      toast(`«${d.label}» добавлено отдельной работой`);
+      drawDiffs();
+    };
     // Тут уже не прогноз, а факт — работа сделана, известно точно, было
     // усложнение или нет. Третий вариант («неизвестно») тут ни к чему.
     const drawDiffs = () => diffBox.replaceChildren(difficultyList(diffs,
       (di, st) => { diffs[di].state = st; drawDiffs(); save(); },
-      (di, qty) => { diffs[di].qty = qty; drawDiffs(); save(); }, true));
+      (di, qty) => { diffs[di].qty = qty; drawDiffs(); save(); }, true, materializeDifficulty));
     drawDiffs();
-    // needQty > 1 — «можно несколько раз», и разные единицы мог сделать не
-    // один мастер (например, оба тормоза, но по одному на брата). Каждый
-    // отмечает «сколько из N сделал я» — список того, кто сколько застолбил,
-    // плюс поле на остаток. needQty == 1 — обычный пункт, тумблер как раньше.
-    const needQty = itemNeedsQty(it);
-    const doneQty = totalCompletedQty(it);
-    const remaining = needQty - doneQty;
-    if (qty == null || qty > remaining) qty = remaining;
-    const removeCompletion = (i) => {
-      it.completions = it.completions.filter((_, idx) => idx !== i);
-      it.done = totalCompletedQty(it) >= needQty;
-      save({ completions: it.completions, done: it.done });
+    // Пункт неделим — один мастер отмечает «готово» целиком, независимо от
+    // qty (qty влияет только на цену, см. itemRange). Если по факту нужен
+    // второй мастер на то же самое — «+ ещё раз» ниже добавляет копию этой
+    // работы отдельной позицией наряда, а не делит одну.
+    const markDone = () => {
+      it.done = true;
+      it.doneBy = { masterId: SESSION?.id || null, masterName: SESSION?.name || "—", at: new Date().toISOString() };
+      // Готово — значит запчасть, если её ждали, уже не при делах.
+      it.waitingForPart = null;
+      save({ done: true, doneBy: it.doneBy, waitingForPart: null });
+      toast("Отмечено готово");
+      sheet.close();
+    };
+    const unmarkDone = () => {
+      it.done = false;
+      it.doneBy = null;
+      save({ done: false, doneBy: null });
       draw();
     };
-    const addCompletion = (qty) => {
-      it.completions = [...(it.completions || []), { masterId: SESSION?.id || null, masterName: SESSION?.name || "—", qty, at: new Date().toISOString() }];
-      it.done = totalCompletedQty(it) >= needQty;
-      // Готово — значит запчасть, если её ждали, уже не при делах.
-      if (it.done) it.waitingForPart = null;
-      save({ completions: it.completions, done: it.done, waitingForPart: it.waitingForPart });
-      toast(it.done ? "Отмечено готово" : `Отмечено ${qty} из ${needQty}`);
-      if (it.done) sheet.close(); else draw();
+    const duplicateItem = () => {
+      const dup = {
+        ...JSON.parse(JSON.stringify(it)),
+        code: instanceCode(it.code),
+        done: false, doneBy: null, waitingForPart: null, parts: [], partsPrice: 0,
+        difficulties: (it.difficulties || []).map((d) => ({ ...d, state: "unknown", qty: 1 })),
+      };
+      save({ newItems: [dup] });
+      toast("Добавлена копия этой работы для другого мастера");
     };
     // «Жду запчасть» — мастер начал работу, но встал из-за отсутствующей
     // детали; занимает эту пометку тот, кто её поставил (кто начал — тот и
@@ -2315,26 +2358,13 @@ function openRepairSheet(it, stock, onSave) {
               draw();
             },
           }, "Жду запчасть"));
-    let doneBlock;
-    if (needQty <= 1) {
-      doneBlock = it.done
-        ? el("button", { style: "width:100%;margin-top:16px", onclick: () => removeCompletion(0) }, "Снять отметку «готово»")
-        : el("button", { class: "btn-ok", style: "width:100%;margin-top:16px", onclick: () => addCompletion(1) }, "Отметить готово");
-    } else {
-      doneBlock = el("div", { style: "margin-top:16px" },
-        (it.completions || []).length ? el("div", { class: "rows" },
-          it.completions.map((c, i) => el("div", { class: "row", style: "cursor:default" },
-            el("span", { style: "flex:1" }, c.masterName, ` — ${c.qty} из ${needQty}`),
-            el("button", { style: iconBtnStyle, onclick: () => removeCompletion(i) }, "✕")))) : null,
-        remaining > 0
-          ? el("div", { style: "display:flex;gap:8px;align-items:center;margin-top:10px" },
-              qtyStepper(qty, (v) => { qty = v; draw(); }, remaining),
-              el("button", {
-                class: "btn-ok", style: "flex:1",
-                onclick: () => addCompletion(qty),
-              }, "Отметить готово"))
-          : el("p", { class: "small", style: "color:var(--ok);margin-top:4px" }, "Всё сделано"));
-    }
+    const doneBlock = it.done
+      ? el("button", { style: "width:100%;margin-top:16px", onclick: unmarkDone }, "Снять отметку «готово»")
+      : el("button", { class: "btn-ok", style: "width:100%;margin-top:16px", onclick: markDone }, "Отметить готово");
+    const duplicateBlock = el("button", {
+      class: "small", style: "width:100%;margin-top:10px;border:0;background:none;color:var(--muted);text-decoration:underline;padding:0",
+      onclick: duplicateItem,
+    }, "+ ещё раз (для другого мастера)");
     content.replaceChildren(...[
       hasDiffs ? el("div", { class: "segmented", style: "margin-bottom:14px" },
         el("button", { class: tab === "diff" ? "active" : "", onclick: () => { tab = "diff"; draw(); } }, "Усложнения"),
@@ -2342,6 +2372,7 @@ function openRepairSheet(it, stock, onSave) {
       tab === "diff" ? diffBox : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(pickedParts, stock, save, partBlockIdOf(it))),
       waitBlock,
       doneBlock,
+      duplicateBlock,
     ].filter(Boolean));
   }
   draw();
@@ -2933,11 +2964,11 @@ function viewProfile() {
 // каких мастеров включает workLog/historyList (null — всех) и как считается
 // процент (percentOf: masterId → число, у разных мастеров он может быть
 // разным). Источник — сама DB (уже вся загружена на клиенте), отдельный API
-// не нужен: идём по всем обращениям, по всем пунктам, по completions.
+// не нужен: идём по всем обращениям, по всем выполненным пунктам (doneBy).
 
-// Одна запись — доля одного пункта наряда, которую сделал мастер (qty из
-// completion, не всего пункта — см. itemNeedsQty/totalCompletedQty).
-// masterId === null — записи всех мастеров сразу (сводный отчёт).
+// Одна запись — один выполненный пункт наряда (мастер делает пункт целиком,
+// без дележа — см. историю про отказ от completions/qty-дележа). masterId
+// === null — записи всех мастеров сразу (сводный отчёт).
 function workLog(masterId) {
   const d = loadDB();
   const out = [];
@@ -2946,21 +2977,19 @@ function workLog(masterId) {
     // хоть бы она уже и была отмечена готовой: деньги ещё не пришли.
     if (!o.handedOverAt) continue;
     for (const it of o.items) {
-      for (const c of it.completions || []) {
-        if (!c.at || (masterId != null && c.masterId !== masterId)) continue;
-        out.push({ order: o, item: it, completion: c, at: new Date(c.at) });
-      }
+      const c = it.doneBy;
+      if (!c || !c.at || (masterId != null && c.masterId !== masterId)) continue;
+      out.push({ order: o, item: it, at: new Date(c.at) });
     }
   }
   return out;
 }
-// Заработок с одной такой записи — доля пункта (qty/needQty) от стоимости
-// работы (без запчастей), умноженная на процент автора именно этой записи
-// (percentOf — функция masterId → процент, а не одно число: в сводном
-// отчёте у каждой строки свой мастер и свой процент).
+// Заработок с одной такой записи — стоимость работы (без запчастей) целиком,
+// умноженная на процент мастера, который её выполнил (percentOf — функция
+// masterId → процент, а не одно число: в сводном отчёте у каждой строки свой
+// мастер и свой процент).
 function entryEarned(e, percentOf) {
-  const share = (e.completion.qty || 0) / itemNeedsQty(e.item);
-  return share * itemWorkValue(e.item) * (percentOf(e.completion.masterId) / 100);
+  return itemWorkValue(e.item) * (percentOf(e.item.doneBy?.masterId) / 100);
 }
 // Три вкладки отчёта: «Неделя» — по дням, «Месяц» — по неделям, «Год» — по
 // месяцам. n — «отрезков назад от текущего» (0 — сегодня/эта неделя/этот
@@ -3013,18 +3042,17 @@ function historyList(masterId, percentOf) {
     const bike = d.bikes.find((b) => b.number === o.bikeNumber);
     const client = d.clients.find((c) => c.phone === o.clientPhone);
     for (const it of o.items) {
-      for (const c of it.completions || []) {
-        if (!c.at || (masterId != null && c.masterId !== masterId)) continue;
-        // latest (когда фактически сделана работа) — для фильтра по
-        // выбранному периоду в графике выше; handedAt — для сортировки
-        // списка (как в бывшем архиве, «по дате выдачи»).
-        if (!byOrder.has(o.number)) byOrder.set(o.number, { order: o, bike, client, lines: [], earned: 0, latest: c.at, handedAt: o.handedOverAt });
-        const rec = byOrder.get(o.number);
-        const earned = entryEarned({ item: it, completion: c }, percentOf);
-        rec.lines.push({ name: it.name, qty: c.qty, needQty: itemNeedsQty(it), earned, masterName: c.masterName });
-        rec.earned += earned;
-        if (c.at > rec.latest) rec.latest = c.at;
-      }
+      const c = it.doneBy;
+      if (!c || !c.at || (masterId != null && c.masterId !== masterId)) continue;
+      // latest (когда фактически сделана работа) — для фильтра по
+      // выбранному периоду в графике выше; handedAt — для сортировки
+      // списка (как в бывшем архиве, «по дате выдачи»).
+      if (!byOrder.has(o.number)) byOrder.set(o.number, { order: o, bike, client, lines: [], earned: 0, latest: c.at, handedAt: o.handedOverAt });
+      const rec = byOrder.get(o.number);
+      const earned = entryEarned({ item: it }, percentOf);
+      rec.lines.push({ name: it.name, earned, masterName: c.masterName });
+      rec.earned += earned;
+      if (c.at > rec.latest) rec.latest = c.at;
     }
   }
   return [...byOrder.values()].sort((a, b) => b.handedAt.localeCompare(a.handedAt));
@@ -3075,7 +3103,7 @@ function buildReportTab(masterId, percentOf, tab) {
     if (b) return b;
     const base = bucketAt(tab.unit, n);
     const entries = log.filter((e) => e.at >= base.from && e.at < base.to);
-    b = { ...base, earned: entries.reduce((s, e) => s + entryEarned(e, percentOf), 0), count: entries.reduce((s, e) => s + (e.completion.qty || 0), 0) };
+    b = { ...base, earned: entries.reduce((s, e) => s + entryEarned(e, percentOf), 0), count: entries.length };
     cache.set(n, b);
     return b;
   };
@@ -3183,7 +3211,7 @@ function buildReportTab(masterId, percentOf, tab) {
               el("div", { class: "price-tag" }, money(rec.earned))),
             el("div", { class: "small muted", style: "margin-top:6px" },
               rec.lines.map((l) => el("div", {},
-                masterId == null ? `${l.masterName} — ` : "", l.name, l.needQty > 1 ? ` ×${l.qty} из ${l.needQty}` : "", " — ", money(l.earned)))))))
+                masterId == null ? `${l.masterName} — ` : "", l.name, " — ", money(l.earned)))))))
     );
   };
 
