@@ -2477,9 +2477,14 @@ const DIAG_TOGGLES = [
 function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDone, request = "", onRequest, onlyBlocks, inline = false }) {
   const toggles = { тормоза: "гидравлика", покрышки: "камера", трансмиссия: "механика" };
   let req = request;
-  const states = {}; // instId -> { open, faults:Set<number>, comment }
+  const states = {}; // instId -> { open, faults:Set<number> }
   const st = (id) => (states[id] ||= { open: false, faults: new Set() });
   let repairs = []; // неисправности, заведённые админом вручную (общие для всех)
+  // Компенсация скролла в draw() (см. ниже) не должна применяться к самому
+  // первому рендеру — до него на экране только скелетон-заглушка, разница
+  // высот огромная и не имеет отношения к «что-то отметили, страница
+  // уехала», а сам скролл в этот момент и так должен быть 0.
+  let firstDraw = true;
   const addFormOpenFor = new Set(); // id блоков, где сейчас открыта форма «+ своя неисправность»
   const editOverrideFor = new Set(); // коды работ каталога, у которых сейчас открыта форма правки
   // Разовая услуга — форма «+ добавить разовую услугу» под списком узлов,
@@ -2635,6 +2640,14 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
   }
 
   function draw() {
+    // «Уже добавлено в наряд» рисуется выше самих блоков — отметил что-то в
+    // блоке, который сейчас на экране, а строка добавилась НАД ним: страница
+    // подросла сверху и весь текущий вид уехал вниз, хотя сам пользователь
+    // никуда не скроллил. Компенсируем: смещение скролла подгоняем на ту же
+    // величину, на какую изменилась высота всего документа, чтобы то, что
+    // было в кадре, в кадре и осталось.
+    const scrollYBefore = window.scrollY;
+    const heightBefore = document.documentElement.scrollHeight;
     const list = instances();
     const wrap = el(inline ? "div" : "main", { class: inline ? null : "wrap" });
 
@@ -2805,6 +2818,12 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
     host.replaceChildren(wrap,
       el("div", { class: "actions" }, el("div", { class: "actions-inner" },
         el("button", { class: "btn-primary", onclick: finish }, "Готово"))));
+
+    if (!firstDraw) {
+      const heightDelta = document.documentElement.scrollHeight - heightBefore;
+      if (heightDelta) window.scrollTo(0, scrollYBefore + heightDelta);
+    }
+    firstDraw = false;
   }
 
   // Работы с кодом уже добавлены живьём по каждому чекбоксу — тут собираем
