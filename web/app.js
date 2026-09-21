@@ -223,6 +223,10 @@ let DB = normalizeDB(safeParse(localStorage.getItem(DB_KEY)));
 let serverOK = false;
 let pushTimer = null;
 let dirty = false; // есть локальные правки, ещё не подтверждённые сервером
+// Счётчик «поколений» пуша — см. pushToServer(): нужен, чтобы устаревший
+// ответ (пока он летел, случилась ещё одна правка) не затёр более свежие
+// локальные изменения и не сбросил dirty раньше времени.
+let pushGen = 0;
 // Мы внутри экрана, отрисованного мимо router() (диагностика, «уточнение
 // усложнений», подбор работы, техпроцедура) — хеш при этом не меняется,
 // поэтому фоновый adopt() после debounce-пуша не должен звать router():
@@ -331,12 +335,22 @@ function pushToServer() {
   if (typeof fetch !== "function") return;
   dirty = true;
   clearTimeout(pushTimer);
+  const myGen = ++pushGen;
   pushTimer = setTimeout(async () => {
     try {
       const r = await fetch("/api/db", {
         method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(DB),
       });
-      if (r.ok) { serverOK = true; dirty = false; adopt(await r.json()); }
+      if (r.ok) {
+        serverOK = true;
+        const json = await r.json();
+        // Пока этот пуш летал, могла прилететь ещё одна правка (новый вызов
+        // pushToServer сдвинул pushGen дальше) — тогда наш ответ уже устарел:
+        // не затираем им более свежие локальные изменения и не сбрасываем
+        // dirty раньше времени (та новая правка ещё не отправлена и сама
+        // выставит dirty=false, когда дойдёт своя очередь).
+        if (myGen === pushGen) { dirty = false; adopt(json); }
+      }
     } catch { /* оффлайн — данные сохранены локально, отправятся позже */ }
   }, 250);
 }
@@ -904,6 +918,7 @@ const ICON_SVG = (inner) =>
 // выглядят по-разному и не в стиле остальных SVG-иконок приложения.
 const ICON_EDIT = ICON_SVG('<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>');
 const ICON_CLOSE = ICON_SVG('<path d="M18 6 6 18"/><path d="M6 6l12 12"/>');
+const ICON_CHECK = ICON_SVG('<path d="M20 6 9 17l-5-5"/>');
 const ICON_TRASH = ICON_SVG('<path d="M4 7h16"/><path d="M9 7V4.5A1.5 1.5 0 0 1 10.5 3h3A1.5 1.5 0 0 1 15 4.5V7"/><path d="M6 7l.8 12a2 2 0 0 0 2 1.9h6.4a2 2 0 0 0 2-1.9L18 7"/><path d="M10 11v6"/><path d="M14 11v6"/>');
 const ICONS = {
   prices: ICON_SVG('<path d="M12.6 3H6a2 2 0 0 0-2 2v6.6a2 2 0 0 0 .6 1.4l8.4 8.4a2 2 0 0 0 2.8 0l5.6-5.6a2 2 0 0 0 0-2.8L13 3.6a2 2 0 0 0-1.4-.6Z"/><circle cx="8.5" cy="8.5" r="1.3"/>'),
@@ -2678,13 +2693,15 @@ function mountDiagnostics(host, { onCheck, onUncheck, onDone, request = "", onRe
           // Раньше — чекбокс внутри строки: на плотном списке из многих строк
           // подряд промах мимо мелкого квадратика по пальцу ощущался как
           // «всё съезжает» (задевали соседнюю строку/скролл). Теперь тап в
-          // любом месте строки — сама заливка и есть индикатор выбора,
-          // отдельного элемента для галочки нет.
+          // любом месте строки переключает, а галочка справа (без заливки
+          // фона — та не задалась ни цветом, ни соседством выбранных строк
+          // подряд) — единственный индикатор.
           const checked = s.faults.has(i);
-          const rowContent = el("div", { class: "row opt" + (checked ? " selected" : ""), style: "cursor:pointer" },
+          const rowContent = el("div", { class: "row opt", style: "cursor:pointer" },
             el("span", { style: "flex:1" }, f.label,
               f.code && !f.custom ? el("span", { class: "pill" }, rangeText(codeRange(f.code))) : null,
-              f.custom ? el("span", { class: "pill" }, rangeText(customFaultRange(f))) : null));
+              f.custom ? el("span", { class: "pill" }, rangeText(customFaultRange(f))) : null),
+            checked ? el("span", { class: "row-check", html: ICON_CHECK }) : null);
           // Слушатель добавлен ПОСЛЕ swipeActions(rowContent, ...) ниже (не
           // через onclick в el() при создании) — важен порядок регистрации:
           // у swipeActions есть свой click-обработчик на этом же узле,
