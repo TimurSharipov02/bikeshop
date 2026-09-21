@@ -1628,35 +1628,39 @@ function viewOrder(number) {
           el("div", { class: "card card-flush", style: "margin-top:12px" },
             el("span", { class: "muted small" }, "Итого"),
             el("div", { class: "total" }, rangeText(range))));
-        // «+ доп. работа» разворачивает список узлов (Колёса, Тормоз…) прямо
-        // тут, на месте — не отдельным экраном. Сам список и его состояние —
-        // тот же mountDiagnostics, что и в остальных местах приложения, его
-        // собственная закреплённая кнопка «Готово» снизу заменяет собой
-        // «Выйти»/«Готово к выдаче», пока развёрнуто.
-        if (addWorkOpenFor === number) {
-          const diagHost = el("div", { style: "margin-top:14px" });
-          b.append(diagHost);
-          mountDiagnostics(diagHost, {
-            onCheck: (fa) => addItem(fa),
-            onUncheck: (fa) => removeItemQuiet(fa.code),
-            onDone: (notes) => {
-              addWorkOpenFor = null;
-              if (notes.length) editOrder(number, (o) => { o.diagnosticNotes = [...(o.diagnosticNotes || []), ...notes]; });
-              refresh();
-            },
-            request: order.request || "",
-            onRequest: (v) => editOrder(number, (o) => (o.request = v)),
-            onlyBlocks: bike?.kind === "колесо" ? ["WHL"] : null,
-            inline: true,
-          });
-        } else {
-          b.append(el("button", { style: "margin-top:14px", onclick: () => { addWorkOpenFor = number; refresh(); } }, "+ доп. работа"));
-        }
         return b;
       };
       const body = stockCache ? buildBody(stockCache) : el("div", {}, skeletonRows(2));
       if (!stockCache) ensureStock().then((s) => body.replaceChildren(...buildBody(s).childNodes));
       main.append(stage("Ремонт", body));
+      // «+ доп. работа» — отдельным блоком под «Ремонт», а не последней
+      // строкой в той же карточке со списком и итогом: это самостоятельное
+      // действие, а не часть текущего наряда. Разворачивает список узлов
+      // (Колёса, Тормоз…) прямо тут же (тот же mountDiagnostics, что и
+      // в остальных местах приложения), его собственная закреплённая кнопка
+      // «Готово» снизу заменяет собой «Выйти»/«Готово к выдаче», пока
+      // развёрнуто; сам mountDiagnostics уже рисует свои карточки по узлам,
+      // отдельная обёртка вокруг него не нужна.
+      if (addWorkOpenFor === number) {
+        const diagHost = el("div", {});
+        main.append(diagHost);
+        mountDiagnostics(diagHost, {
+          onCheck: (fa) => addItem(fa),
+          onUncheck: (fa) => removeItemQuiet(fa.code),
+          onDone: (notes) => {
+            addWorkOpenFor = null;
+            if (notes.length) editOrder(number, (o) => { o.diagnosticNotes = [...(o.diagnosticNotes || []), ...notes]; });
+            refresh();
+          },
+          request: order.request || "",
+          onRequest: (v) => editOrder(number, (o) => (o.request = v)),
+          onlyBlocks: bike?.kind === "колесо" ? ["WHL"] : null,
+          inline: true,
+        });
+      } else {
+        main.append(el("div", { class: "card" },
+          el("button", { style: "width:100%", onclick: () => { addWorkOpenFor = number; refresh(); } }, "+ доп. работа")));
+      }
       const allDone = orderAllDone(order);
       // Кнопка видна всегда, но недоступна, пока не все работы отмечены
       // готовыми — так сразу понятно, что дальше по плану, а не как будто
