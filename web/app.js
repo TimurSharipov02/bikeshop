@@ -1700,15 +1700,67 @@ function partsEditor(parts, stock, onChange, blockId) {
   // приложении (граница + тонкий разделитель между строками).
   const listLabel = el("p", { class: "small muted", style: "margin:16px 0 4px" }, "Добавлено к этой работе");
   const list = el("div", { class: "rows" });
+  // Цена запчасти в наряде может отличаться от складской (скидка клиенту,
+  // ручная позиция без цены на складе и т.п.) — тап по цене открывает поле
+  // прямо в строке, без отдельной формы.
+  const editingPriceFor = new Set();
   const drawList = () => {
     listLabel.style.display = parts.length ? "" : "none";
     list.style.display = parts.length ? "" : "none";
-    list.replaceChildren(...parts.map((p, i) => el("div", { class: "row", style: "cursor:default" },
-      el("span", { style: "flex:1" }, p.name, p.price ? el("span", { class: "small muted" }, ` · ${money(p.price)}`) : null),
+    list.replaceChildren(...parts.map((p, i) => el("div", { class: "row", style: "cursor:default;gap:8px" },
+      el("span", { style: "flex:1;min-width:0" }, p.name),
+      editingPriceFor.has(i)
+        ? el("input", {
+            type: "number", value: p.price, style: "width:76px;text-align:right;flex:0 0 auto",
+            // drawList() отложен на тик: он заменяет этот же <input> целиком
+            // (replaceChildren), а onchange у iOS/Safari срабатывает как раз
+            // при потере фокуса — синхронная замена элемента изнутри его
+            // собственного blur-обработчика гоняется с браузером за узел и
+            // изредка валит "node no longer a child of this node".
+            onchange: (e) => {
+              p.price = Math.max(0, +e.target.value || 0);
+              editingPriceFor.delete(i);
+              onChange();
+              setTimeout(drawList, 0);
+            },
+          })
+        : el("button", {
+            class: "small muted", style: "border:0;background:none;padding:0;text-decoration:underline dotted;flex:0 0 auto",
+            onclick: () => { editingPriceFor.add(i); drawList(); },
+          }, money(p.price)),
       qtyStepper(p.qty, (qty) => { p.qty = qty; drawList(); onChange(); }, p.maxQty,
         () => { parts.splice(i, 1); drawList(); drawResults(); onChange(); }))));
   };
   drawList();
+
+  // Своя запчасть — не из остатков (например деталь, которой нет на складе,
+  // купленная под заказ). Название и цена вписываются вручную, sku пустой —
+  // такую позицию не с чем сопоставить в остатках/1С, только строкой в наряде.
+  let manualOpen = false;
+  const manualDraft = { name: "", price: 0 };
+  const manualBox = el("div", { style: "margin-top:8px" });
+  const drawManual = () => {
+    if (!manualOpen) return manualBox.replaceChildren();
+    manualBox.replaceChildren(el("div", { class: "card", style: "background:var(--bg)" },
+      el("label", {}, "Название запчасти"),
+      el("input", { placeholder: "напр. Прокладка", value: manualDraft.name, oninput: (e) => (manualDraft.name = e.target.value) }),
+      el("label", { style: "margin-top:8px" }, "Цена, ₽"),
+      el("input", { type: "number", value: manualDraft.price || "", oninput: (e) => (manualDraft.price = +e.target.value || 0) }),
+      el("div", { class: "btn-row", style: "margin-top:10px" },
+        el("button", {
+          class: "btn-primary", onclick: () => {
+            if (!manualDraft.name.trim()) return alert("Укажите название");
+            parts.push({ name: manualDraft.name.trim(), sku: "", price: manualDraft.price, qty: 1, maxQty: 0 });
+            manualOpen = false; manualDraft.name = ""; manualDraft.price = 0;
+            drawManual(); drawList(); onChange();
+          },
+        }, "Добавить"),
+        el("button", { onclick: () => { manualOpen = false; drawManual(); } }, "Отмена"))));
+  };
+  const manualToggle = el("button", {
+    class: "small", style: "margin-top:8px;border:0;background:none;color:var(--muted);text-decoration:underline;padding:0",
+    onclick: () => { manualOpen = !manualOpen; drawManual(); },
+  }, "+ своя запчасть (не из остатков)");
 
   // maxQty — необязательный потолок у складской позиции (спицы можно взять
   // 64, а цепь — только одну); переносим на саму запчасть в наряде, чтобы
@@ -1768,7 +1820,7 @@ function partsEditor(parts, stock, onChange, blockId) {
   q.addEventListener("input", () => { clearBtn.style.display = q.value ? "" : "none"; drawResults(); });
   drawResults();
 
-  return el("div", {}, el("div", { class: "search-wrap" }, q, clearBtn), results, listLabel, list);
+  return el("div", {}, el("div", { class: "search-wrap" }, q, clearBtn), results, manualToggle, manualBox, listLabel, list);
 }
 
 function itemRow(it, showFacts) {
