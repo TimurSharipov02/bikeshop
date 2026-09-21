@@ -1443,11 +1443,12 @@ function viewOrder(number) {
       el("h1", {}, bike ? bikeLabel(bike) : client?.name || "Обращение"), el("span", { class: "sub" }, code));
   }
   // Работа, отмеченная тут (на приёме), попадает в наряд сразу agreed:true —
-  // количество и усложнения настраиваются прямо на диагностике (см. §getItems
-  // ниже), отдельный экран-подтверждение после неё не нужен. Это отличается
-  // от «+ доп. работы» на экране ремонта ниже: там позиция добавляется уже
-  // после того, как наряд согласован с клиентом, и ждёт отдельного явного
-  // подтверждения через карточку «Ждёт согласования» (см. pendingAgreementRow).
+  // количество и усложнения настраиваются не тут, а прямо в «Списке работ»
+  // на экране обращения (см. editableItemRow), отдельный экран-подтверждение
+  // после неё не нужен. Это отличается от «+ доп. работы» на экране ремонта
+  // ниже: там позиция добавляется уже после того, как наряд согласован с
+  // клиентом, и ждёт отдельного явного подтверждения через карточку «Ждёт
+  // согласования» (см. pendingAgreementRow).
   function openDiagnostics() {
     const host = el("div", {});
     render([subBar("Диагностика"), host]);
@@ -1462,17 +1463,6 @@ function viewOrder(number) {
       request: order.request || "",
       onRequest: (v) => editOrder(number, (o) => (o.request = v)),
       onlyBlocks: bike?.kind === "колесо" ? ["WHL"] : null,
-      getItems: () => (loadDB().orders.find((o) => o.number === number)?.items) || order.items,
-      onItemQty: (code, qty) => editItemQuiet(code, { qty }),
-      onDiffSet: (code, di, st) => editOrder(number, (o) => {
-        const x = o.items.find((i) => i.code === code);
-        if (x?.difficulties?.[di]) x.difficulties[di].state = st;
-      }),
-      onDiffQty: (code, di, qty) => editOrder(number, (o) => {
-        const x = o.items.find((i) => i.code === code);
-        if (x?.difficulties?.[di]) x.difficulties[di].qty = qty;
-      }),
-      showTotal: true,
     });
   }
   function openRunner(code) {
@@ -1536,11 +1526,20 @@ function viewOrder(number) {
   };
 
   if (order.status === "приём") {
+    const onDiffSet = (code, di, st) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x?.difficulties?.[di]) x.difficulties[di].state = st; }); refresh(); };
+    const onDiffQty = (code, di, qty) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x?.difficulties?.[di]) x.difficulties[di].qty = qty; }); refresh(); };
     main.append(stage("Диагностика и список работ",
       el("div", { class: "btn-row" },
         el("button", { class: "btn-primary", onclick: () => openDiagnostics() }, "Пройти диагностику"),
         el("button", { onclick: () => openPicker((pick) => { addItem(pick, "", true); refresh(); }) }, "+ работа")),
-      itemList(order, false, { onRemove: removeItem, onSave: saveItemEdit, refresh }), order.items.length
+      itemList(order, false, { onRemove: removeItem, onSave: saveItemEdit, refresh, onDiffSet, onDiffQty }),
+      order.items.length
+        ? el("div", { class: "card card-flush", style: "margin-top:12px" },
+            el("span", { class: "muted small" }, "Итого клиенту"),
+            el("div", { class: "price-range" }, rangeText(orderRangeAll(order))),
+            minutesText(orderMinutes(order, false)) ? el("div", { class: "small muted", style: "margin-top:4px" }, minutesText(orderMinutes(order, false))) : null)
+        : null,
+      order.items.length
         ? el("button", { class: "btn-primary", style: "width:100%;margin-top:12px", onclick: () => setStatus("согласование") }, "К согласованию")
         : null));
   }
@@ -1950,8 +1949,10 @@ function complicationsEditor(list) {
 }
 
 // Строка работы в наряде на стадии «приём» — можно убрать (✕) или изменить
-// название/цену/время/усложнения (✎), не выходя из наряда.
-function editableItemRow(it, { onRemove, onSave, refresh }) {
+// название/цену/время/усложнения (✎), не выходя из наряда. Количество и то,
+// какие усложнения ожидаются (будет/не будет/неизвестно) — сразу видны и
+// настраиваются тут же, прямо в списке, без отдельного экрана-дубликата.
+function editableItemRow(it, { onRemove, onSave, refresh, onDiffSet, onDiffQty }) {
   const r = itemRange(it);
   const isEditing = editingItemCode === it.code;
   // Имя — на своей строке (растягивается на всю ширину, переносится
@@ -1967,7 +1968,11 @@ function editableItemRow(it, { onRemove, onSave, refresh }) {
     { label: ICON_EDIT, onClick: () => { editingItemCode = isEditing ? null : it.code; refresh(); } },
     { label: ICON_CLOSE, className: "warn", onClick: () => { if (confirm(`Убрать «${it.name}» из наряда?`)) onRemove(it.code); } },
   ]);
-  if (!isEditing) return header;
+  const diffs = (it.difficulties || []).length
+    ? el("div", { style: "width:100%;margin-top:2px" },
+        difficultyList(it.difficulties, (di, st) => onDiffSet(it.code, di, st), (di, qty) => onDiffQty(it.code, di, qty), false))
+    : null;
+  if (!isEditing) return el("div", {}, header, diffs);
 
   const d = {
     name: it.name, workPrice: it.workPrice || 0, estimateMinutes: it.estimateMinutes || 0, notes: it.notes || "",
@@ -1990,12 +1995,12 @@ function editableItemRow(it, { onRemove, onSave, refresh }) {
         notes: d.notes.trim(), difficulties: d.difficulties,
       }) }, "Сохранить"),
       el("button", { onclick: () => { editingItemCode = null; refresh(); } }, "Отмена")));
-  return el("div", {}, header, form);
+  return el("div", {}, header, diffs, form);
 }
 
 // Наряд сгруппирован по узлам велосипеда (блоки диагностики), порядок — как в diagnostics.json.
-// edit — {onRemove, onSave, refresh}: если передан, работы на стадии «приём»
-// можно убрать или изменить прямо в списке.
+// edit — {onRemove, onSave, refresh, onDiffSet, onDiffQty}: если передан, работы
+// на стадии «приём» можно убрать, изменить или отметить усложнения прямо в списке.
 // grouped=false — плоский список без заголовков по узлам (КОЛЁСА, ПРОЧЕЕ…),
 // просто список работ; так, например, показан уже добавленный в наряд
 // список прямо на диагностике — там это не нужно, там и так одна тема.
@@ -2124,19 +2129,6 @@ function difficultyList(difficulties, onSet, onQty, fact) {
           el("button", { class: d.state === v ? `active sel-${v}` : "", onclick: () => onSet(di, v) }, lbl))),
       d.multiple && onQty && d.state !== "no" ? el("div", { style: "margin-top:6px" }, qtyStepper(d.qty, (qty) => onQty(di, qty))) : null));
   });
-  return box;
-}
-
-// Карточка работы наряда прямо на диагностике — количество и усложнения
-// настраиваются тут же, без отдельного экрана «оценка» (его больше нет).
-function diagWorkCard(it, { onQty, onDiffSet, onDiffQty }) {
-  const cost = "работа " + money(it.workPrice || 0);
-  const box = el("div", { class: "assess" },
-    el("div", { style: "display:flex;flex-wrap:wrap;align-items:center;gap:8px" },
-      el("div", { style: "flex:1" }, el("b", {}, it.name), " ", el("span", { class: "small muted" }, "· " + cost)),
-      it.multiple && onQty ? qtyStepper(it.qty, onQty) : null));
-  if ((it.difficulties || []).length === 0) box.append(el("p", { class: "small muted" }, "Трудностей не ожидается."));
-  else box.append(difficultyList(it.difficulties, onDiffSet, onDiffQty, false));
   return box;
 }
 
@@ -2489,14 +2481,7 @@ const DIAG_TOGGLES = [
 // (напр. «+ доп. работа» на «в работе»), а не монтируют как весь экран:
 // тогда не оборачиваем содержимое в свой <main class="wrap"> (иначе он
 // вложился бы во внешний main.wrap — невалидная вложенность и двойные отступы).
-function mountDiagnostics(host, {
-  onCheck, onUncheck, onDone, request = "", onRequest, onlyBlocks, inline = false,
-  // Количество/усложнения работ, уже добавленных в наряд, и итоговая сумма —
-  // раньше жили на отдельном экране «оценка», теперь показываются прямо тут
-  // (см. блок «Работы в наряде» в draw()). Необязательные: без getItems эта
-  // секция просто не рендерится, старые вызовы mountDiagnostics не меняются.
-  getItems, onItemQty, onDiffSet, onDiffQty, showTotal = false,
-}) {
+function mountDiagnostics(host, { onCheck, onUncheck, onDone, request = "", onRequest, onlyBlocks, inline = false }) {
   const toggles = { тормоза: "гидравлика", покрышки: "камера", трансмиссия: "механика" };
   let req = request;
   const states = {}; // instId -> { open, faults:Set<number> }
@@ -2785,18 +2770,6 @@ function mountDiagnostics(host, {
       wrap.append(card);
     }
 
-    if (getItems) {
-      const items = getItems();
-      if (items.length) {
-        wrap.append(el("h2", {}, "Работы в наряде"));
-        items.forEach((it) => wrap.append(diagWorkCard(it, {
-          onQty: (qty) => { onItemQty(it.code, qty); draw(); },
-          onDiffSet: (di, st) => { onDiffSet(it.code, di, st); draw(); },
-          onDiffQty: (di, qty) => { onDiffQty(it.code, di, qty); draw(); },
-        })));
-      }
-    }
-
     // Разовая услуга — работа вне узлов, только для этого обращения (не
     // заводится в общий каталог неисправностей и никак не всплывёт у другого
     // велосипеда в будущем): просто ещё один пункт наряда, добавляется сразу
@@ -2825,15 +2798,6 @@ function mountDiagnostics(host, {
           class: "small", style: "margin-top:12px;border:0;background:none;color:var(--muted);text-decoration:underline;padding:0",
           onclick: () => { miscOpen = true; draw(); },
         }, "+ добавить разовую услугу"));
-
-    if (showTotal && getItems && getItems().length) {
-      wrap.append(el("div", { class: "card card-flush" },
-        el("span", { class: "muted small" }, "Итого клиенту"),
-        el("div", { class: "price-range" }, rangeText(orderRangeAll({ items: getItems() }))),
-        minutesText(orderMinutes({ items: getItems() }, false))
-          ? el("div", { class: "small muted", style: "margin-top:4px" }, minutesText(orderMinutes({ items: getItems() }, false)))
-          : null));
-    }
 
     host.replaceChildren(wrap,
       el("div", { class: "actions" }, el("div", { class: "actions-inner" },
