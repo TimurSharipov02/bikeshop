@@ -1167,17 +1167,12 @@ function viewNewOrder() {
   function stepDiagnostics() {
     render([bar("Новое обращение", "/"), host]);
     mountDiagnostics(host, {
-      getItems: () => draft.items,
       onCheck: (fa) => {
         if (!draft.items.some((i) => i.code === fa.code)) draft.items.push(fa.custom ? makeCustomItem(fa) : makeItem(fa.code));
       },
       onUncheck: (fa) => {
         const idx = draft.items.findIndex((i) => i.code === fa.code);
         if (idx !== -1) draft.items.splice(idx, 1);
-      },
-      onEditItem: (code, patch) => {
-        const x = draft.items.find((i) => i.code === code);
-        if (x) Object.assign(x, patch);
       },
       onDone: (notes) => { draft.diagnosticNotes.push(...notes); stepAssess(); },
       request: draft.request,
@@ -1422,10 +1417,8 @@ function viewOrder(number) {
     render([subBar("Диагностика"), host]);
     enterSubScreen(refresh);
     mountDiagnostics(host, {
-      getItems: () => order.items,
       onCheck: (fa) => addItem(fa),
       onUncheck: (fa) => removeItemQuiet(fa.code),
-      onEditItem: (code, patch) => editItemQuiet(code, patch),
       onDone: (notes) => {
         if (notes.length) editOrder(number, (o) => { o.diagnosticNotes = [...(o.diagnosticNotes || []), ...notes]; });
         leaveSubScreen();
@@ -1611,10 +1604,8 @@ function viewOrder(number) {
           const diagHost = el("div", { style: "margin-top:14px" });
           b.append(diagHost);
           mountDiagnostics(diagHost, {
-            getItems: () => order.items,
             onCheck: (fa) => addItem(fa),
             onUncheck: (fa) => removeItemQuiet(fa.code),
-            onEditItem: (code, patch) => editItemQuiet(code, patch),
             onDone: (notes) => {
               addWorkOpenFor = null;
               if (notes.length) editOrder(number, (o) => { o.diagnosticNotes = [...(o.diagnosticNotes || []), ...notes]; });
@@ -2465,26 +2456,22 @@ const DIAG_TOGGLES = [
   { param: "трансмиссия", label: "Трансмиссия", options: [["механика", "механика"], ["электроника", "электроника"]] },
 ];
 
-// getItems/onCheck/onUncheck/onEditItem — список работ живёт у вызывающего
-// (наряд или черновик нового обращения) и меняется сразу по клику на
-// чекбокс, без ожидания «Готово»: поэтому его можно тут же посмотреть,
-// изменить (✎) или убрать (✕), не выходя из диагностики.
+// onCheck/onUncheck — список работ живёт у вызывающего (наряд или черновик
+// нового обращения) и меняется сразу по тапу на строку, без ожидания
+// «Готово». Отмеченное видно прямо по заливке строк в блоках (отдельного
+// списка уже добавленного тут нет — только дублировал то же самое ещё раз
+// и без пользы растягивал экран).
 // onDone(notes) получает только текстовые заметки без привязки к работе.
 // inline — true, когда диагностику встраивают прямо в тело другого экрана
 // (напр. «+ доп. работа» на «в работе»), а не монтируют как весь экран:
 // тогда не оборачиваем содержимое в свой <main class="wrap"> (иначе он
 // вложился бы во внешний main.wrap — невалидная вложенность и двойные отступы).
-function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDone, request = "", onRequest, onlyBlocks, inline = false }) {
+function mountDiagnostics(host, { onCheck, onUncheck, onDone, request = "", onRequest, onlyBlocks, inline = false }) {
   const toggles = { тормоза: "гидравлика", покрышки: "камера", трансмиссия: "механика" };
   let req = request;
   const states = {}; // instId -> { open, faults:Set<number> }
   const st = (id) => (states[id] ||= { open: false, faults: new Set() });
   let repairs = []; // неисправности, заведённые админом вручную (общие для всех)
-  // Компенсация скролла в draw() (см. ниже) не должна применяться к самому
-  // первому рендеру — до него на экране только скелетон-заглушка, разница
-  // высот огромная и не имеет отношения к «что-то отметили, страница
-  // уехала», а сам скролл в этот момент и так должен быть 0.
-  let firstDraw = true;
   const addFormOpenFor = new Set(); // id блоков, где сейчас открыта форма «+ своя неисправность»
   const editOverrideFor = new Set(); // коды работ каталога, у которых сейчас открыта форма правки
   // Разовая услуга — форма «+ добавить разовую услугу» под списком узлов,
@@ -2640,39 +2627,21 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
   }
 
   function draw() {
-    // «Уже добавлено в наряд» рисуется выше самих блоков — отметил что-то в
-    // блоке, который сейчас на экране, а строка добавилась НАД ним: страница
-    // подросла сверху и весь текущий вид уехал вниз, хотя сам пользователь
-    // никуда не скроллил. Компенсируем: смещение скролла подгоняем на ту же
-    // величину, на какую изменилась высота всего документа, чтобы то, что
-    // было в кадре, в кадре и осталось.
-    const scrollYBefore = window.scrollY;
-    const heightBefore = document.documentElement.scrollHeight;
     const list = instances();
     const wrap = el(inline ? "div" : "main", { class: inline ? null : "wrap" });
 
-    // При встраивании в «+ доп. работа» (inline) ни уточнения, ни список уже
-    // добавленного тут не нужны: уточнения — это только про первичный приём,
-    // а список работ и так виден выше, на самом экране «Ремонт», повторять
-    // его тут было бы дублированием. То же поле показано и редактируется и
+    // При встраивании в «+ доп. работа» (inline) уточнения не нужны — это
+    // только про первичный приём. То же поле показано и редактируется и
     // на экране обращения (см. viewOrder/head) — там его тоже можно менять.
+    // Отдельный список «Уже добавлено в наряд» тут раньше был, но убрали:
+    // отмеченное и так видно по заливке прямо в блоках ниже, а сама эта
+    // секция росла НАД блоками и раздвигала список при каждой отметке.
     if (!inline) {
       wrap.append(el("div", { class: "card" },
         // DIAG_TOGGLES (гидравлика/механика и т.п.) пока скрыты — переключатели
         // остаются в коде с дефолтными значениями, faultVisible ими и пользуется.
         onRequest ? el("textarea", { rows: 2, value: req, placeholder: "Уточнения",
           onchange: (e) => { req = e.target.value.trim(); onRequest(req); } }) : null));
-
-      const items = getItems();
-      if (items.length) {
-        wrap.append(el("div", {},
-          el("p", { class: "small muted", style: "margin:14px 0 4px" }, "Уже добавлено в наряд"),
-          itemList({ items }, false, {
-            onRemove: (code) => { onUncheck({ code }); uncheckByCode(code); draw(); },
-            onSave: (code, patch) => { onEditItem(code, patch); draw(); },
-            refresh: draw,
-          }, false, false)));
-      }
     }
 
     for (const inst of list) {
@@ -2818,12 +2787,6 @@ function mountDiagnostics(host, { getItems, onCheck, onUncheck, onEditItem, onDo
     host.replaceChildren(wrap,
       el("div", { class: "actions" }, el("div", { class: "actions-inner" },
         el("button", { class: "btn-primary", onclick: finish }, "Готово"))));
-
-    if (!firstDraw) {
-      const heightDelta = document.documentElement.scrollHeight - heightBefore;
-      if (heightDelta) window.scrollTo(0, scrollYBefore + heightDelta);
-    }
-    firstDraw = false;
   }
 
   // Работы с кодом уже добавлены живьём по каждому чекбоксу — тут собираем

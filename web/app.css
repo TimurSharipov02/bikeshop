@@ -257,16 +257,11 @@ label { display:block; font-size:13px; color:var(--muted); margin:14px 0 5px; fo
    специфичности перебить фон .swipe-content, и скрытые кнопки просвечивали
    бы сквозь строку насквозь. */
 .row.opt { border:0; border-radius:0; margin:0; padding:13px 16px; background:var(--card); }
-/* Заливка от края до края card (плоский прямоугольник без скругления,
-   впритык к соседям) смотрелась грубо, а две выбранные строки подряд
-   сливались в одно бесформенное пятно (обычная var(--line) граница на
-   фоне заливки почти не видна). Вместо этого — отдельная скруглённая
-   «плашка» с контуром и просветом сверху/снизу, явно отделённая от
-   соседей. outline, не border — не меняет box-model (паддинги/высоту). */
-.row.opt.selected {
-  background:var(--accent-weak); border-radius:var(--radius-sm); margin:3px 0;
-  outline:1.5px solid var(--accent); outline-offset:-1.5px;
-}
+/* Граница между двумя соседними выбранными строками — контрастнее обычной
+   (var(--line) на фоне заливки почти не видна, соседние строки сливались
+   в одно бесформенное пятно): полупрозрачная линия поверх текста цвета,
+   а не серого, читается в обеих темах одинаково. */
+.row.opt.selected { background:var(--accent-weak); border-bottom-color:color-mix(in srgb, var(--ink) 12%, transparent); }
 /* Свой чекбокс/радио вместо голого системного — квадрат со скруглением или
    кружок, заливка акцентом и белая галочка/точка при выборе. */
 .opt input[type="checkbox"], .opt input[type="radio"], input.chk {
