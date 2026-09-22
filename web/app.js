@@ -540,6 +540,9 @@ const instanceCode = (base) => `${base}~${Date.now().toString(36)}${Math.random(
 const orderRangeAll = (o) =>
   o.items.reduce((a, it) => { const r = itemRange(it); return { min: a.min + r.min, max: a.max + r.max }; }, { min: 0, max: 0 });
 const rangeText = (r) => (r.min === r.max ? money(r.min) : `${money(r.min)} – ${money(r.max)}`);
+// Компактный вид предварительной цены: вместо тяжёлой вилки «600–1 200 ₽»
+// показываем базовую сумму и знак «+», если возможны усложнения.
+const rangePlusText = (r) => r.min === r.max ? money(r.min) : `${Number(r.min || 0).toLocaleString("ru-RU")}+ ₽`;
 // Ориентировочное время — не для мастера в интерфейсе наравне с ценой, а тихой строкой для клиента.
 const orderMinutes = (o, onlyAgreed) =>
   o.items.filter((i) => !onlyAgreed || i.agreed).reduce((s, it) => s + itemMinutes(it), 0);
@@ -1238,7 +1241,7 @@ function viewNewOrder() {
           },
         });
       },
-      totalText: () => rangeText(orderRangeAll(draft)),
+      totalText: () => rangePlusText(orderRangeAll(draft)),
       onDone: stepClient,
     });
   }
@@ -2691,7 +2694,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onDone, request = 
           const rowContent = el("div", { class: "row opt", style: "cursor:pointer" },
             el("span", { style: "flex:1" }, f.label,
               f.code && !f.custom ? el("span", { class: "pill" }, rangeText(codeRange(f.code))) : null,
-              f.custom ? el("span", { class: "pill" }, rangeText(customFaultRange(f))) : null),
+              f.custom ? el("span", { class: "pill" }, rangePlusText(customFaultRange(f))) : null),
             selectButton || (checked ? el("span", { class: "row-check", html: ICON_CHECK }) : null));
           // Слушатель добавлен ПОСЛЕ swipeActions(rowContent, ...) ниже (не
           // через onclick в el() при создании) — важен порядок регистрации:
