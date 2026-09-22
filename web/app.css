@@ -209,6 +209,10 @@ button:disabled:active { transform:none; }
 .segmented button { flex:1; border:0; background:transparent; color:var(--ink); min-height:38px; padding:7px 10px;
   font-size:14px; font-weight:500; border-radius:8px; box-shadow:none; }
 .segmented button.active { background:var(--card); font-weight:600; box-shadow:var(--shadow-sm); }
+.switch { width:48px; min-width:48px; height:28px; padding:3px; border:0; border-radius:999px;
+  background:#c7c7cc; display:flex; align-items:center; justify-content:flex-start; box-shadow:none; }
+.switch span { width:22px; height:22px; border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.22); }
+.switch.on { background:var(--accent); justify-content:flex-end; }
 /* Будет/не будет/неизвестно — цвет держится и на активном сегменте, чтобы
    состояние читалось с одного взгляда, как раньше у трёх отдельных кнопок. */
 .segmented button.active.sel-yes { background:var(--warn); color:var(--on-accent); box-shadow:none; }
