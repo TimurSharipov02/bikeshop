@@ -1382,6 +1382,77 @@ function viewOrder(number) {
   // не должна дёргать страницу вверх — только переход между стадиями наряда.
   const refresh = () => render(viewOrder(number), { keepScroll: true });
 
+  function openOrderDetailsEditor() {
+    const state = {
+      name: client?.name || order.clientName || "",
+      phone: order.clientPhone ? applyPhoneMask(order.clientPhone) : "",
+      bikeName: bikeLabel(bike),
+    };
+    const phoneInput = el("input", { type: "tel", value: state.phone, placeholder: "+7 — необязательно" });
+    attachPhoneMask(phoneInput, (v) => (state.phone = v));
+    const error = el("p", { class: "small", style: "color:var(--warn);display:none" });
+    let sheet;
+    const save = async () => {
+      const hasPhone = maskedDigits(state.phone).length > 0;
+      if (hasPhone && !isValidPhone(state.phone)) {
+        error.textContent = "Проверьте номер телефона или оставьте поле пустым";
+        error.style.display = "";
+        return;
+      }
+      const newPhone = hasPhone ? state.phone : "";
+      const oldPhone = order.clientPhone || "";
+      const duplicate = newPhone && loadDB().clients.find((c) => c.phone !== oldPhone && phoneDigits(c.phone) === phoneDigits(newPhone));
+      if (duplicate) {
+        error.textContent = `Этот номер уже принадлежит клиенту «${duplicate.name || duplicate.phone}»`;
+        error.style.display = "";
+        return;
+      }
+      const ok = await pushDbNow((d) => {
+        const o = d.orders.find((x) => x.number === number);
+        if (!o) return;
+        const c = oldPhone ? findClientByPhone(d.clients, oldPhone) : null;
+        if (c) {
+          c.name = state.name.trim();
+          if (newPhone && phoneDigits(newPhone) !== phoneDigits(oldPhone)) {
+            c.phone = newPhone;
+            for (const b of d.bikes) if (b.ownerPhone === oldPhone) b.ownerPhone = newPhone;
+            for (const x of d.orders) if (x.clientPhone === oldPhone) x.clientPhone = newPhone;
+          }
+        } else if (newPhone) {
+          d.clients.push({ phone: newPhone, name: state.name.trim() });
+        }
+        o.clientPhone = newPhone;
+        o.clientName = state.name.trim();
+        let b = d.bikes.find((x) => x.number === o.bikeNumber);
+        if (b) {
+          b.name = state.bikeName.trim();
+          if (newPhone) b.ownerPhone = newPhone;
+        } else if (state.bikeName.trim()) {
+          const bikeNumber = nextBikeKey(d, newPhone || "anonymous");
+          b = { number: bikeNumber, name: state.bikeName.trim(), ownerPhone: newPhone };
+          d.bikes.push(b);
+          o.bikeNumber = bikeNumber;
+        }
+      });
+      if (!ok) {
+        error.textContent = "Не удалось сохранить — проверьте соединение";
+        error.style.display = "";
+        return;
+      }
+      sheet.close();
+      toast("Данные изменены");
+      refresh();
+    };
+    sheet = openSheet("Клиент и велосипед", el("div", {},
+      el("label", {}, "Имя"),
+      el("input", { value: state.name, placeholder: "необязательно", oninput: (e) => (state.name = e.target.value) }),
+      el("label", { style: "margin-top:10px" }, "Телефон"), phoneInput,
+      el("label", { style: "margin-top:10px" }, "Велосипед"),
+      el("input", { value: state.bikeName, placeholder: "необязательно", oninput: (e) => (state.bikeName = e.target.value) }),
+      error,
+      el("button", { class: "btn-primary", style: "width:100%;margin-top:16px", onclick: save }, "Сохранить")));
+  }
+
   // agreed — работы, отмеченные на приёме (диагностика или «+ работа» на
   // этой же стадии), сразу считаются согласованными: количество и
   // усложнения уже настраиваются тут же, отдельного шага-подтверждения для
@@ -1547,7 +1618,10 @@ function viewOrder(number) {
     // менять, без захода в диагностику.
     el("div", { style: "margin-top:8px" },
       el("textarea", { rows: 2, value: order.request || "", placeholder: "Уточнения",
-        onchange: (e) => { editOrder(number, (o) => (o.request = e.target.value.trim())); refresh(); } })));
+        onchange: (e) => { editOrder(number, (o) => (o.request = e.target.value.trim())); refresh(); } })),
+    order.status === "взята в работу" ? el("button", {
+      class: "small", style: "margin-top:10px;width:100%", onclick: openOrderDetailsEditor,
+    }, "Изменить клиента и велосипед") : null);
 
   if ((order.diagnosticNotes || []).length) {
     const ul = el("ul", { style: "margin:4px 0 0;padding-left:18px" });
