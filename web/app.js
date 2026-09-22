@@ -1211,6 +1211,33 @@ function viewNewOrder() {
       onUncheck: (fa) => {
         draft.items = draft.items.filter((it) => (it.sourceCode || it.code) !== fa.code);
       },
+      onOpen: async (fa, redraw) => {
+        const it = draft.items.find((item) => (item.sourceCode || item.code) === fa.code);
+        if (!it) return;
+        const stock = await ensureStock();
+        openPendingSheet(it, stock, {
+          onSet: (code, di, state) => {
+            const item = draft.items.find((x) => x.code === code);
+            if (item?.difficulties?.[di]) item.difficulties[di].state = state;
+            redraw();
+          },
+          onDiffQty: (code, di, qty) => {
+            const item = draft.items.find((x) => x.code === code);
+            if (item?.difficulties?.[di]) item.difficulties[di].qty = qty;
+            redraw();
+          },
+          onParts: (code, parts) => {
+            const item = draft.items.find((x) => x.code === code);
+            if (item) item.parts = parts;
+            redraw();
+          },
+          onQty: (code, qty) => {
+            const item = draft.items.find((x) => x.code === code);
+            if (item) item.qty = qty;
+            redraw();
+          },
+        });
+      },
       totalText: () => rangeText(orderRangeAll(draft)),
       onDone: stepClient,
     });
@@ -2434,7 +2461,7 @@ const DIAG_TOGGLES = [
 // (напр. «+ доп. работа» на «в работе»), а не монтируют как весь экран:
 // тогда не оборачиваем содержимое в свой <main class="wrap"> (иначе он
 // вложился бы во внешний main.wrap — невалидная вложенность и двойные отступы).
-function mountDiagnostics(host, { onCheck, onUncheck, onDone, request = "", onRequest, onlyBlocks, inline = false, onlyCustom = false, totalText }) {
+function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onDone, request = "", onRequest, onlyBlocks, inline = false, onlyCustom = false, totalText }) {
   const toggles = { тормоза: "гидравлика", покрышки: "камера", трансмиссия: "механика" };
   let req = request;
   const states = {}; // instId -> { open, faults:Set<number> }
@@ -2650,11 +2677,23 @@ function mountDiagnostics(host, { onCheck, onUncheck, onDone, request = "", onRe
           // фона — та не задалась ни цветом, ни соседством выбранных строк
           // подряд) — единственный индикатор.
           const checked = s.faults.has(i);
+          const selectButton = onlyCustom && f.custom ? el("button", {
+            type: "button",
+            class: checked ? "row-check" : "",
+            style: "flex:0 0 32px;width:32px;height:32px;padding:5px;border-radius:50%",
+            html: checked ? ICON_CHECK : "+",
+            onclick: (e) => {
+              e.preventDefault(); e.stopPropagation();
+              if (checked) { s.faults.delete(i); if (f.code && !codeCheckedElsewhere(f.code, inst.id)) onUncheck(f); }
+              else { s.faults.add(i); if (f.code) onCheck(f); }
+              draw();
+            },
+          }) : null;
           const rowContent = el("div", { class: "row opt", style: "cursor:pointer" },
             el("span", { style: "flex:1" }, f.label,
               f.code && !f.custom ? el("span", { class: "pill" }, rangeText(codeRange(f.code))) : null,
               f.custom ? el("span", { class: "pill" }, rangeText(customFaultRange(f))) : null),
-            checked ? el("span", { class: "row-check", html: ICON_CHECK }) : null);
+            selectButton || (checked ? el("span", { class: "row-check", html: ICON_CHECK }) : null));
           // Слушатель добавлен ПОСЛЕ swipeActions(rowContent, ...) ниже (не
           // через onclick в el() при создании) — важен порядок регистрации:
           // у swipeActions есть свой click-обработчик на этом же узле,
@@ -2663,6 +2702,15 @@ function mountDiagnostics(host, { onCheck, onUncheck, onDone, request = "", onRe
           // тут стоял просто onclick в el(), он сработал бы раньше свайпа
           // и отмечал бы галочку даже во время жеста «смахнуть для правки».
           const toggle = () => {
+            // В новом наряде тап по названию открывает карточку работы. Если
+            // работа ещё не выбрана — сначала добавляем её. Отдельная кнопка
+            // справа отвечает только за добавление/снятие, поэтому повторный
+            // тап по строке уже не удаляет выбранную позицию случайно.
+            if (onlyCustom && f.custom) {
+              if (!checked) { s.faults.add(i); if (f.code) onCheck(f); draw(); }
+              if (f.code && onOpen) onOpen(f, draw);
+              return;
+            }
             // Без code — неисправность без привязанной операции (определяется
             // на разборке), в наряд не превращается, только в заметку.
             // Один и тот же код может быть отмечен и спереди, и сзади —
@@ -2752,9 +2800,12 @@ function mountDiagnostics(host, { onCheck, onUncheck, onDone, request = "", onRe
           onclick: () => { miscOpen = true; draw(); },
         }, "+ добавить разовую услугу"));
 
+    if (totalText) wrap.append(el("div", { class: "card" },
+      el("span", { class: "muted small" }, "Итого"),
+      el("div", { class: "price-range" }, totalText())));
+
     host.replaceChildren(wrap,
       el("div", { class: "actions" }, el("div", { class: "actions-inner" },
-        totalText ? el("span", { class: "amount" }, totalText()) : null,
         el("button", { class: "btn-primary", onclick: finish }, "Далее"))));
   }
 
