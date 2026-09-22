@@ -1479,6 +1479,57 @@ function viewOrder(number) {
     enterSubScreen(refresh);
   }
 
+  // Добавление работ во время ремонта — теми же раскрывающимися блоками,
+  // что и при создании наряда. Новые позиции держим локально до «Готово»,
+  // чтобы кнопка «назад» действительно отменяла весь незавершённый выбор.
+  function openAddWorkBlocks() {
+    const host = el("div", {});
+    const added = [];
+    render([subBar("Добавить работу"), host]);
+    enterSubScreen(refresh);
+    mountDiagnostics(host, {
+      onlyCustom: true,
+      onlyBlocks: bike?.kind === "колесо" ? ["WHL"] : null,
+      onCheck: (fa) => {
+        if (!added.some((it) => (it.sourceCode || it.code) === fa.code)) {
+          const item = makeCustomItem(fa);
+          item.agreed = true;
+          added.push(item);
+        }
+      },
+      onUncheck: (fa) => {
+        const i = added.findIndex((it) => (it.sourceCode || it.code) === fa.code);
+        if (i >= 0) added.splice(i, 1);
+      },
+      onOpen: async (fa, redraw) => {
+        const it = added.find((item) => (item.sourceCode || item.code) === fa.code);
+        if (!it) return;
+        const stock = await ensureStock();
+        openPendingSheet(it, stock, {
+          onSet: (code, di, state) => { const x = added.find((v) => v.code === code); if (x?.difficulties?.[di]) x.difficulties[di].state = state; redraw(); },
+          onDiffQty: (code, di, qty) => { const x = added.find((v) => v.code === code); if (x?.difficulties?.[di]) x.difficulties[di].qty = qty; redraw(); },
+          onParts: (code, parts) => { const x = added.find((v) => v.code === code); if (x) x.parts = parts; redraw(); },
+          onQty: (code, qty) => { const x = added.find((v) => v.code === code); if (x) x.qty = qty; redraw(); },
+        });
+      },
+      totalText: () => rangePlusText(orderRangeAll({ items: [...order.items.filter((it) => it.agreed), ...added] })),
+      onDone: () => {
+        if (added.length) editOrder(number, (o) => {
+          for (const draftItem of added) {
+            const item = { ...draftItem };
+            const source = item.sourceCode || item.code;
+            if (o.items.some((it) => (it.sourceCode || it.code) === source)) {
+              item.sourceCode = source;
+              item.code = instanceCode(source);
+            }
+            o.items.push(item);
+          }
+        });
+        leaveSubScreen();
+      },
+    });
+  }
+
   const range = orderRange(order);
   const head = el("div", { class: "card" },
     // Название велосипеда уже крупно в шапке экрана — тут не повторяем,
@@ -1642,25 +1693,7 @@ function viewOrder(number) {
       // развёрнуто; сам mountDiagnostics уже рисует свои карточки по узлам,
       // отдельная обёртка вокруг него не нужна.
       main.append(el("div", { class: "card" },
-        el("button", { style: "width:100%", onclick: () => {
-          openWorkPicker({
-            existingItems: order.items, bikeKind: bike?.kind, allowDuplicates: true,
-            onBack: refresh,
-            onPick: (pick) => {
-              editOrder(number, (o) => {
-                const item = pick.custom ? makeCustomItem(pick) : makeItem(pick.code);
-                if (o.items.some((i) => (i.sourceCode || i.code) === pick.code)) {
-                  item.sourceCode = pick.code;
-                  item.code = instanceCode(pick.code);
-                }
-                item.agreed = true;
-                o.items.push(item);
-              });
-              refresh();
-              toast("Работа добавлена");
-            },
-          });
-        } }, "+ Добавить работу")));
+        el("button", { style: "width:100%", onclick: openAddWorkBlocks }, "+ Добавить работу")));
       const allDone = orderAllDone(order);
       // Кнопка видна всегда, но недоступна, пока не все работы отмечены
       // готовыми — так сразу понятно, что дальше по плану, а не как будто
