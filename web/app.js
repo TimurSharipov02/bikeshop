@@ -1208,36 +1208,38 @@ function viewNewOrder() {
   }
 
   // Оценка усложнений и согласование — по сути один и тот же экран, что и
-  // «в работе»: список работ, у каждой можно развернуть усложнения (тут ещё
-  // прогноз — будет/не будет/неизвестно) и запчасти в счёт, плюс отметить
-  // согласовано или нет. Единственная разница — тут ещё нет клиента и
-  // велосипеда, так что шапка с ними не показывается.
+  // «в работе»: список работ, у каждой сразу видно и можно поменять
+  // количество и усложнения (тут ещё прогноз — будет/не будет/неизвестно),
+  // плюс отметить согласовано или нет — прямо в списке, без отдельной
+  // шторки на каждую работу. Запчасти тут не заводим (как и в списке работ
+  // на приёме у уже созданной заявки) — им место позже, когда работа
+  // реально начата. Единственная разница с обычной заявкой — тут ещё нет
+  // клиента и велосипеда, так что шапка с ними не показывается.
   function stepAssess() {
-    let stock = stockCache || [];
     const redraw = () => render(build(), { keepScroll: true });
-    if (!stockCache) ensureStock().then((s) => { stock = s; redraw(); });
     function build() {
       const body = el("div", {});
       if (draft.items.length === 0) body.append(emptyState("Работ пока нет."));
       draft.items.forEach((it) => {
-        const row = el("div", { class: "assess" });
-        const nameRow = el("div", {
-          style: "display:flex;align-items:center;gap:8px;cursor:pointer",
-          onclick: () => openAssessSheet(it, stock, redraw),
-        },
+        const nameRow = el("div", { style: "display:flex;align-items:center;gap:8px" },
           el("input", {
             type: "checkbox", class: "chk", checked: it.agreed,
-            onclick: (e) => e.stopPropagation(),
             onchange: (e) => { it.agreed = e.target.checked; redraw(); },
           }),
-          el("b", { style: "flex:1;min-width:0" }, it.name, it.multiple && (it.qty || 1) > 1 ? el("span", { class: "small muted" }, ` × ${it.qty}`) : null),
-          el("span", { style: "flex:0 0 auto;color:var(--line);font-size:19px" }, "›"),
+          el("b", { style: "flex:1;min-width:0" }, it.name),
           el("button", {
             style: iconBtnStyle,
-            onclick: (e) => { e.stopPropagation(); draft.items = draft.items.filter((x) => x.code !== it.code); redraw(); },
+            onclick: () => { draft.items = draft.items.filter((x) => x.code !== it.code); redraw(); },
           }, "✕"));
-        row.append(nameRow, el("div", { class: "price-tag", style: "margin-top:2px" }, rangeText(itemRange(it))));
-        body.append(row);
+        const box = el("div", { class: "assess" },
+          nameRow,
+          el("div", { style: "display:flex;align-items:center;gap:10px;margin-top:2px" },
+            it.multiple ? qtyStepper(it.qty, (qty) => { it.qty = qty; redraw(); }) : null,
+            el("span", { class: "price-tag", style: "flex:1" }, rangeText(itemRange(it)))));
+        if ((it.difficulties || []).length) box.append(difficultyList(it.difficulties,
+          (di, st) => { it.difficulties[di].state = st; redraw(); },
+          (di, qty) => { if (it.difficulties[di]) it.difficulties[di].qty = qty; redraw(); }, false));
+        body.append(box);
       });
       body.append(
         el("div", { class: "card card-flush" },
@@ -2172,31 +2174,6 @@ function openPendingSheet(it, stock, { onSet, onDiffQty, onParts, onQty }) {
         ? (hasDiffs ? difficultyList(it.difficulties, (di, st) => { onSet(it.code, di, st); draw(); }, (di, qty) => { onDiffQty(it.code, di, qty); draw(); })
           : el("p", { class: "small muted" }, "Трудностей не ожидается."))
         : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(it.parts, stock, () => { onParts(it.code, it.parts); draw(); }, partBlockIdOf(it))),
-    ].filter(Boolean));
-  }
-  draw();
-  openSheet(it.name, content);
-}
-
-// Та же форма деталей — на «Оценке усложнений и стоимости» при создании
-// обращения, до появления самого наряда: правки идут прямо в draft.items,
-// onChange — просто перерисовать список работ позади.
-function openAssessSheet(it, stock, onChange) {
-  const hasDiffs = (it.difficulties || []).length > 0;
-  let tab = hasDiffs ? "diff" : "parts";
-  const content = el("div", {});
-  function draw() {
-    content.replaceChildren(...[
-      it.multiple ? el("div", { style: "margin-bottom:14px" }, qtyStepper(it.qty, (qty) => { it.qty = qty; draw(); onChange(); })) : null,
-      hasDiffs ? el("div", { class: "segmented", style: "margin-bottom:14px" },
-        el("button", { class: tab === "diff" ? "active" : "", onclick: () => { tab = "diff"; draw(); } }, "Усложнения"),
-        el("button", { class: tab === "parts" ? "active" : "", onclick: () => { tab = "parts"; draw(); } }, "Запчасти")) : null,
-      tab === "diff"
-        ? (hasDiffs ? difficultyList(it.difficulties,
-            (di, st) => { it.difficulties[di].state = st; draw(); onChange(); },
-            (di, qty) => { if (it.difficulties[di]) it.difficulties[di].qty = qty; draw(); onChange(); })
-          : el("p", { class: "small muted" }, "Трудностей не ожидается."))
-        : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(it.parts, stock, () => { draw(); onChange(); }, partBlockIdOf(it))),
     ].filter(Boolean));
   }
   draw();
