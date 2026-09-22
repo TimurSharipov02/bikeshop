@@ -1692,8 +1692,9 @@ function viewOrder(number) {
       // «Готово» снизу заменяет собой «Выйти»/«Готово к выдаче», пока
       // развёрнуто; сам mountDiagnostics уже рисует свои карточки по узлам,
       // отдельная обёртка вокруг него не нужна.
-      main.append(el("div", { class: "card" },
-        el("button", { style: "width:100%", onclick: openAddWorkBlocks }, "+ Добавить работу")));
+      main.append(el("button", {
+        style: "width:100%;margin-bottom:var(--sp-4)", onclick: openAddWorkBlocks,
+      }, "+ Добавить работу"));
       const allDone = orderAllDone(order);
       // Кнопка видна всегда, но недоступна, пока не все работы отмечены
       // готовыми — так сразу понятно, что дальше по плану, а не как будто
@@ -2667,12 +2668,12 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onDone, request = 
     // Отдельный список «Уже добавлено в наряд» тут раньше был, но убрали:
     // отмеченное и так видно по заливке прямо в блоках ниже, а сама эта
     // секция росла НАД блоками и раздвигала список при каждой отметке.
-    if (!inline) {
+    if (!inline && onRequest) {
       wrap.append(el("div", { class: "card" },
         // DIAG_TOGGLES (гидравлика/механика и т.п.) пока скрыты — переключатели
         // остаются в коде с дефолтными значениями, faultVisible ими и пользуется.
-        onRequest ? el("textarea", { rows: 2, value: req, placeholder: "Уточнения",
-          onchange: (e) => { req = e.target.value.trim(); onRequest(req); } }) : null));
+        el("textarea", { rows: 2, value: req, placeholder: "Уточнения",
+          onchange: (e) => { req = e.target.value.trim(); onRequest(req); } })));
     }
 
     for (const inst of list) {
