@@ -655,22 +655,16 @@ function attachPhoneMask(input, onChange) {
   });
 }
 
-// Список работ для «+ работа»: обычные операции из каталога + неисправности,
-// заведённые админом вручную (catalog/repairs). Общий и для наряда, и для
-// диагностики при оформлении нового обращения.
+// Список работ для «+ работа»: только работы, заведённые администратором
+// вручную (catalog/repairs). Старый встроенный каталог процедур больше не
+// подмешиваем: он остался от ранней версии приложения и не должен появляться
+// при создании новых нарядов. Уже созданные наряды это не меняет.
 async function loadWorkPool(bikeKind) {
   const repairs = await ensureRepairs();
-  const custom = repairs.map((r) => ({
+  return repairs.map((r) => ({
     code: `CF-${r.id}`, name: r.label, label: r.label, custom: true, id: r.id, group: r.group,
     price: r.price, minutes: r.minutes, complications: r.complications, multiple: r.multiple,
   }));
-  return [
-    ...billableOps
-      .filter((p) => !OVERRIDES[p.code]?.hidden)
-      .filter((p) => bikeKind !== "колесо" || WHEEL_ONLY_BLOCKS.includes(p.code.split("-")[0]))
-      .map((p) => ({ code: p.code, name: OVERRIDES[p.code]?.name || p.name, custom: false })),
-    ...custom,
-  ];
 }
 
 // onPick получает объект {code, name, custom, ...} — обычную операцию из
