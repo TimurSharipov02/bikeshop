@@ -23,10 +23,10 @@ const BUILD_TIME = RAW.generatedAt
   ? new Date(RAW.generatedAt).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })
   : "";
 
-// Блоки диагностики (catalog/diagnostics.json) + учебный слой (catalog/training.json).
+// Блоки узлов велосипеда из catalog/diagnostics.json используются как
+// структура каталога работ: колёса, тормоз, каретка и т.д.
 // Мойка не диагностируется, но пусть тоже группируется по-человечески, а не в «Прочее».
 const diagBlocks = RAW.diagnosticBlocks || [];
-const training = RAW.training || {};
 const BLOCK_TITLES = [...diagBlocks.map((b) => b.title), "Мойка и консервация"];
 const blockByPrefix = { WSH: "Мойка и консервация" };
 for (const b of diagBlocks) for (const pre of b.codes || []) blockByPrefix[pre] = b.title;
@@ -80,6 +80,10 @@ function toast(text) {
 // современных приложений. Живёт на body, а не в дереве app — переживает
 // render() экрана позади себя, пока форма открыта. Закрывается тапом по
 // фону, крестиком или свайпом вниз по шапке.
+const openSheetClosers = new Set();
+function closeAllSheets() {
+  for (const close of [...openSheetClosers]) close(true);
+}
 function openSheet(title, bodyNode) {
   const backdrop = el("div", { class: "sheet-backdrop", onclick: () => close() });
   const sheet = el("div", { class: "sheet" },
@@ -88,13 +92,16 @@ function openSheet(title, bodyNode) {
       el("button", { style: iconBtnStyle, onclick: () => close() }, "✕")),
     el("div", { class: "sheet-body" }, bodyNode));
   let closed = false;
-  function close() {
+  function close(immediate = false) {
     if (closed) return;
     closed = true;
+    openSheetClosers.delete(close);
     backdrop.classList.remove("show");
     sheet.classList.remove("show");
-    setTimeout(() => { backdrop.remove(); sheet.remove(); }, 220);
+    if (immediate) { backdrop.remove(); sheet.remove(); }
+    else setTimeout(() => { backdrop.remove(); sheet.remove(); }, 220);
   }
+  openSheetClosers.add(close);
   // Свайп вниз по шапке — тот же жест, что закрывает системные bottom sheet.
   let startY = null;
   const handleArea = sheet.firstChild;
@@ -247,9 +254,7 @@ let pushGen = 0;
 // поэтому фоновый adopt() после debounce-пуша не должен звать router():
 // он бы молча подменил такой экран обычным видом обращения по тому же хешу.
 let inSubScreen = false;
-let autoOpenDiagsFor = null; // номер только что созданного обращения — сразу открыть диагностику
 let editingItemCode = null; // код работы в наряде, у которой сейчас открыта форма редактирования
-let addWorkOpenFor = null; // номер заявки, для которой «+ доп. работа» сейчас развёрнута прямо на экране (вместо перехода на отдельный)
 
 // ---------------------------- вход и сессия ---------------------------------
 //
@@ -591,12 +596,7 @@ function makeCustomItem(fa, notes = "") {
   };
 }
 
-const billableOps = cat.procedures.filter(
-  (p) => p.code && p.kind === "operation" && !["DIA-01", "DIA-01R"].includes(p.code));
-
 const BIKE_KINDS = ["шоссе", "гревел", "хардтейл", "двухподвес", "детский", "колесо", "любой другой"];
-// Для одного колеса (без остального велосипеда) имеют смысл только работы по колёсам/втулкам.
-const WHEEL_ONLY_BLOCKS = ["WHL", "HUB"];
 // Одна строка на весь велосипед («Stels Navigator», «BMX жёлтый» — как
 // удобно, без отдельных полей марка/модель), см. migrateBikes для старых
 // записей, где марка и модель ещё хранились раздельно.
@@ -781,6 +781,7 @@ const routes = [
   [/^\/admin\/overrides$/, adminOnly(viewOverrides)],
 ];
 function router() {
+  closeAllSheets();
   inSubScreen = false; // хеш-навигация всегда уводит из любого экрана мимо router()
   if (!SESSION) return render(NEEDS_SETUP ? viewSetup() : viewLogin());
   const path = location.hash.replace(/^#/, "") || "/";
@@ -824,6 +825,7 @@ function leaveSubScreen() {
   history.back();
 }
 window.addEventListener("popstate", () => {
+  closeAllSheets();
   const fn = subScreenExit;
   subScreenExit = null;
   inSubScreen = false;
@@ -1047,6 +1049,7 @@ function swipeActions(rowNode, actions) {
   const bar = el("div", { class: "swipe-actions" },
     actions.map((a) => el("button", {
       class: `swipe-action-btn ${a.className || ""}`,
+      "aria-label": a.ariaLabel || "Действие",
       html: a.label,
       onclick: (e) => { e.preventDefault(); e.stopPropagation(); close(); if (openSwipeClose === close) openSwipeClose = null; a.onClick(); },
     })));
@@ -1813,10 +1816,6 @@ function viewOrder(number) {
         onclick: () => jumpToStage("взята в работу") }, "Вернуть в работу")));
   }
 
-  if (autoOpenDiagsFor === number && order.status === "приём" && order.items.length === 0) {
-    autoOpenDiagsFor = null;
-    queueMicrotask(openDiagnostics);
-  }
   // Список работ длинный — «Итого» внизу карточки может уйти за экран, пока
   // листаешь. Закреплённая мини-сумма снизу экрана держит её на виду. Там,
   // где уже есть закреплённая панель actions с кнопками, своя «Итого»-плашка
@@ -2074,8 +2073,8 @@ function editableItemRow(it, { onRemove, onSave, refresh, onDiffSet, onDiffQty }
       it.multiple ? qtyStepper(it.qty, (qty) => onSave(it.code, { qty })) : null,
       el("span", { class: "price-tag", style: "flex:1" }, rangeText(r))));
   const header = swipeActions(rowContent, [
-    { label: ICON_EDIT, onClick: () => { editingItemCode = isEditing ? null : it.code; refresh(); } },
-    { label: ICON_CLOSE, className: "warn", onClick: () => { if (confirm(`Убрать «${it.name}» из наряда?`)) onRemove(it.code); } },
+    { label: ICON_EDIT, ariaLabel: "Изменить работу", onClick: () => { editingItemCode = isEditing ? null : it.code; refresh(); } },
+    { label: ICON_CLOSE, ariaLabel: "Убрать работу", className: "warn", onClick: () => { if (confirm(`Убрать «${it.name}» из наряда?`)) onRemove(it.code); } },
   ]);
   const diffs = (it.difficulties || []).length
     ? el("div", { style: "width:100%;margin-top:2px" },
@@ -2835,8 +2834,8 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onDone, request = 
           faultNodes.push(el("div", {},
             isAdmin
               ? swipeActions(rowContent, [
-                  { label: ICON_EDIT, onClick: () => { editingThis ? editOverrideFor.delete(editKey) : editOverrideFor.add(editKey); draw(); } },
-                  { label: ICON_CLOSE, className: "warn", onClick: async () => {
+                  { label: ICON_EDIT, ariaLabel: "Изменить работу", onClick: () => { editingThis ? editOverrideFor.delete(editKey) : editOverrideFor.add(editKey); draw(); } },
+                  { label: ICON_CLOSE, ariaLabel: "Удалить работу", className: "warn", onClick: async () => {
                       if (!confirm(`Убрать «${f.label}» из списка совсем?`)) return;
                       const wasChecked = s.faults.has(i);
                       if (f.custom) {
