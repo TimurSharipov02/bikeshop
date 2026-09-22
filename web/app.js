@@ -2677,13 +2677,12 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onDone, request = 
           // фона — та не задалась ни цветом, ни соседством выбранных строк
           // подряд) — единственный индикатор.
           const checked = s.faults.has(i);
-          const selectButton = onlyCustom && f.custom ? el("button", {
-            type: "button",
-            class: checked ? "row-check" : "",
-            style: "flex:0 0 32px;width:32px;height:32px;padding:5px;border-radius:50%",
-            html: checked ? ICON_CHECK : "+",
-            onclick: (e) => {
-              e.preventDefault(); e.stopPropagation();
+          const selectButton = onlyCustom && f.custom ? el("input", {
+            type: "checkbox",
+            checked,
+            "aria-label": checked ? "Убрать работу" : "Добавить работу",
+            onclick: (e) => e.stopPropagation(),
+            onchange: () => {
               if (checked) { s.faults.delete(i); if (f.code && !codeCheckedElsewhere(f.code, inst.id)) onUncheck(f); }
               else { s.faults.add(i); if (f.code) onCheck(f); }
               draw();
