@@ -1241,7 +1241,7 @@ function viewNewOrder() {
           },
         });
       },
-      totalText: () => rangePlusText(orderRangeAll(draft)),
+      totalText: () => rangeText(orderRangeAll(draft)),
       onDone: stepClient,
     });
   }
@@ -1512,7 +1512,7 @@ function viewOrder(number) {
           onQty: (code, qty) => { const x = added.find((v) => v.code === code); if (x) x.qty = qty; redraw(); },
         });
       },
-      totalText: () => rangePlusText(orderRangeAll({ items: [...order.items.filter((it) => it.agreed), ...added] })),
+      totalText: () => rangeText(orderRangeAll({ items: [...order.items.filter((it) => it.agreed), ...added] })),
       onDone: () => {
         if (added.length) editOrder(number, (o) => {
           for (const draftItem of added) {
