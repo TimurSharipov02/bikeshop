@@ -1196,46 +1196,24 @@ function viewNewOrder() {
   };
 
   function stepWorks() {
-    const draw = () => {
-      const list = el("div", {});
-      if (!draft.items.length) list.append(emptyState("Добавьте первую работу в наряд."));
-      draft.items.forEach((it) => {
-        const row = el("div", { class: "assess", style: "cursor:pointer", onclick: async () => {
-          const stock = await ensureStock();
-          openPendingSheet(it, stock, {
-            onSet: (code, di, st) => { const x = draft.items.find((v) => v.code === code); if (x?.difficulties?.[di]) x.difficulties[di].state = st; draw(); },
-            onDiffQty: (code, di, qty) => { const x = draft.items.find((v) => v.code === code); if (x?.difficulties?.[di]) x.difficulties[di].qty = qty; draw(); },
-            onParts: (code, parts) => { const x = draft.items.find((v) => v.code === code); if (x) x.parts = parts; draw(); },
-            onQty: (code, qty) => { const x = draft.items.find((v) => v.code === code); if (x) x.qty = qty; draw(); },
-          });
-        } },
-          el("div", { style: "display:flex;align-items:center;gap:8px" },
-            el("b", { style: "flex:1;min-width:0" }, it.name),
-            el("span", { class: "price-tag" }, rangeText(itemRange(it))),
-            el("span", { class: "chev" }, "›")),
-          (it.difficulties || []).length ? el("div", { class: "small muted", style: "margin-top:4px" }, "Усложнения и запчасти") : null);
-        list.append(swipeToDelete(row, () => { draft.items = draft.items.filter((x) => x.code !== it.code); draw(); return true; }));
-      });
-      const total = orderRangeAll(draft);
-      render([
-        bar("Новый наряд", "/"),
-        el("main", { class: "wrap" },
-          stage("Работы",
-            list,
-            el("button", { style: "width:100%;margin-top:12px", onclick: () => openWorkPicker({
-              existingItems: draft.items, allowDuplicates: true,
-              onBack: draw,
-              onPick: (pick) => { addDraftItem(pick); draw(); toast("Работа добавлена"); },
-            }) }, "+ Добавить работу")),
-          el("div", { class: "card" },
-            el("span", { class: "muted small" }, "Итого"),
-            el("div", { class: "price-range" }, rangeText(total)))),
-        el("div", { class: "actions" }, el("div", { class: "actions-inner" },
-          el("span", { class: "amount" }, rangeText(total)),
-          el("button", { class: "btn-primary", disabled: !draft.items.length, onclick: stepClient }, "Далее"))),
-      ], { keepScroll: true });
-    };
-    draw();
+    const host = el("div", {});
+    render([bar("Новый наряд", "/"), host]);
+    mountDiagnostics(host, {
+      // Это не отдельная «Диагностика»: экран просто служит каталогом работ,
+      // разложенным по привычным узлам велосипеда. В нём показываем только
+      // вручную заведённые позиции, без старого встроенного справочника.
+      onlyCustom: true,
+      request: draft.request,
+      onRequest: (v) => (draft.request = v),
+      onCheck: (fa) => {
+        if (!draft.items.some((it) => (it.sourceCode || it.code) === fa.code)) addDraftItem(fa);
+      },
+      onUncheck: (fa) => {
+        draft.items = draft.items.filter((it) => (it.sourceCode || it.code) !== fa.code);
+      },
+      totalText: () => rangeText(orderRangeAll(draft)),
+      onDone: stepClient,
+    });
   }
 
   function stepClient() {
@@ -1326,7 +1304,7 @@ function viewNewOrder() {
         number = nextOrderNumber(d);
         d.orders.push({
           number, clientPhone: p, clientName: f.name.trim(), bikeNumber: bn,
-          request: "", diagnosticNotes: [], status: "взята в работу",
+          request: draft.request, diagnosticNotes: [], status: "взята в работу",
           occupiedBy: SESSION?.id || null, occupiedByName: SESSION?.name || "",
           items: draft.items.map((it) => ({ ...it, agreed: true })), createdAt: new Date().toISOString(),
         });
@@ -2456,7 +2434,7 @@ const DIAG_TOGGLES = [
 // (напр. «+ доп. работа» на «в работе»), а не монтируют как весь экран:
 // тогда не оборачиваем содержимое в свой <main class="wrap"> (иначе он
 // вложился бы во внешний main.wrap — невалидная вложенность и двойные отступы).
-function mountDiagnostics(host, { onCheck, onUncheck, onDone, request = "", onRequest, onlyBlocks, inline = false }) {
+function mountDiagnostics(host, { onCheck, onUncheck, onDone, request = "", onRequest, onlyBlocks, inline = false, onlyCustom = false, totalText }) {
   const toggles = { тормоза: "гидравлика", покрышки: "камера", трансмиссия: "механика" };
   let req = request;
   const states = {}; // instId -> { open, faults:Set<number> }
@@ -2485,10 +2463,10 @@ function mountDiagnostics(host, { onCheck, onUncheck, onDone, request = "", onRe
   // разборке, code:"") — свой синтетический ключ, т.к. code у них у всех
   // одинаковый ("") и по нему нельзя различить разные пункты списка.
   const blockFaults = (b) => [
-    ...b.sections.flatMap((s) => s.faults.map((f, fi) => {
+    ...(onlyCustom ? [] : b.sections.flatMap((s) => s.faults.map((f, fi) => {
       const overrideKey = f.code || `NC-${s.id}-${fi}`;
       return { ...f, section: s.title, overrideKey, label: OVERRIDES[overrideKey]?.name || f.label };
-    })).filter((f) => !OVERRIDES[f.overrideKey]?.hidden),
+    })).filter((f) => !OVERRIDES[f.overrideKey]?.hidden)),
     ...repairs.filter((r) => r.group === b.id).map((r) => ({
       label: r.label, code: `CF-${r.id}`, custom: true, id: r.id,
       price: r.price, minutes: r.minutes, complications: r.complications, multiple: r.multiple,
@@ -2776,7 +2754,8 @@ function mountDiagnostics(host, { onCheck, onUncheck, onDone, request = "", onRe
 
     host.replaceChildren(wrap,
       el("div", { class: "actions" }, el("div", { class: "actions-inner" },
-        el("button", { class: "btn-primary", onclick: finish }, "Готово"))));
+        totalText ? el("span", { class: "amount" }, totalText()) : null,
+        el("button", { class: "btn-primary", onclick: finish }, "Далее"))));
   }
 
   // Работы с кодом уже добавлены живьём по каждому чекбоксу — тут собираем
