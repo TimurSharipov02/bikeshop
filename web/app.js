@@ -675,7 +675,7 @@ async function loadWorkPool(bikeKind) {
 
 // onPick получает объект {code, name, custom, ...} — обычную операцию из
 // каталога или неисправность, заведённую админом вручную.
-function openWorkPicker({ existingItems, bikeKind, onBack, onPick }) {
+function openWorkPicker({ existingItems, bikeKind, onBack, onPick, allowDuplicates = false }) {
   const header = () => el("header", { class: "bar" },
     el("button", { class: "back", style: "border:0;background:none", onclick: onBack }, "‹"),
     el("h1", {}, "Добавить работу"));
@@ -720,7 +720,7 @@ function openWorkPicker({ existingItems, bikeKind, onBack, onPick }) {
     const draw = () => {
       const ql = q.value.trim().toLowerCase();
       const rows = pool
-        .filter((p) => !existingItems.some((i) => i.code === p.code))
+        .filter((p) => allowDuplicates || !existingItems.some((i) => (i.sourceCode || i.code) === p.code))
         .filter((p) => !ql || p.code.toLowerCase().includes(ql) || p.name.toLowerCase().includes(ql));
       if (!rows.length) {
         listBox.replaceChildren(emptyState("Ничего не найдено.", EMPTY_ICON_SEARCH));
@@ -1134,8 +1134,9 @@ function orderRow(o, d, onDelete) {
   const bike = d.bikes.find((b) => b.number === o.bikeNumber);
   const client = d.clients.find((c) => c.phone === o.clientPhone);
   const row = el("a", { class: "row", href: `#/orders/${o.number}` },
-    el("span", { style: "flex:1;min-width:0" }, bike ? bikeLabel(bike) : o.bikeNumber,
-      el("br"), el("span", { class: "small muted" }, client?.name || o.clientPhone),
+    el("span", { style: "flex:1;min-width:0" }, bike ? bikeLabel(bike) : (client?.name || o.clientName || "Наряд без данных"),
+      (client?.name || o.clientName || o.clientPhone) ? el("br") : null,
+      (client?.name || o.clientName || o.clientPhone) ? el("span", { class: "small muted" }, client?.name || o.clientName || o.clientPhone) : null,
       // Занятость мастером — теперь сама по себе статус («взята в работу»),
       // тут только его имя.
       o.occupiedByName ? el("span", { class: "small muted" }, " · мастер: " + o.occupiedByName) : null),
@@ -1182,84 +1183,69 @@ function groupBy(list, keyFn) {
 }
 
 
-// Новое обращение идёт по шагам: диагностика (отмечаем работы) → оценка
-// усложнений → согласование (что делаем, сумма по деньгам и времени) →
-// и только в конце — данные клиента, телефон, марка/модель велосипеда.
-// Пока идут первые три шага, обращения ещё нет в базе — всё копится в
-// черновике и уходит одним куском при оформлении на последнем шаге.
+// Новое обращение: сначала собираем сам наряд и видим его стоимость, затем
+// при желании указываем клиента/телефон/велосипед. Диагностики, отдельной
+// оценки и согласования в этом потоке нет: выбранные позиции сразу считаются
+// частью наряда. Одинаковую операцию можно добавить несколько раз — каждая
+// копия становится самостоятельной работой со своим исполнителем и фактом.
 function viewNewOrder() {
-  const draft = { items: [], diagnosticNotes: [], request: "" };
-  const host = el("div", {});
+  const draft = { items: [], request: "" };
 
-  function stepDiagnostics() {
-    render([bar("Новое обращение", "/"), host]);
-    mountDiagnostics(host, {
-      onCheck: (fa) => {
-        if (!draft.items.some((i) => i.code === fa.code)) draft.items.push(fa.custom ? makeCustomItem(fa) : makeItem(fa.code));
-      },
-      onUncheck: (fa) => {
-        const idx = draft.items.findIndex((i) => i.code === fa.code);
-        if (idx !== -1) draft.items.splice(idx, 1);
-      },
-      onDone: (notes) => { draft.diagnosticNotes.push(...notes); stepAssess(); },
-      request: draft.request,
-      onRequest: (v) => (draft.request = v),
-    });
-  }
-
-  // Оценка усложнений и согласование — по сути один и тот же экран, что и
-  // «в работе»: список работ, у каждой сразу видно и можно поменять
-  // количество и усложнения (тут ещё прогноз — будет/не будет/неизвестно),
-  // плюс отметить согласовано или нет — прямо в списке, без отдельной
-  // шторки на каждую работу. Запчасти тут не заводим (как и в списке работ
-  // на приёме у уже созданной заявки) — им место позже, когда работа
-  // реально начата. Единственная разница с обычной заявкой — тут ещё нет
-  // клиента и велосипеда, так что шапка с ними не показывается.
-  function stepAssess() {
-    const redraw = () => render(build(), { keepScroll: true });
-    function build() {
-      const body = el("div", {});
-      if (draft.items.length === 0) body.append(emptyState("Работ пока нет."));
-      draft.items.forEach((it) => {
-        const nameRow = el("div", { style: "display:flex;align-items:center;gap:8px" },
-          el("input", {
-            type: "checkbox", class: "chk", checked: it.agreed,
-            onchange: (e) => { it.agreed = e.target.checked; redraw(); },
-          }),
-          el("b", { style: "flex:1;min-width:0" }, it.name),
-          el("button", {
-            style: iconBtnStyle,
-            onclick: () => { draft.items = draft.items.filter((x) => x.code !== it.code); redraw(); },
-          }, "✕"));
-        const box = el("div", { class: "assess" },
-          nameRow,
-          el("div", { style: "display:flex;align-items:center;gap:10px;margin-top:2px" },
-            it.multiple ? qtyStepper(it.qty, (qty) => { it.qty = qty; redraw(); }) : null,
-            el("span", { class: "price-tag", style: "flex:1" }, rangeText(itemRange(it)))));
-        if ((it.difficulties || []).length) box.append(difficultyList(it.difficulties,
-          (di, st) => { it.difficulties[di].state = st; redraw(); },
-          (di, qty) => { if (it.difficulties[di]) it.difficulties[di].qty = qty; redraw(); }, false));
-        body.append(box);
-      });
-      body.append(
-        el("div", { class: "card card-flush" },
-          el("span", { class: "muted small" }, "Согласовано на"),
-          el("div", { class: "price-range" }, rangeText(orderRange({ items: draft.items }))),
-          minutesText(orderMinutes({ items: draft.items }, true)) ? el("div", { class: "small muted", style: "margin-top:4px" }, minutesText(orderMinutes({ items: draft.items }, true))) : null));
-      return [
-        bar("Новое обращение", "/"), el("main", { class: "wrap" }, stage("Оценка усложнений и стоимости", body)),
-        // Как везде в приложении — «вперёд»/«назад» закреплены внизу экрана,
-        // слева и справа, а не одна под другой в конце карточки.
-        el("div", { class: "actions" }, el("div", { class: "actions-inner" },
-          el("button", { onclick: () => stepDiagnostics() }, "+ доп. работа"),
-          el("button", { class: "btn-primary", onclick: () => stepClient() }, "Далее"))),
-      ];
+  const addDraftItem = (pick) => {
+    const item = pick.custom ? makeCustomItem(pick) : makeItem(pick.code);
+    if (draft.items.some((i) => (i.sourceCode || i.code) === pick.code)) {
+      item.sourceCode = pick.code;
+      item.code = instanceCode(pick.code);
     }
-    redraw();
+    item.agreed = true;
+    draft.items.push(item);
+  };
+
+  function stepWorks() {
+    const draw = () => {
+      const list = el("div", {});
+      if (!draft.items.length) list.append(emptyState("Добавьте первую работу в наряд."));
+      draft.items.forEach((it) => {
+        const row = el("div", { class: "assess", style: "cursor:pointer", onclick: async () => {
+          const stock = await ensureStock();
+          openPendingSheet(it, stock, {
+            onSet: (code, di, st) => { const x = draft.items.find((v) => v.code === code); if (x?.difficulties?.[di]) x.difficulties[di].state = st; draw(); },
+            onDiffQty: (code, di, qty) => { const x = draft.items.find((v) => v.code === code); if (x?.difficulties?.[di]) x.difficulties[di].qty = qty; draw(); },
+            onParts: (code, parts) => { const x = draft.items.find((v) => v.code === code); if (x) x.parts = parts; draw(); },
+            onQty: (code, qty) => { const x = draft.items.find((v) => v.code === code); if (x) x.qty = qty; draw(); },
+          });
+        } },
+          el("div", { style: "display:flex;align-items:center;gap:8px" },
+            el("b", { style: "flex:1;min-width:0" }, it.name),
+            el("span", { class: "price-tag" }, rangeText(itemRange(it))),
+            el("span", { class: "chev" }, "›")),
+          (it.difficulties || []).length ? el("div", { class: "small muted", style: "margin-top:4px" }, "Усложнения и запчасти") : null);
+        list.append(swipeToDelete(row, () => { draft.items = draft.items.filter((x) => x.code !== it.code); draw(); return true; }));
+      });
+      const total = orderRangeAll(draft);
+      render([
+        bar("Новый наряд", "/"),
+        el("main", { class: "wrap" },
+          stage("Работы",
+            list,
+            el("button", { style: "width:100%;margin-top:12px", onclick: () => openWorkPicker({
+              existingItems: draft.items, allowDuplicates: true,
+              onBack: draw,
+              onPick: (pick) => { addDraftItem(pick); draw(); toast("Работа добавлена"); },
+            }) }, "+ Добавить работу")),
+          el("div", { class: "card" },
+            el("span", { class: "muted small" }, "Итого"),
+            el("div", { class: "price-range" }, rangeText(total)))),
+        el("div", { class: "actions" }, el("div", { class: "actions-inner" },
+          el("span", { class: "amount" }, rangeText(total)),
+          el("button", { class: "btn-primary", disabled: !draft.items.length, onclick: stepClient }, "Далее"))),
+      ], { keepScroll: true });
+    };
+    draw();
   }
 
   function stepClient() {
-    const f = { phone: applyPhoneMask(""), name: "", bike: "new", bikeName: "" };
+    const f = { phone: "", name: "", bike: "new", bikeName: "" };
     // Смена клиента (другой телефон) — отдельно от простого f.bike: нужно
     // отличить «сбросить выбор велосипеда, потому что это уже другой
     // клиент» от «перерисовали форму, потому что мастер сам кликнул радио».
@@ -1314,10 +1300,11 @@ function viewNewOrder() {
       bikeSlot.append(bikeFields);
     }
 
-    const phoneInput = el("input", { type: "tel", value: f.phone });
+    const phoneInput = el("input", { type: "tel", value: f.phone, placeholder: "+7 — необязательно" });
     attachPhoneMask(phoneInput, (v) => { f.phone = v; drawClient(); });
 
     const wrap = el("main", { class: "wrap" },
+      el("p", { class: "small muted", style: "margin:0 0 8px" }, "Все поля необязательны — этот шаг можно пропустить."),
       el("div", { class: "card" }, el("h2", {}, "Клиент"),
         el("label", {}, "Телефон"),
         phoneInput,
@@ -1325,41 +1312,45 @@ function viewNewOrder() {
       bikeSlot);
     drawClient();
 
+    const createOrder = () => {
+      const hasPhone = maskedDigits(f.phone).length > 0;
+      if (hasPhone && !isValidPhone(f.phone)) return alert("Проверьте номер телефона или оставьте поле пустым");
+      let number;
+      editDB((d) => {
+        let p = "";
+        if (hasPhone) {
+          const existing = findClientByPhone(d.clients, f.phone);
+          p = existing ? existing.phone : f.phone;
+          if (!existing) d.clients.push({ phone: p, name: f.name.trim() });
+        }
+        let bn = "";
+        if (f.bike !== "new" && d.bikes.some((b) => b.number === f.bike)) bn = f.bike;
+        else if (f.bikeName.trim()) {
+          bn = nextBikeKey(d, p || "anonymous");
+          d.bikes.push({ number: bn, name: f.bikeName.trim(), ownerPhone: p });
+        }
+        number = nextOrderNumber(d);
+        d.orders.push({
+          number, clientPhone: p, clientName: f.name.trim(), bikeNumber: bn,
+          request: "", diagnosticNotes: [], status: "взята в работу",
+          occupiedBy: SESSION?.id || null, occupiedByName: SESSION?.name || "",
+          items: draft.items.map((it) => ({ ...it, agreed: true })), createdAt: new Date().toISOString(),
+        });
+      });
+      go(`/orders/${number}`);
+    };
+
     render([
       bar("Новое обращение", "/"),
       wrap,
       el("div", { class: "actions" }, el("div", { class: "actions-inner" },
-        el("button", { class: "btn-primary", onclick: () => {
-          if (!isValidPhone(f.phone)) return alert("Проверьте номер телефона");
-          editDB((d) => {
-            // Клиент уже мог быть заведён с другим форматированием номера —
-            // сравниваем по цифрам и, если нашли, используем именно его
-            // сохранённый phone как ключ, чтобы не завести дубликат.
-            const existing = findClientByPhone(d.clients, f.phone);
-            const p = existing ? existing.phone : f.phone;
-            if (!existing) d.clients.push({ phone: p, name: f.name.trim() });
-            let bn = f.bike;
-            if (bn === "new" || !d.bikes.some((b) => b.number === bn)) {
-              bn = nextBikeKey(d, p);
-              d.bikes.push({ number: bn, name: f.bikeName.trim(), ownerPhone: p });
-            }
-            const number = nextOrderNumber(d);
-            d.orders.push({
-              // Только что оформленная заявка — свободна: занять её должен
-              // тот, кто реально возьмётся за работу (claim() на экране
-              // «в работе»), а не автоматически тот, кто её завёл.
-              number, clientPhone: p, bikeNumber: bn, request: draft.request, diagnosticNotes: draft.diagnosticNotes,
-              status: "взята в работу", occupiedBy: null, occupiedByName: "",
-              items: draft.items, createdAt: new Date().toISOString(),
-            });
-          });
-          go("/");
-        } }, "Оформить обращение"))),
+        el("button", { onclick: stepWorks }, "Назад"),
+        el("button", { class: "btn-primary", onclick: createOrder }, "Создать наряд"))),
     ]);
   }
 
-  stepDiagnostics();
-  return [bar("Новое обращение", "/"), host];
+  stepWorks();
+  return [];
 }
 
 // ============================================================================
@@ -1490,9 +1481,11 @@ function viewOrder(number) {
     // Вся строка — ссылка tel:, а не только номер: на телефоне так проще
     // попасть пальцем, а 📞 справа, покрупнее, сразу подсказывает, что тут
     // можно позвонить (не теряется мелким значком сразу после текста).
-    el("a", { href: `tel:${order.clientPhone.replace(/[^\d+]/g, "")}`, class: "small muted", style: "display:flex;align-items:center;gap:6px" },
-      el("span", { style: "flex:1" }, `${client?.name || "—"} · ${order.clientPhone}`),
-      el("span", { style: "font-size:22px;flex:0 0 auto" }, "📞")),
+    order.clientPhone
+      ? el("a", { href: `tel:${order.clientPhone.replace(/[^\d+]/g, "")}`, class: "small muted", style: "display:flex;align-items:center;gap:6px" },
+          el("span", { style: "flex:1" }, [client?.name || order.clientName, order.clientPhone].filter(Boolean).join(" · ")),
+          el("span", { style: "font-size:22px;flex:0 0 auto" }, "📞"))
+      : (client?.name || order.clientName ? el("p", { class: "small muted" }, client?.name || order.clientName) : null),
     // То же поле, что и на диагностике (order.request) — тут его тоже можно
     // менять, без захода в диагностику.
     el("div", { style: "margin-top:8px" },
@@ -1642,26 +1635,26 @@ function viewOrder(number) {
       // «Готово» снизу заменяет собой «Выйти»/«Готово к выдаче», пока
       // развёрнуто; сам mountDiagnostics уже рисует свои карточки по узлам,
       // отдельная обёртка вокруг него не нужна.
-      if (addWorkOpenFor === number) {
-        const diagHost = el("div", {});
-        main.append(diagHost);
-        mountDiagnostics(diagHost, {
-          onCheck: (fa) => addItem(fa),
-          onUncheck: (fa) => removeItemQuiet(fa.code),
-          onDone: (notes) => {
-            addWorkOpenFor = null;
-            if (notes.length) editOrder(number, (o) => { o.diagnosticNotes = [...(o.diagnosticNotes || []), ...notes]; });
-            refresh();
-          },
-          request: order.request || "",
-          onRequest: (v) => editOrder(number, (o) => (o.request = v)),
-          onlyBlocks: bike?.kind === "колесо" ? ["WHL"] : null,
-          inline: true,
-        });
-      } else {
-        main.append(el("div", { class: "card" },
-          el("button", { style: "width:100%", onclick: () => { addWorkOpenFor = number; refresh(); } }, "+ доп. работа")));
-      }
+      main.append(el("div", { class: "card" },
+        el("button", { style: "width:100%", onclick: () => {
+          openWorkPicker({
+            existingItems: order.items, bikeKind: bike?.kind, allowDuplicates: true,
+            onBack: refresh,
+            onPick: (pick) => {
+              editOrder(number, (o) => {
+                const item = pick.custom ? makeCustomItem(pick) : makeItem(pick.code);
+                if (o.items.some((i) => (i.sourceCode || i.code) === pick.code)) {
+                  item.sourceCode = pick.code;
+                  item.code = instanceCode(pick.code);
+                }
+                item.agreed = true;
+                o.items.push(item);
+              });
+              refresh();
+              toast("Работа добавлена");
+            },
+          });
+        } }, "+ Добавить работу")));
       const allDone = orderAllDone(order);
       // Кнопка видна всегда, но недоступна, пока не все работы отмечены
       // готовыми — так сразу понятно, что дальше по плану, а не как будто
@@ -1672,7 +1665,7 @@ function viewOrder(number) {
       // клиенту» становится доступна прямо тут — отдельного экрана-сметы
       // для этого больше нет, он показывал тот же список работ и итог,
       // что уже виден выше.
-      actions = addWorkOpenFor === number ? null : el("div", { class: "actions" }, el("div", { class: "actions-inner" },
+      actions = el("div", { class: "actions" }, el("div", { class: "actions-inner" },
         el("button", { onclick: leaveOrder }, "Выйти"),
         el("button", {
           class: "btn-ok", disabled: !allDone,
@@ -1724,7 +1717,7 @@ function viewOrder(number) {
     // отчёте по выработке, назад всегда на главный, как и остальные статусы.
     el("header", { class: "bar" },
       el("a", { class: "back", href: "#/" }, "‹"),
-      el("h1", { class: "bar-title-lg" }, bike ? bikeLabel(bike) : client?.name || "Обращение")),
+      el("h1", { class: "bar-title-lg" }, bike ? bikeLabel(bike) : client?.name || order.clientName || "Наряд")),
     main,
     actions,
     showStickyTotal ? stickyTotal(range) : null,
@@ -2121,12 +2114,19 @@ function difficultyList(difficulties, onSet, onQty, fact) {
   const box = el("div", {});
   (difficulties || []).forEach((d, di) => {
     box.append(el("div", { style: "margin-top:8px" },
-      el("div", { class: "small" }, d.label, " ", el("span", { class: "muted" }, `(+${money(d.add)}${d.addMinutes ? `, +${d.addMinutes} мин` : ""})`)),
+      el("div", { style: "display:flex;align-items:center;gap:10px" },
+        el("div", { class: "small", style: "flex:1" }, d.label, " ", el("span", { class: "muted" }, `(+${money(d.add)}${d.addMinutes ? `, +${d.addMinutes} мин` : ""})`)),
+        fact ? el("button", {
+          class: "switch" + (d.state === "yes" ? " on" : ""),
+          role: "switch", "aria-checked": d.state === "yes",
+          "aria-label": `${d.label}: ${d.state === "yes" ? "было" : "не было"}`,
+          onclick: () => onSet(di, d.state === "yes" ? "no" : "yes"),
+        }, el("span", {})) : null),
       // Свой ряд на всю ширину — сегментед-контрол (тот же паттерн, что и
       // везде в приложении), один тап сразу меняет состояние, без открытия
       // выпадающего списка. Счётчик количества — отдельной строкой ниже,
       // чтобы не тесниться с кнопками.
-      el("div", { class: "segmented", style: "margin-top:4px" },
+      fact ? null : el("div", { class: "segmented", style: "margin-top:4px" },
         Object.entries(labels).map(([v, lbl]) =>
           el("button", { class: d.state === v ? `active sel-${v}` : "", onclick: () => onSet(di, v) }, lbl))),
       d.multiple && onQty && d.state !== "no" ? el("div", { style: "margin-top:6px" }, qtyStepper(d.qty, (qty) => onQty(di, qty))) : null));
