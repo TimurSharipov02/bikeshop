@@ -458,7 +458,10 @@ function effectivePrice(code) {
     work: ov.price ?? base.work,
     minutes: ov.minutes ?? base.minutes,
     difficulties: ov.complications ?? base.difficulties,
-    quantityMode: ov.quantityMode ?? (ov.multiple ?? base.multiple ? "quantity" : "single"),
+    // Старый флаг multiple был слишком неоднозначным: им помечались и
+    // обычные работы. Не превращаем его молча в счётчик. Количество
+    // появляется только после явного выбора нового режима в редакторе.
+    quantityMode: ov.quantityMode ?? base.quantityMode ?? "single",
     maxInstances: ov.maxInstances ?? base.maxInstances ?? 0,
   };
 }
@@ -466,7 +469,7 @@ const priceOf = effectivePrice;
 
 const quantityModeOf = (x) => {
   if (["single", "instances", "quantity"].includes(x?.quantityMode)) return x.quantityMode;
-  return x?.multiple ? "quantity" : "single";
+  return "single";
 };
 const usesQuantity = (x) => quantityModeOf(x) === "quantity";
 
@@ -2052,8 +2055,7 @@ const iconBtnStyle = "border:0;background:none;color:var(--muted);cursor:pointer
 // это подстраховка от случайного «натыкал лишнего», а не жёсткий запрет.
 // onRemove — необязательный: если задан, при количестве 1 кнопка «−»
 // превращается в иконку корзины и убирает позицию целиком, вместо отдельной
-// кнопки ✕ рядом (так — для запчастей, где это осмысленно; для работ/
-// усложнений параметр не передаётся, там «−» просто держит минимум 1).
+// кнопки ✕ рядом.
 function qtyStepper(value, onChange, max, onRemove) {
   const atMax = max > 0 && (value || 1) >= max;
   const atMin = (value || 1) <= 1;
