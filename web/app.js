@@ -2077,19 +2077,28 @@ function qtyStepper(value, onChange, max, onRemove) {
 // повторяемых работ, которые могут выполнять разные мастера; «Количество»
 // оставляет одну задачу и умножает её цену, например для нескольких спиц.
 function quantityModeEditor(draft) {
+  const fieldName = `quantity-mode-${Math.random().toString(36).slice(2)}`;
   const maxWrap = el("div", { style: "margin-top:8px;display:none" },
     el("label", {}, "Максимум отдельных задач"),
     el("input", { type: "number", min: 0, value: draft.maxInstances || "", placeholder: "без ограничения",
       oninput: (e) => (draft.maxInstances = Math.max(0, +e.target.value || 0)) }));
-  const select = el("select", { onchange: (e) => {
-    draft.quantityMode = e.target.value;
-    maxWrap.style.display = draft.quantityMode === "instances" ? "" : "none";
-  } },
-    el("option", { value: "single", selected: draft.quantityMode === "single" }, "Одна задача"),
-    el("option", { value: "instances", selected: draft.quantityMode === "instances" }, "Отдельные одинаковые задачи"),
-    el("option", { value: "quantity", selected: draft.quantityMode === "quantity" }, "Одна задача с количеством"));
+  const modes = [
+    ["single", "Одна задача", "Один результат и один исполнитель"],
+    ["instances", "Отдельные задачи", "Каждое выполнение считается отдельно"],
+    ["quantity", "Количество", "Одна задача с общим количеством"],
+  ];
+  const choices = el("div", { style: "display:grid;gap:6px;margin-top:6px" },
+    ...modes.map(([value, title, hint]) => el("label", { class: "opt", style: "margin:0" },
+      el("input", {
+        type: "radio", name: fieldName, value, checked: draft.quantityMode === value,
+        onchange: () => {
+          draft.quantityMode = value;
+          maxWrap.style.display = value === "instances" ? "" : "none";
+        },
+      }),
+      el("span", {}, title, el("span", { class: "small muted", style: "display:block;margin-top:2px" }, hint)))));
   maxWrap.style.display = draft.quantityMode === "instances" ? "" : "none";
-  return el("div", { style: "margin-top:8px" }, el("label", {}, "Как считать работу"), select, maxWrap);
+  return el("div", { style: "margin-top:8px" }, el("label", {}, "Как считать работу"), choices, maxWrap);
 }
 
 // Редактор списка усложнений (название + надбавка к цене + надбавка к времени
