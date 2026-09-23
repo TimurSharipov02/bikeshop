@@ -3959,14 +3959,18 @@ function viewAllMastersReport() {
 // ============================================================================
 
 function viewAdmin() {
+  const tile = (title, hint, hash, icon) => el("a", { class: "admin-tile card-link", href: "#" + hash },
+    el("span", { class: "row-icon", html: icon }),
+    el("span", { class: "admin-tile-text" }, el("b", {}, title), el("span", { class: "small muted" }, hint)),
+    el("span", { class: "chev" }, "›"));
   return [
     bar("Админка", "/"),
     el("main", { class: "wrap" },
-      el("div", { class: "rows" },
-        homeLink("Мастера", "/admin/masters", ICONS.masters),
-        homeLink("Клиенты", "/admin/clients", ICONS.clients),
-        homeLink("Выполненные работы", "/admin/reports", ICONS.report),
-        homeLink("Запчасти", "/admin/stock", ICONS.stock))),
+      el("div", { class: "admin-tiles" },
+        tile("Выполненные работы", "История и выработка", "/admin/reports", ICONS.report),
+        tile("Мастера", "Сотрудники и ставки", "/admin/masters", ICONS.masters),
+        tile("Клиенты", "Контакты и велосипеды", "/admin/clients", ICONS.clients),
+        tile("Запчасти", "Остатки и цены", "/admin/stock", ICONS.stock))),
   ];
 }
 
@@ -4050,7 +4054,7 @@ async function usersApi(method, body) {
 
 function mastersScreen(list, error) {
   const addForm = el("form", {
-    class: "card", onsubmit: async (ev) => {
+    class: "admin-form", onsubmit: async (ev) => {
       ev.preventDefault();
       const ok = await usersApi("POST", {
         name: ev.target.name.value.trim(), login: ev.target.login.value.trim().toLowerCase(),
@@ -4068,14 +4072,16 @@ function mastersScreen(list, error) {
     el("div", { class: "btn-row", style: "margin-top:12px" }, el("button", { class: "btn-primary", type: "submit" }, "Добавить")));
 
   const rows = list.map((u) => {
-    const card = el("div", { class: "card" },
-      el("div", {}, u.name,
+    const card = el("div", { class: "admin-person-card" },
+      el("div", { class: "admin-person-head" }, el("b", {}, u.name),
         u.role === "admin" ? el("span", { class: "pill" }, "админ") : null,
         !u.active ? el("span", { class: "pill" }, "отключён") : null),
       el("div", { class: "small muted" }, u.login, " · ", u.commissionPercent || 0, "% от работ"),
-      el("a", { class: "small", href: `#/admin/reports/${u.id}`, style: "display:inline-block;margin-top:6px" }, "Выполненные работы ›"));
+      el("a", { class: "admin-report-link", href: `#/admin/reports/${u.id}` }, "Выполненные работы ›"));
 
-    card.append(el("form", {
+    const controls = el("div", { class: "admin-person-controls" });
+
+    controls.append(el("form", {
       style: "display:flex;gap:8px;margin-top:10px", onsubmit: async (ev) => {
         ev.preventDefault();
         const password = ev.target.password.value;
@@ -4086,7 +4092,7 @@ function mastersScreen(list, error) {
       el("input", { name: "password", type: "password", placeholder: "новый пароль", style: "flex:1", autocomplete: "new-password" }),
       el("button", { type: "submit" }, "Сменить")));
 
-    card.append(el("form", {
+    controls.append(el("form", {
       style: "display:flex;gap:8px;align-items:center;margin-top:10px", onsubmit: async (ev) => {
         ev.preventDefault();
         if (await usersApi("PUT", { id: u.id, commissionPercent: ev.target.commissionPercent.value })) { loadMasters(); toast("Процент обновлён"); }
@@ -4096,7 +4102,7 @@ function mastersScreen(list, error) {
       el("input", { name: "commissionPercent", type: "number", min: 0, max: 100, value: u.commissionPercent || 0, style: "width:70px" }),
       el("button", { type: "submit" }, "Сохранить")));
 
-    card.append(el("div", { class: "btn-row", style: "margin-top:10px" },
+    controls.append(el("div", { class: "btn-row", style: "margin-top:10px" },
       el("button", { onclick: async () => { if (await usersApi("PUT", { id: u.id, active: !u.active })) loadMasters(); } },
         u.active ? "Отключить" : "Включить"),
       el("button", {
@@ -4105,6 +4111,7 @@ function mastersScreen(list, error) {
           if (await usersApi("DELETE", { id: u.id })) loadMasters();
         },
       }, "Удалить")));
+    card.append(el("details", { class: "admin-details" }, el("summary", {}, "Настройки мастера"), controls));
     return card;
   });
 
@@ -4112,10 +4119,10 @@ function mastersScreen(list, error) {
     bar("Мастера", "/admin"),
     el("main", { class: "wrap" },
       error ? el("p", { class: "small", style: "color:var(--warn)" }, error) : null,
-      addForm,
+      el("details", { class: "admin-details admin-add-card" }, el("summary", {}, "+ Добавить сотрудника"), addForm),
       list.length === 0
         ? el("p", { class: "muted", style: "margin-top:12px" }, "Мастеров пока нет.")
-        : el("div", { class: "list", style: "margin-top:12px;gap:12px" }, rows)),
+        : el("div", { class: "admin-tiles", style: "margin-top:12px" }, rows)),
   ];
 }
 
@@ -4145,7 +4152,7 @@ function viewClients() {
   return [
     bar("Клиенты", "/admin"),
     el("main", { class: "wrap" },
-      el("div", { class: "card" }, searchInput),
+      el("div", { class: "admin-search" }, searchInput),
       el("div", { style: "margin-top:12px" }, box)),
   ];
 }
@@ -4154,8 +4161,8 @@ function clientCard(c, onChange) {
   const db = loadDB();
   const bikes = db.bikes.filter((b) => b.ownerPhone === c.phone);
   const visits = db.orders.filter((o) => o.clientPhone === c.phone).length;
-  return el("div", { class: "card card-link", style: "cursor:pointer", onclick: () => openClientEditor(c, onChange) },
-    el("div", {}, c.name || "Без имени"),
+  return el("div", { class: "admin-person-card card-link", style: "cursor:pointer", onclick: () => openClientEditor(c, onChange) },
+    el("div", { class: "admin-person-head" }, el("b", {}, c.name || "Без имени"), el("span", { class: "chev" }, "›")),
     el("div", { class: "small muted" }, applyPhoneMask(c.phone), visits ? ` · ${visits} обращ.` : ""),
     el("div", { class: "small muted", style: "margin-top:6px" },
       bikes.length ? bikes.map((b) => el("div", {}, bikeLabel(b) || "велосипед (без названия)")) : "Велосипедов нет"));
@@ -4370,7 +4377,7 @@ function stockScreen(data, error) {
     const total = matchedIdx.length;
     matchedIdx = matchedIdx.slice(0, RESULTS_CAP);
     if (!matchedIdx.length) { rowsBox.replaceChildren(emptyState("Ничего не найдено.", EMPTY_ICON_SEARCH)); return; }
-    rowsBox.replaceChildren(...matchedIdx.map(({ it, i }) => el("div", { class: "price-row" },
+    rowsBox.replaceChildren(...matchedIdx.map(({ it, i }) => el("div", { class: "admin-stock-card" },
       // Название — во всю ширину, крупнее и не обрезается: раньше зажатое
       // в общей строке с ещё 6 полями, оно резалось многоточием, а вместе
       // со спиннерами у числовых полей строка вообще переставала читаться.
@@ -4407,10 +4414,11 @@ function stockScreen(data, error) {
     el("main", { class: "wrap" },
       error ? el("p", { class: "small", style: "color:var(--warn)" }, error) : null,
       updated ? el("p", { class: "small muted" }, "Обновлено: " + updated) : null,
-      el("div", { class: "card" },
+      el("div", { class: "admin-search" },
         el("div", { class: "search-wrap" }, searchInput, clearBtn),
-        chipsBox,
-        el("div", { style: "margin-top:6px" }, rowsBox),
+        chipsBox),
+      el("div", { class: "admin-stock-list" }, rowsBox),
+      el("div", { class: "admin-stock-actions" },
         el("button", { style: "margin-top:10px", onclick: () => {
           items.push({ sku: "", name: "", qty: 0, unit: "", price: 0, group: groupFilter, maxQty: 0 });
           newItemIndex = items.length - 1;
