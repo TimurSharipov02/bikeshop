@@ -2588,10 +2588,15 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove, onAdd }) {
     it.waitingForPart && !it.done ? el("span", { class: "pill", style: "background:var(--yellow-weak);color:var(--yellow-ink)" }, "ждёт запчасть") : null,
     it.done ? el("span", { class: "pill" }, completionsSummary(it) || "готово") : null,
     el("span", { style: "flex:0 0 auto;color:var(--line);font-size:19px" }, "›"));
+  const quantityControl = usesQuantity(it)
+    ? qtyStepper(it.qty, onQty, workQuantityLimitOf(it), onRemove ? () => onRemove(it.code) : undefined)
+    : null;
+  const priceControl = el("span", { class: "pill", style: "margin-left:0" }, rangeText(itemRange(it)));
   // Кликабельна вся карточка (имя + сумма + разбивка по составляющим), а не
   // только строка с именем — с разбивкой карточка стала заметно выше, и тап
   // ниже имени должен так же открывать форму, а не проваливаться в никуда.
-  // Счётчик количества ниже — вне этой области, у него свои кнопки.
+  // Счётчик сам гасит всплытие клика, поэтому его кнопки меняют количество,
+  // а цена и остальная площадь по-прежнему открывают карточку работы.
   const openArea = el("div", {
     style: "cursor:pointer",
     // openRepairSheet теперь всегда принимает (code, patch) — тут это одна-
@@ -2600,12 +2605,11 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove, onAdd }) {
     onclick: () => openRepairSheet(it, stock, (code, patch) => onSave(patch), [it], { onAdd, onRemove }),
   },
     nameRow,
-    el("div", { class: "price-tag", style: "margin-top:2px" }, rangeText(itemRange(it))),
+    el("div", { style: "margin-top:8px" }, pricedControlGroup(priceControl, quantityControl)),
     // Та же разбивка по составляющим, что и в списке «выдан» — не нужно
     // открывать форму, чтобы увидеть, из чего сложилась сумма.
     el("div", { class: "small muted", style: "margin-top:4px" }, costLines(it).map((l) => el("div", {}, "– " + l))));
   box.append(openArea);
-  if (usesQuantity(it)) box.append(el("div", { style: "margin-top:10px" }, qtyStepper(it.qty, onQty, workQuantityLimitOf(it), onRemove ? () => onRemove(it.code) : undefined)));
   if (it.notes) box.append(el("p", { class: "small muted" }, it.notes));
   return onRemove ? swipeToDelete(box, () => { onRemove(it.code); return true; }) : box;
 }
