@@ -3951,7 +3951,7 @@ function viewAllMastersReport() {
     const { content, searchBar } = reportContent(null, percentOf, header);
     host.replaceChildren(content, searchBar);
   });
-  return [bar("Обращения", "/admin"), host];
+  return [bar("Выполненные работы", "/admin"), host];
 }
 
 // ============================================================================
@@ -3965,7 +3965,7 @@ function viewAdmin() {
       el("div", { class: "rows" },
         homeLink("Мастера", "/admin/masters", ICONS.masters),
         homeLink("Клиенты", "/admin/clients", ICONS.clients),
-        homeLink("Обращения", "/admin/reports", ICONS.report),
+        homeLink("Выполненные работы", "/admin/reports", ICONS.report),
         homeLink("Запчасти", "/admin/stock", ICONS.stock))),
   ];
 }
@@ -4059,7 +4059,7 @@ function mastersScreen(list, error) {
       if (ok) { ev.target.reset(); loadMasters(); }
     },
   },
-    el("h2", {}, "Добавить мастера"),
+    el("h2", {}, "Новый сотрудник"),
     ...field("Имя", "name"), ...field("Логин", "login"), ...field("Пароль", "password", "password", "new-password"),
     el("label", {}, "Роль"),
     el("select", { name: "role" }, el("option", { value: "master" }, "мастер"), el("option", { value: "admin" }, "администратор")),
@@ -4072,7 +4072,7 @@ function mastersScreen(list, error) {
       el("div", {}, u.name,
         u.role === "admin" ? el("span", { class: "pill" }, "админ") : null,
         !u.active ? el("span", { class: "pill" }, "отключён") : null),
-      el("div", { class: "small muted" }, u.login),
+      el("div", { class: "small muted" }, u.login, " · ", u.commissionPercent || 0, "% от работ"),
       el("a", { class: "small", href: `#/admin/reports/${u.id}`, style: "display:inline-block;margin-top:6px" }, "Выполненные работы ›"));
 
     card.append(el("form", {
@@ -4151,10 +4151,12 @@ function viewClients() {
 }
 
 function clientCard(c, onChange) {
-  const bikes = loadDB().bikes.filter((b) => b.ownerPhone === c.phone);
+  const db = loadDB();
+  const bikes = db.bikes.filter((b) => b.ownerPhone === c.phone);
+  const visits = db.orders.filter((o) => o.clientPhone === c.phone).length;
   return el("div", { class: "card card-link", style: "cursor:pointer", onclick: () => openClientEditor(c, onChange) },
     el("div", {}, c.name || "Без имени"),
-    el("div", { class: "small muted" }, applyPhoneMask(c.phone)),
+    el("div", { class: "small muted" }, applyPhoneMask(c.phone), visits ? ` · ${visits} обращ.` : ""),
     el("div", { class: "small muted", style: "margin-top:6px" },
       bikes.length ? bikes.map((b) => el("div", {}, bikeLabel(b) || "велосипед (без названия)")) : "Велосипедов нет"));
 }
@@ -4294,6 +4296,7 @@ function stockScreen(data, error) {
   let q = "";
   let groupFilter = ""; // "" — все узлы
   let onlyProblem = false; // только «нет»/«мало»
+  let newItemIndex = -1;
 
   const zeroCount = items.filter((it) => stockLevel(it.qty) === "zero").length;
   const lowCount = items.filter((it) => stockLevel(it.qty) === "low").length;
@@ -4306,7 +4309,7 @@ function stockScreen(data, error) {
   const searchInput = el("input", { type: "text", placeholder: "Поиск по названию или артикулу" });
   const clearBtn = el("button", {
     type: "button", class: "search-clear", html: ICON_CLOSE, style: "display:none",
-    onclick: () => { searchInput.value = ""; q = ""; clearBtn.style.display = "none"; drawRows(); searchInput.focus(); },
+    onclick: () => { searchInput.value = ""; q = ""; newItemIndex = -1; clearBtn.style.display = "none"; drawRows(); searchInput.focus(); },
   });
 
   const chipStyle = (active) => `padding:7px 13px;border-radius:999px;border:.5px solid ${active ? "var(--accent)" : "var(--line)"};` +
@@ -4321,13 +4324,13 @@ function stockScreen(data, error) {
     // собираем плоский список и раскрываем его спредом при вызове.
     const chips = [
       el("div", {
-        style: chipStyle(!onlyProblem && !groupFilter), onclick: () => { onlyProblem = false; groupFilter = ""; drawChips(); drawRows(); },
+        style: chipStyle(!onlyProblem && !groupFilter), onclick: () => { newItemIndex = -1; onlyProblem = false; groupFilter = ""; drawChips(); drawRows(); },
       }, `Все · ${items.length}`),
       (zeroCount + lowCount) > 0 ? el("div", {
-        style: chipStyle(onlyProblem), onclick: () => { onlyProblem = !onlyProblem; drawChips(); drawRows(); },
+        style: chipStyle(onlyProblem), onclick: () => { newItemIndex = -1; onlyProblem = !onlyProblem; drawChips(); drawRows(); },
       }, `⚠ Проблемные · ${zeroCount + lowCount}`) : null,
       ...STOCK_GROUPS.filter((g) => groupCounts.get(g.id)).map((g) => el("div", {
-        style: chipStyle(groupFilter === g.id), onclick: () => { groupFilter = groupFilter === g.id ? "" : g.id; drawChips(); drawRows(); },
+        style: chipStyle(groupFilter === g.id), onclick: () => { newItemIndex = -1; groupFilter = groupFilter === g.id ? "" : g.id; drawChips(); drawRows(); },
       }, `${g.title} · ${groupCounts.get(g.id)}`)),
     ].filter(Boolean);
     chipsBox.replaceChildren(...chips);
@@ -4350,7 +4353,7 @@ function stockScreen(data, error) {
   const RESULTS_CAP = 150;
   const drawRows = () => {
     const ql = q.trim().toLowerCase();
-    const active = !!(ql || groupFilter || onlyProblem);
+    const active = !!(ql || groupFilter || onlyProblem || newItemIndex >= 0 || items.length <= 30);
     if (!active) {
       rowsBox.replaceChildren(el("p", { class: "muted small" },
         `Всего позиций: ${items.length}` + (zeroCount ? ` · нет в наличии: ${zeroCount}` : "") + (lowCount ? ` · мало: ${lowCount}` : "") +
@@ -4358,6 +4361,7 @@ function stockScreen(data, error) {
       return;
     }
     let matchedIdx = items.map((it, i) => ({ it, i }));
+    if (newItemIndex >= 0) matchedIdx = matchedIdx.filter(({ i }) => i === newItemIndex);
     if (groupFilter) matchedIdx = matchedIdx.filter(({ it }) => (it.group || "") === groupFilter);
     if (onlyProblem) matchedIdx = matchedIdx.filter(({ it }) => stockLevel(it.qty) !== "ok");
     if (ql) matchedIdx = matchedIdx.filter(({ it }) => it.name.toLowerCase().includes(ql) || (it.sku || "").toLowerCase().includes(ql));
@@ -4372,7 +4376,7 @@ function stockScreen(data, error) {
       // со спиннерами у числовых полей строка вообще переставала читаться.
       el("div", { style: "display:flex;gap:8px;align-items:flex-start" },
         el("input", { value: it.name, style: "flex:1;min-width:0;font-weight:600", placeholder: "название", onchange: (ev) => { items[i].name = ev.target.value; } }),
-        el("button", { style: iconBtnStyle, onclick: () => { items.splice(i, 1); drawRows(); } }, "✕")),
+        el("button", { style: iconBtnStyle, onclick: () => { items.splice(i, 1); newItemIndex = -1; drawChips(); drawRows(); } }, "✕")),
       el("div", { style: "display:flex;gap:8px;margin-top:8px;flex-wrap:wrap" },
         labeled("Артикул", el("input", { value: it.sku, placeholder: "—", onchange: (ev) => { items[i].sku = ev.target.value; } }), "flex:1;min-width:90px"),
         labeled("Узел", el("select", { onchange: (ev) => { items[i].group = ev.target.value; } },
@@ -4395,7 +4399,7 @@ function stockScreen(data, error) {
       total > matchedIdx.length ? el("p", { class: "small muted", style: "margin-top:6px" }, `Показаны первые ${matchedIdx.length} из ${total} — уточните поиск.`) : null);
   };
   drawRows();
-  searchInput.addEventListener("input", (e) => { q = e.target.value; clearBtn.style.display = q ? "" : "none"; drawRows(); });
+  searchInput.addEventListener("input", (e) => { q = e.target.value; newItemIndex = -1; clearBtn.style.display = q ? "" : "none"; drawRows(); });
 
   const importArea = el("textarea", { rows: 4 });
   return [
@@ -4407,7 +4411,13 @@ function stockScreen(data, error) {
         el("div", { class: "search-wrap" }, searchInput, clearBtn),
         chipsBox,
         el("div", { style: "margin-top:6px" }, rowsBox),
-        el("button", { style: "margin-top:10px", onclick: () => { items.push({ sku: "", name: "", qty: 0, unit: "", price: 0, group: groupFilter, maxQty: 0 }); render(stockScreen({ items, updatedAt: data.updatedAt }, "")); } }, "+ строка"),
+        el("button", { style: "margin-top:10px", onclick: () => {
+          items.push({ sku: "", name: "", qty: 0, unit: "", price: 0, group: groupFilter, maxQty: 0 });
+          newItemIndex = items.length - 1;
+          q = ""; searchInput.value = ""; clearBtn.style.display = "none";
+          onlyProblem = false; groupFilter = "";
+          drawChips(); drawRows(); rowsBox.querySelector("input")?.focus();
+        } }, "+ запчасть"),
         el("div", { class: "btn-row", style: "margin-top:12px" },
           el("button", { class: "btn-primary", onclick: () => saveStockItems(items) }, "Сохранить"))),
       el("div", { class: "card" },
