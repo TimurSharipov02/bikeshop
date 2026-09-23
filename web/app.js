@@ -2293,9 +2293,10 @@ function detailedItemRow(it) {
     workStatePill(it));
   return el("div", { class: "assess" },
     nameRow,
-    el("div", { class: "price-tag", style: "margin-top:2px" }, rangeText(r)),
     costBreakdown(it),
-    it.notes ? el("p", { class: "small muted", style: "margin-top:4px" }, it.notes) : null);
+    it.notes ? el("p", { class: "small muted", style: "margin-top:4px" }, it.notes) : null,
+    el("div", { class: "report-history-footer" },
+      el("span", { class: "report-history-total" }, rangeText(r))));
 }
 
 // Правка пункта уже выданного (оплаченного) обращения — только для админа:
@@ -3813,14 +3814,13 @@ function buildReportTab(masterId, percentOf, tab) {
         // Карточка — ссылка на само обращение: открыть, посмотреть весь
         // наряд целиком. По сути и есть архив выданных обращений, только
         // тут ещё сразу видно, что в нём сделал этот мастер и за сколько.
-        : el("div", { class: "list", style: "gap:10px" }, history.map((rec) => el("a", { class: "card card-link", href: `#/orders/${rec.order.number}` },
-            el("div", { style: "display:flex;justify-content:space-between;gap:8px" },
-              el("div", {}, el("b", {}, rec.bike ? bikeLabel(rec.bike) : rec.client?.name || "Обращение"),
-                rec.latest ? el("div", { class: "small muted" }, formatDateShort(rec.latest)) : null),
-              el("div", { class: "price-tag" }, money(rec.earned))),
-            el("div", { class: "small muted", style: "margin-top:6px" },
-              rec.lines.map((l) => el("div", {},
-                masterId == null ? `${l.masterName} — ` : "", l.name, " — ", money(l.earned)))))))
+        : el("div", { class: "list", style: "gap:10px" }, history.map((rec) => el("a", { class: "card card-link report-history-card", href: `#/orders/${rec.order.number}` },
+            el("b", { class: "report-history-title" }, rec.bike ? bikeLabel(rec.bike) : rec.client?.name || "Обращение"),
+            rec.latest ? el("div", { class: "small muted report-history-date" }, formatDateShort(rec.latest)) : null,
+            el("div", { class: "small muted report-history-lines" },
+              rec.lines.map((l) => el("div", {}, "– ", l.name, " ", money(l.earned)))),
+            el("div", { class: "report-history-footer" },
+              el("span", { class: "report-history-total" }, money(rec.earned))))))
     );
   };
 
