@@ -218,10 +218,10 @@ button:disabled:active { transform:none; }
 .difficulty-state-toggle { flex:0 0 auto; width:94px; border-radius:9px; }
 .segmented.difficulty-state-toggle button { flex:0 0 30px; width:30px; min-height:30px; padding:0;
   border-radius:7px; font-size:17px; line-height:1; }
-.priced-control-row { display:grid; grid-template-columns:minmax(0,1fr) 184px;
-  align-items:start; gap:8px; }
-.priced-control-group { width:184px; min-width:0; display:flex; justify-content:flex-end;
-  align-items:center; gap:8px; padding-top:2px; }
+.priced-control-row { display:grid; grid-template-columns:minmax(0,1fr);
+  align-items:start; row-gap:6px; }
+.priced-control-group { width:100%; min-width:0; display:flex; justify-content:flex-end;
+  align-items:center; gap:8px; }
 
 /* Карусель экземпляров одной и той же работы (шторка «Ждёт согласования»/
    «Ремонт») — настоящий свайп пальцем через нативный скролл со snap, без
@@ -302,8 +302,8 @@ label { display:block; font-size:13px; color:var(--muted); margin:var(--sp-4) 0 
    специфичности перебить фон .swipe-content, и скрытые кнопки просвечивали
    бы сквозь строку насквозь. */
 .row.opt { border:0; border-radius:0; margin:0; padding:13px 16px; background:var(--card); transition:none; }
-.row.opt.priced-control-row { display:grid; grid-template-columns:minmax(0,1fr) 184px;
-  align-items:start; gap:8px; }
+.row.opt.priced-control-row { display:grid; grid-template-columns:minmax(0,1fr);
+  align-items:start; row-gap:6px; }
 .work-select-btn { flex:0 0 auto; width:44px; min-width:44px; height:44px; min-height:44px; padding:0; border:0; background:none; color:var(--accent); font-size:24px; font-weight:400; box-shadow:none; }
 .work-select-btn.selected { color:var(--muted); font-size:22px; }
 .row-check { flex:0 0 auto; display:flex; color:var(--accent); }
