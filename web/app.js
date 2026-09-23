@@ -2431,7 +2431,8 @@ function difficultyList(difficulties, onSet, onQty, fact) {
     const addedMinutes = difficultyMinutes(d);
     box.append(el("div", { style: "margin-top:8px" },
       el("div", {
-        style: `display:flex;align-items:${fact ? "center" : "flex-start"};gap:10px${fact ? ";cursor:pointer" : ""}`,
+        class: "priced-control-row difficulty-row",
+        style: fact ? "cursor:pointer" : "",
         onclick: fact ? (e) => {
           // Плюс, крестик и счётчик обрабатывают нажатие сами. Остальная
           // площадь строки переключает усложнение целиком, как работа в
@@ -2443,8 +2444,8 @@ function difficultyList(difficulties, onSet, onQty, fact) {
         el("div", { class: "small", style: "flex:1;min-width:0" },
           d.label,
           addedMinutes ? el("span", { class: "muted" }, ` (+${addedMinutes} мин)`) : null),
-        el("div", { style: "display:flex;align-items:center;gap:8px;flex:0 0 auto" },
-          difficultyPriceTag(d), stateControl))));
+        el("div", { class: "priced-control-price" }, difficultyPriceTag(d)),
+        el("div", { class: "priced-control-action" }, stateControl))));
   });
   return box;
 }
@@ -3314,7 +3315,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
           const liveRange = checked && getItemRange ? getItemRange(f) : null;
           const priceRange = liveRange || definitionRange;
           const priceNode = priceRange
-            ? el("span", { class: "pill", style: checked ? "" : "background:var(--fill);color:var(--muted)" }, rangePlusText(priceRange))
+            ? el("span", { class: "pill", style: checked ? "margin-left:0" : "margin-left:0;background:var(--fill);color:var(--muted)" }, rangePlusText(priceRange))
             : null;
           // align-items:flex-start (не center из .opt) — иначе у длинных
           // названий, переносящихся на 2-3 строки, цена/счётчик съезжали
@@ -3322,14 +3323,14 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
           // по первой строке текста) — соседние строки списка «плясали».
           // Так счётчик всегда на одной и той же высоте, вровень с первой
           // строкой названия, независимо от того, сколько строк оно занимает.
-          const rowContent = el("div", { class: "row opt", style: "cursor:pointer;align-items:flex-start" },
+          const rowContent = el("div", { class: "row opt priced-control-row work-picker-row", style: "cursor:pointer" },
             // min-width:0 — без него flex-item с длинным неразрывным словом
             // (напр. «Обслуживание», «Переспицовка») не мог сжаться уже
             // своего мин-контента, и цена/счётчик справа вылезали за край
             // строки вместо того, чтобы остаться у правого края.
-            el("span", { style: "flex:1;min-width:0;overflow-wrap:break-word" }, f.label),
-            el("div", { style: "display:flex;align-items:center;gap:8px;flex:0 0 auto" },
-              priceNode,
+            el("span", { style: "min-width:0;overflow-wrap:break-word" }, f.label),
+            el("div", { class: "priced-control-price" }, priceNode),
+            el("div", { class: "priced-control-action" },
               selectButton || (checked ? el("span", { class: "row-check", html: ICON_CHECK }) : null)));
           // Слушатель добавлен ПОСЛЕ swipeActions(rowContent, ...) ниже (не
           // через onclick в el() при создании) — важен порядок регистрации:
