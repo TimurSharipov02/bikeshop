@@ -2398,9 +2398,18 @@ function difficultyList(difficulties, onSet, onQty, fact) {
       class: "pill",
       style: done ? "margin-left:0" : "margin-left:0;background:var(--fill);color:var(--muted)",
     }, `+${money(d.add)}`) : null;
+    const stateSymbols = { yes: "✓", no: "×", unknown: "?" };
+    const estimateControl = !fact ? el("div", { class: "segmented difficulty-state-toggle" },
+      Object.entries(labels).map(([v, lbl]) => el("button", {
+        type: "button",
+        class: d.state === v ? `active sel-${v}` : "",
+        title: lbl,
+        "aria-label": `${d.label}: ${lbl}`,
+        onclick: () => onSet(di, v),
+      }, stateSymbols[v]))) : null;
     box.append(el("div", { style: "margin-top:8px" },
       el("div", {
-        style: `display:flex;align-items:center;gap:10px${fact ? ";cursor:pointer" : ""}`,
+        style: `display:flex;align-items:${fact ? "center" : "flex-start"};gap:10px${fact ? ";cursor:pointer" : ""}`,
         onclick: fact ? (e) => {
           // Плюс, крестик и счётчик обрабатывают нажатие сами. Остальная
           // площадь строки переключает усложнение целиком, как работа в
@@ -2409,20 +2418,15 @@ function difficultyList(difficulties, onSet, onQty, fact) {
           onSet(di, done ? "no" : "yes");
         } : null,
       },
+        estimateControl,
         el("div", { class: "small", style: "flex:1;min-width:0" },
           d.label,
           fact
             ? (d.addMinutes ? el("span", { class: "muted" }, ` (+${d.addMinutes} мин)`) : null)
             : el("span", { class: "muted" }, ` (+${money(d.add)}${d.addMinutes ? `, +${d.addMinutes} мин` : ""})`)),
         fact ? el("div", { style: "display:flex;align-items:center;gap:8px;flex:0 0 auto" }, factPrice, factControl) : null),
-      // Свой ряд на всю ширину — сегментед-контрол (тот же паттерн, что и
-      // везде в приложении), один тап сразу меняет состояние, без открытия
-      // выпадающего списка. Счётчик количества — отдельной строкой ниже,
-      // чтобы не тесниться с кнопками. Это только прогноз (fact=false) —
-      // по факту счётчик уже встроен в сам factControl выше.
-      fact ? null : el("div", { class: "segmented", style: "margin-top:4px" },
-        Object.entries(labels).map(([v, lbl]) =>
-          el("button", { class: d.state === v ? `active sel-${v}` : "", onclick: () => onSet(di, v) }, lbl))),
+      // У повторяемого усложнения количество остаётся отдельной строкой,
+      // чтобы компактный тройной тумблер не менял ширину и не прыгал.
       !fact && d.multiple && onQty && d.state !== "no" ? el("div", { style: "margin-top:6px" }, qtyStepper(d.qty, (qty) => onQty(di, qty))) : null));
   });
   return box;
