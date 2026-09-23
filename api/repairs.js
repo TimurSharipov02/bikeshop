@@ -7,6 +7,7 @@
 import { redis, readBody, requireUser, requireAdmin } from "./_lib.js";
 
 const KEY = "vella:repairs";
+const WORK_INSTANCE_LIMIT = 5;
 const loadStore = async (r) => (await r.get(KEY)) || { items: [] };
 const sanitizeComplications = (list) =>
   Array.isArray(list)
@@ -41,7 +42,7 @@ export default async function handler(req, res) {
       minutes: Number(body.minutes) || 0,
       complications: sanitizeComplications(body.complications),
       quantityMode: sanitizeQuantityMode(body.quantityMode),
-      maxInstances: body.quantityMode === "instances" ? Math.max(0, Number(body.maxInstances) || 0) : 0,
+      maxInstances: body.quantityMode === "instances" ? WORK_INSTANCE_LIMIT : 0,
     };
     const store = await loadStore(r);
     store.items.push(item);
@@ -61,9 +62,9 @@ export default async function handler(req, res) {
     if (body.complications != null) it.complications = sanitizeComplications(body.complications);
     if (body.quantityMode != null) {
       it.quantityMode = sanitizeQuantityMode(body.quantityMode);
+      it.maxInstances = it.quantityMode === "instances" ? WORK_INSTANCE_LIMIT : 0;
       delete it.multiple;
     }
-    if (body.maxInstances != null) it.maxInstances = it.quantityMode === "instances" ? Math.max(0, Number(body.maxInstances) || 0) : 0;
     await r.set(KEY, store);
     return res.status(200).json({ item: it, items: store.items });
   }
