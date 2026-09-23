@@ -1700,10 +1700,7 @@ function viewOrder(number) {
     // менять, без захода в диагностику.
     el("div", { style: "margin-top:8px" },
       el("textarea", { class: "request-field", rows: 2, value: order.request || "", placeholder: "Уточнения",
-        onchange: (e) => { editOrder(number, (o) => (o.request = e.target.value.trim())); refresh(); } })),
-    order.status === "взята в работу" ? el("button", {
-      class: "small", style: "margin-top:10px;width:100%", onclick: openOrderDetailsEditor,
-    }, "Изменить клиента и велосипед") : null);
+        onchange: (e) => { editOrder(number, (o) => (o.request = e.target.value.trim())); refresh(); } })));
 
   if ((order.diagnosticNotes || []).length) {
     const ul = el("ul", { style: "margin:4px 0 0;padding-left:18px" });
@@ -1904,7 +1901,14 @@ function viewOrder(number) {
     // отчёте по выработке, назад всегда на главный, как и остальные статусы.
     el("header", { class: "bar" },
       el("a", { class: "back", href: "#/" }, "‹"),
-      el("h1", { class: "bar-title-lg" }, bike ? bikeLabel(bike) : client?.name || order.clientName || "Наряд")),
+      el("h1", { class: "bar-title-lg" }, bike ? bikeLabel(bike) : client?.name || order.clientName || "Наряд"),
+      // Раньше — отдельная кнопка на всю ширину под «Уточнениями», ниже
+      // текста и легко терялась. Карандаш в строке заголовка — тот же
+      // паттерн, что и везде в приложении для «изменить», и сразу виден,
+      // не занимая места среди самих данных заявки.
+      order.status === "взята в работу" ? el("button", {
+        class: "edit-btn", "aria-label": "Изменить клиента и велосипед", style: iconBtnStyle, html: ICON_EDIT, onclick: openOrderDetailsEditor,
+      }) : null),
     main,
     actions,
     showStickyTotal ? stickyTotal(range) : null,

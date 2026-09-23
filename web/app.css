@@ -57,6 +57,7 @@ header.bar h1 { font-size:17px; margin:0; font-weight:600; letter-spacing:-.005e
 header.bar .sub { position:absolute; right:16px; top:50%; transform:translateY(-50%);
   font-size:14px; color:var(--muted); text-align:right; }
 a.sub:active { opacity:.5; }
+header.bar .edit-btn { position:absolute; right:2px; top:50%; transform:translateY(-50%); }
 
 /* Заголовок экрана заявки — покрупнее и пожирнее остальных: там это
    название велосипеда, главное, на что смотрят чаще всего. */
