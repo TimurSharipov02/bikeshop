@@ -510,6 +510,14 @@ function itemRange(it) {
   }
   return { min, max };
 }
+
+// Фиксируем, какие усложнения вошли в оценку клиента. В ремонте можно
+// подтвердить фактическое усложнение, не теряя исходный состав вилки.
+function quoteDifficulties(it) {
+  return { ...it, difficulties: (it.difficulties || []).map((d) => ({ ...d,
+    quotedState: d.state, quotedQty: d.qty || 1,
+  })) };
+}
 // Ориентировочное время работы с учётом отмеченных трудностей (будет/неизвестно
 // тоже добавляют время, как и цену — на «неизвестно» берём время по максимуму).
 function itemMinutes(it) {
@@ -585,18 +593,17 @@ function minutesText(m) {
   const h = Math.floor(m / 60), mm = m % 60;
   return "ориентировочно " + (h ? `${h} ч${mm ? " " + mm + " мин" : ""}` : `${mm} мин`);
 }
-// Возможная вилка цены операции: от работы без надбавок до работы со всеми трудностями.
+// До выбора работы показываем базовую цену, а не сумму всех усложнений
+// каталога: часть из них взаимоисключается или неприменима к этому велосипеду.
 function codeRange(code) {
   const p = priceOf(code);
   const base = p.work || 0;
-  const max = base + (p.difficulties || []).reduce((s, d) => s + (d.add || 0), 0);
-  return { min: base, max };
+  return { min: base, max: base };
 }
 // То же для неисправности, заведённой админом вручную (цена лежит в ней самой).
 function customFaultRange(f) {
   const base = f.price || 0;
-  const max = base + (f.complications || []).reduce((s, c) => s + (c.add || 0), 0);
-  return { min: base, max };
+  return { min: base, max: base };
 }
 
 function makeItem(code, notes = "") {
@@ -609,7 +616,7 @@ function makeItem(code, notes = "") {
     partsPrice: 0,
     quantityMode: quantityModeOf(price), maxInstances: instanceLimitOf(price),
     multiple: quantityModeOf(price) === "quantity", qty: 1,
-    difficulties: (price.difficulties || []).map((d) => ({ label: d.label, add: d.add, addMinutes: d.addMinutes || 0, multiple: !!d.multiple, qty: 1, state: "unknown" })),
+    difficulties: (price.difficulties || []).map((d) => ({ label: d.label, add: d.add, addMinutes: d.addMinutes || 0, multiple: !!d.multiple, qty: 1, state: "no" })),
   };
 }
 
@@ -623,7 +630,7 @@ function makeCustomItem(fa, notes = "") {
     partsPrice: 0,
     quantityMode: quantityModeOf(fa), maxInstances: instanceLimitOf(fa),
     multiple: quantityModeOf(fa) === "quantity", qty: 1,
-    difficulties: (fa.complications || []).map((c) => ({ label: c.label, add: c.add, addMinutes: c.addMinutes || 0, multiple: !!c.multiple, qty: 1, state: "unknown" })),
+    difficulties: (fa.complications || []).map((c) => ({ label: c.label, add: c.add, addMinutes: c.addMinutes || 0, multiple: !!c.multiple, qty: 1, state: "no" })),
   };
 }
 
@@ -1196,13 +1203,7 @@ function viewHome() {
       el("h2", { class: "small muted", style: "margin:0 0 8px;font-weight:600;letter-spacing:.02em" }, "АКТИВНЫЕ ОБРАЩЕНИЯ"),
       active.length === 0
         ? emptyState("Активных обращений нет.")
-        : rowsList(active.map((o) => orderRow(o, d, deleteOrderWithAlert))),
-      // margin-top:auto — прижать к низу экрана (над кнопкой), а не сразу
-      // под списком: список может быть коротким, и раньше строка повисала
-      // высоко посреди пустого места.
-      el("p", { class: "muted small", style: "margin-top:auto;padding-top:16px" },
-        (serverOK ? "Данные общие для всех устройств." : "Данные хранятся только в этом браузере.")
-          + (BUILD_TIME ? ` · версия от ${BUILD_TIME}` : ""))),
+        : rowsList(active.map((o) => orderRow(o, d, deleteOrderWithAlert)))),
     el("div", { class: "actions" }, el("div", { class: "actions-inner" },
       el("button", { class: "btn-primary", onclick: () => go("/orders/new") }, "+ Новое обращение"))),
   ];
@@ -1387,7 +1388,7 @@ function viewNewOrder() {
           number, clientPhone: p, clientName: f.name.trim(), bikeNumber: bn,
           request: draft.request, diagnosticNotes: [], status: "взята в работу",
           occupiedBy: SESSION?.id || null, occupiedByName: SESSION?.name || "",
-          items: draft.items.map((it) => ({ ...it, agreed: true })), createdAt: new Date().toISOString(),
+          items: draft.items.map((it) => quoteDifficulties({ ...it, agreed: true })), createdAt: new Date().toISOString(),
         });
       });
       go(`/orders/${number}`);
@@ -1556,7 +1557,7 @@ function viewOrder(number) {
   // находка на повторной диагностике), ждёт явного подтверждения мастером —
   // см. pendingAgreementCard.
   const pendingHandlers = {
-    onAgree: (code) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x) x.agreed = true; }); refresh(); toast("Согласовано"); },
+    onAgree: (code) => { editOrder(number, (o) => { const i = o.items.findIndex((x) => x.code === code); if (i >= 0) o.items[i] = quoteDifficulties({ ...o.items[i], agreed: true }); }); refresh(); toast("Согласовано"); },
     onRemove: (code) => { editOrder(number, (o) => { o.items = o.items.filter((i) => i.code !== code); }); refresh(); },
     onSet: (code, di, st) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x?.difficulties?.[di]) x.difficulties[di].state = st; }); refresh(); },
     onDiffQty: (code, di, qty) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x?.difficulties?.[di]) x.difficulties[di].qty = qty; }); refresh(); },
@@ -2516,7 +2517,9 @@ function openPendingSheet(it, stock, { onSet, onDiffQty, onParts }, siblings = [
         el("button", { class: tab === "diff" ? "active" : "", onclick: () => { tabs.set(instance.code, "diff"); draw(); } }, "Усложнения"),
         el("button", { class: tab === "parts" ? "active" : "", onclick: () => { tabs.set(instance.code, "parts"); draw(); } }, "Запчасти")) : null,
       tab === "diff"
-        ? (hasDiffs ? difficultyList(instance.difficulties, (di, st) => { onSet(instance.code, di, st); draw(); }, (di, qty) => { onDiffQty(instance.code, di, qty); draw(); })
+        ? (hasDiffs ? el("div", {},
+            el("p", { class: "small muted", style: "margin:0 0 12px" }, "В оценку войдут только отмеченные для этого велосипеда усложнения. «Неизвестно» увеличит верхнюю границу."),
+            difficultyList(instance.difficulties, (di, st) => { onSet(instance.code, di, st); draw(); }, (di, qty) => { onDiffQty(instance.code, di, qty); draw(); }))
           : el("p", { class: "small muted" }, "Трудностей не ожидается."))
         : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(instance.parts, stock, () => { onParts(instance.code, instance.parts); draw(); }, partBlockIdOf(instance))));
   }
@@ -2708,7 +2711,10 @@ function openRepairSheet(it, stock, onSave, siblings = [it], { onAdd: onAddInsta
   // помеченная «готово» работа продолжала бы считаться диапазоном цены,
   // а не точной суммой.
   const stagedFor = (inst) => ({
-    diffs: JSON.parse(JSON.stringify(inst.difficulties || [])).map((d) => (d.state === "unknown" ? { ...d, state: "no" } : d)),
+    diffs: JSON.parse(JSON.stringify(inst.difficulties || [])).map((d) => ({
+      ...d, quotedState: d.quotedState ?? d.state, quotedQty: d.quotedQty ?? (d.qty || 1),
+      state: d.state === "unknown" ? "no" : d.state,
+    })),
     parts: (inst.parts || []).map((p) => ({ ...p })),
     tab: (inst.difficulties || []).length > 0 ? "diff" : "parts",
   });
@@ -2752,8 +2758,28 @@ function openRepairSheet(it, stock, onSave, siblings = [it], { onAdd: onAddInsta
     const hasDiffs = s.diffs.length > 0;
     if (!hasDiffs && s.tab === "diff") s.tab = "parts";
     const diffBox = el("div", {});
+    const confirmUnquoted = (di, nextQty) => {
+      const d = s.diffs[di];
+      if (!d?.add || !instance.agreed) return true;
+      const quotedState = d.quotedState ?? instance.difficulties?.[di]?.state ?? "no";
+      const quotedQty = quotedState === "no" ? 0 : (d.quotedQty || 1);
+      const agreedQty = d.extraAgreedQty || 0;
+      if (nextQty <= Math.max(quotedQty, agreedQty)) return true;
+      if (!confirm(`«${d.label}» увеличит цену сверх оценки для клиента. Согласовали доплату с клиентом?`)) return false;
+      d.extraAgreedQty = nextQty;
+      d.extraAgreedAt = new Date().toISOString();
+      return true;
+    };
     const drawDiffs = () => diffBox.replaceChildren(hasDiffs
-      ? difficultyList(s.diffs, (di, st) => { s.diffs[di].state = st; drawDiffs(); save(instance, {}); }, (di, qty) => { s.diffs[di].qty = qty; drawDiffs(); save(instance, {}); }, true)
+      ? difficultyList(s.diffs,
+        (di, st) => {
+          if (st === "yes" && !confirmUnquoted(di, s.diffs[di].qty || 1)) return;
+          s.diffs[di].state = st; drawDiffs(); save(instance, {});
+        },
+        (di, qty) => {
+          if (qty > (s.diffs[di].qty || 1) && !confirmUnquoted(di, qty)) return;
+          s.diffs[di].qty = qty; drawDiffs(); save(instance, {});
+        }, true)
       : el("p", { class: "small muted" }, "Трудностей не ожидается."));
     drawDiffs();
     // Пункт неделим — один мастер отмечает «готово» целиком.
@@ -3311,8 +3337,11 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
           const definitionRange = f.code && !f.custom ? codeRange(f.code) : f.custom ? customFaultRange(f) : null;
           const liveRange = checked && getItemRange ? getItemRange(f) : null;
           const priceRange = liveRange || definitionRange;
+          const hasPossibleExtras = ((f.custom ? f.complications : priceOf(f.code).difficulties) || []).length > 0;
           const priceNode = priceRange
-            ? controlPriceTag(rangePlusText(priceRange), checked)
+            ? controlPriceTag(!checked && hasPossibleExtras
+              ? `${Number(priceRange.min || 0).toLocaleString("ru-RU")}+ ₽`
+              : rangePlusText(priceRange), checked)
             : null;
           // align-items:flex-start (не center из .opt) — иначе у длинных
           // названий, переносящихся на 2-3 строки, цена/счётчик съезжали
