@@ -2399,7 +2399,16 @@ function difficultyList(difficulties, onSet, onQty, fact) {
       style: done ? "margin-left:0" : "margin-left:0;background:var(--fill);color:var(--muted)",
     }, `+${money(d.add)}`) : null;
     box.append(el("div", { style: "margin-top:8px" },
-      el("div", { style: "display:flex;align-items:center;gap:10px" },
+      el("div", {
+        style: `display:flex;align-items:center;gap:10px${fact ? ";cursor:pointer" : ""}`,
+        onclick: fact ? (e) => {
+          // Плюс, крестик и счётчик обрабатывают нажатие сами. Остальная
+          // площадь строки переключает усложнение целиком, как работа в
+          // списке новой приёмки.
+          if (e.target.closest("button")) return;
+          onSet(di, done ? "no" : "yes");
+        } : null,
+      },
         el("div", { class: "small", style: "flex:1;min-width:0" },
           d.label,
           fact
