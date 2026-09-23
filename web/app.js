@@ -2394,10 +2394,18 @@ function difficultyList(difficulties, onSet, onQty, fact) {
             "aria-label": `${d.label}: ${done ? "было" : "не было"}`,
             onclick: () => onSet(di, done ? "no" : "yes"),
           }, done ? "×" : "+");
+    const factPrice = fact ? el("span", {
+      class: "pill",
+      style: done ? "margin-left:0" : "margin-left:0;background:var(--fill);color:var(--muted)",
+    }, `+${money(d.add)}`) : null;
     box.append(el("div", { style: "margin-top:8px" },
       el("div", { style: "display:flex;align-items:center;gap:10px" },
-        el("div", { class: "small", style: "flex:1" }, d.label, " ", el("span", { class: "muted" }, `(+${money(d.add)}${d.addMinutes ? `, +${d.addMinutes} мин` : ""})`)),
-        factControl),
+        el("div", { class: "small", style: "flex:1;min-width:0" },
+          d.label,
+          fact
+            ? (d.addMinutes ? el("span", { class: "muted" }, ` (+${d.addMinutes} мин)`) : null)
+            : el("span", { class: "muted" }, ` (+${money(d.add)}${d.addMinutes ? `, +${d.addMinutes} мин` : ""})`)),
+        fact ? el("div", { style: "display:flex;align-items:center;gap:8px;flex:0 0 auto" }, factPrice, factControl) : null),
       // Свой ряд на всю ширину — сегментед-контрол (тот же паттерн, что и
       // везде в приложении), один тап сразу меняет состояние, без открытия
       // выпадающего списка. Счётчик количества — отдельной строкой ниже,
