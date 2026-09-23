@@ -2484,10 +2484,15 @@ function openPendingSheet(it, stock, { onSet, onDiffQty, onParts, onQty, onRemov
       track,
       dots,
     ].filter(Boolean));
-    scrollToIndex(activeIndex, false);
+    // При первом открытии content ещё не в DOM (sheet ниже откроет его
+    // позже) — track.clientWidth в этот момент 0, и scrollLeft свёлся бы к 0
+    // независимо от activeIndex. Прокручиваем только если track уже виден;
+    // самый первый раз — уже после openSheet, см. ниже.
+    if (track.isConnected) scrollToIndex(activeIndex, false);
   }
   draw();
   sheet = openSheet(it.name, content);
+  scrollToIndex(activeIndex, false);
 }
 
 function pendingAgreementCard(order, handlers, stock) {
@@ -2541,9 +2546,7 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove }) {
 function repairGroupItem(items, stock, { onSave }) {
   const box = el("div", { class: "assess" });
   const r = items.reduce((a, it) => { const x = itemRange(it); return { min: a.min + x.min, max: a.max + x.max }; }, { min: 0, max: 0 });
-  const doneCount = items.filter((i) => i.done).length;
   const myId = SESSION?.id || null;
-  const mine = items.filter((i) => i.claimedBy?.masterId === myId).length;
   const nameRow = el("div", { style: "display:flex;align-items:center;gap:8px" },
     el("b", { style: "flex:1;min-width:0" }, items[0].name, el("span", { class: "small muted" }, ` × ${items.length}`)),
     el("span", { style: "flex:0 0 auto;color:var(--line);font-size:19px" }, "›"));
@@ -2555,14 +2558,24 @@ function repairGroupItem(items, stock, { onSave }) {
     if (i === -1) i = items.findIndex((x) => !x.claimedBy);
     return i === -1 ? 0 : i;
   })();
+  // Вместо «Готово: X из Y» — ярлык на каждый экземпляр, тот же приём, что
+  // и у обычных (не повторяющихся) работ: пилюля с именем мастера, если
+  // экземпляр сделан или уже занят кем-то, иначе «Ожидает».
+  const instanceTags = el("div", { style: "display:flex;flex-wrap:wrap;gap:6px;margin-top:6px" },
+    ...items.map((i) => {
+      const label = i.done ? (completionsSummary(i) || "готово") : i.claimedBy ? i.claimedBy.masterName || "—" : "Ожидает";
+      return el("span", {
+        class: "pill",
+        style: i.done || i.claimedBy ? "" : "background:var(--fill);color:var(--muted)",
+      }, label);
+    }));
   box.append(el("div", {
     style: "cursor:pointer",
     onclick: () => openRepairSheet(items[startIndex], stock, onSave, items),
   },
     nameRow,
     el("div", { class: "price-tag", style: "margin-top:2px" }, rangeText(r)),
-    el("p", { class: "small muted", style: "margin-top:4px" },
-      `Готово: ${doneCount} из ${items.length}` + (mine ? ` · ваших: ${mine}` : ""))));
+    instanceTags));
   return box;
 }
 
@@ -2571,13 +2584,23 @@ function repairGroupItem(items, stock, { onSave }) {
 // «Жду запчасть»/«Отметить готово». Правки сохраняются сами по себе сразу.
 // siblings.length > 1 — несколько экземпляров одной и той же повторяющейся
 // работы: карусель (свайп/точки, тот же паттерн, что и в openPendingSheet)
-// вместо одной карточки, свой набор контролов на каждый экземпляр. Табы
-// «Усложнения»/«Запчасти» общие на все экземпляры сразу.
+// вместо одной карточки, свой набор контролов на каждый экземпляр. Вкладка
+// «Усложнения»/«Запчасти» — своя у каждого экземпляра (переключается
+// независимо, не влияет на соседние панели карусели).
 //
 // Экземпляр становится «занят» тем мастером, который первым что-то в нём
 // реально отметил (усложнение/запчасть/готово/жду запчасть) — просто
 // открыть и посмотреть не занимает. Чужой занятый экземпляр виден (не
 // спрятан), но заблокирован: контролы недоступны, сверху подпись, кто занял.
+//
+// track и панели создаются один раз и не пересобираются при каждой правке —
+// обновляется только содержимое конкретной панели (redrawPanel). Раньше
+// весь track пересоздавался на любое действие (готово/жду запчасть/вкладка)
+// и scroll-позиция принудительно выставлялась заново — на iOS Safari это
+// иногда роняло scroll-snap в промежуточное положение между двумя
+// экземплярами (виден шов, часть текста одной панели рядом с другой).
+// Теперь scrollLeft трогается только по явному действию — свайп, точка или
+// открытие шторки.
 function openRepairSheet(it, stock, onSave, siblings = [it]) {
   let items = siblings.length ? siblings : [it];
   const myId = SESSION?.id || null;
@@ -2585,7 +2608,9 @@ function openRepairSheet(it, stock, onSave, siblings = [it]) {
   const isLocked = (inst) => inst.claimedBy && inst.claimedBy.masterId !== myId && !isAdmin;
   // Стейджинг правок — свой на каждый экземпляр, создаётся один раз при
   // открытии из текущих сохранённых значений, а не при каждой перерисовке,
-  // иначе несохранённые правки терялись бы при любом draw().
+  // иначе несохранённые правки терялись бы при любом redraw. tab — тоже per-
+  // instance: по умолчанию «Усложнения», если они у этого экземпляра есть,
+  // иначе «Запчасти».
   // «неизвестно» — прогнозное состояние (по умолчанию у новой работы), тут
   // такого выбора нет (см. fact:true ниже) — приводим к «не было», иначе
   // помеченная «готово» работа продолжала бы считаться диапазоном цены,
@@ -2593,8 +2618,8 @@ function openRepairSheet(it, stock, onSave, siblings = [it]) {
   const staged = new Map(items.map((inst) => [inst.code, {
     diffs: JSON.parse(JSON.stringify(inst.difficulties || [])).map((d) => (d.state === "unknown" ? { ...d, state: "no" } : d)),
     parts: (inst.parts || []).map((p) => ({ ...p })),
+    tab: (inst.difficulties || []).length > 0 ? "diff" : "parts",
   }]));
-  let tab = items.some((inst) => (inst.difficulties || []).length > 0) ? "diff" : "parts";
   let activeIndex = (() => {
     let i = items.findIndex((x) => x.claimedBy?.masterId === myId);
     if (i === -1) i = items.findIndex((x) => !x.claimedBy);
@@ -2602,7 +2627,7 @@ function openRepairSheet(it, stock, onSave, siblings = [it]) {
   })();
 
   const content = el("div", {});
-  let sheet, track;
+  let sheet, track, dots, label;
   let syncingScroll = false;
   function scrollToIndex(index, smooth) {
     if (!track) return;
@@ -2611,6 +2636,10 @@ function openRepairSheet(it, stock, onSave, siblings = [it]) {
     if (smooth) track.scrollTo({ left, behavior: "smooth" });
     else track.scrollLeft = left;
     setTimeout(() => { syncingScroll = false; }, smooth ? 260 : 0);
+  }
+  function updateActive() {
+    if (dots) dots.querySelectorAll(".carousel-dot").forEach((btn, index) => btn.classList.toggle("active", index === activeIndex));
+    if (label) label.textContent = `Экземпляр ${activeIndex + 1} из ${items.length}`;
   }
   // Первое реальное действие над экземпляром — сразу и занимает его тем,
   // кто это сделал (если ещё ничей); дальше он же (или админ) им и правит.
@@ -2623,10 +2652,12 @@ function openRepairSheet(it, stock, onSave, siblings = [it]) {
     }
     onSave(instance.code, patch);
   }
-  function panelFor(instance) {
+  const panelBody = new Map(); // code -> хост-узел содержимого панели
+  function redrawPanel(instance) {
     const s = staged.get(instance.code);
     const locked = isLocked(instance);
     const hasDiffs = s.diffs.length > 0;
+    if (!hasDiffs && s.tab === "diff") s.tab = "parts";
     const diffBox = el("div", {});
     const drawDiffs = () => diffBox.replaceChildren(hasDiffs
       ? difficultyList(s.diffs, (di, st) => { s.diffs[di].state = st; drawDiffs(); save(instance, {}); }, (di, qty) => { s.diffs[di].qty = qty; drawDiffs(); save(instance, {}); }, true)
@@ -2641,13 +2672,13 @@ function openRepairSheet(it, stock, onSave, siblings = [it]) {
       toast("Отмечено готово");
       // Групповую шторку не закрываем — по другим экземплярам ещё есть что
       // делать (себе или другому мастеру); одиночную, как и раньше, закрываем.
-      if (items.length === 1) sheet.close(); else draw();
+      if (items.length === 1) sheet.close(); else redrawPanel(instance);
     };
     const unmarkDone = () => {
       instance.done = false;
       instance.doneBy = null;
       save(instance, { done: false, doneBy: null });
-      draw();
+      redrawPanel(instance);
     };
     // «Жду запчасть» — мастер начал работу, но встал из-за отсутствующей
     // детали; занимает эту пометку тот, кто её поставил, снять/продолжить
@@ -2659,65 +2690,67 @@ function openRepairSheet(it, stock, onSave, siblings = [it]) {
             el("p", { class: "small", style: "color:var(--yellow-ink)" }, `Ждёт запчасть — ${instance.waitingForPart.masterName || "—"}`),
             canManageWait ? el("button", {
               style: "width:100%;margin-top:6px",
-              onclick: () => { instance.waitingForPart = null; save(instance, { waitingForPart: null }); draw(); },
+              onclick: () => { instance.waitingForPart = null; save(instance, { waitingForPart: null }); redrawPanel(instance); },
             }, "Запчасть пришла — продолжить") : null)
         : el("button", {
             style: "width:100%",
             onclick: () => {
               instance.waitingForPart = { masterId: myId, masterName: SESSION?.name || "—", at: new Date().toISOString() };
               save(instance, { waitingForPart: instance.waitingForPart });
-              draw();
+              redrawPanel(instance);
             },
           }, "Жду запчасть"));
     const doneBlock = instance.done
       ? el("button", { style: "width:100%;margin-top:16px", onclick: unmarkDone }, "Снять отметку «готово»")
       : el("button", { class: "btn-ok", style: "width:100%;margin-top:16px", onclick: markDone }, "Отметить готово");
+    const tabs = hasDiffs ? el("div", { class: "segmented", style: "margin-bottom:14px" },
+      el("button", { class: s.tab === "diff" ? "active" : "", onclick: () => { s.tab = "diff"; redrawPanel(instance); } }, "Усложнения"),
+      el("button", { class: s.tab === "parts" ? "active" : "", onclick: () => { s.tab = "parts"; redrawPanel(instance); } }, "Запчасти")) : null;
     const inner = el("div", {},
-      tab === "diff" ? diffBox : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(s.parts, stock, () => save(instance, { parts: s.parts }), partBlockIdOf(instance))),
+      tabs,
+      s.tab === "diff" ? diffBox : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(s.parts, stock, () => save(instance, { parts: s.parts }), partBlockIdOf(instance))),
       waitBlock, doneBlock);
-    if (!locked) return el("div", { class: "instance-panel" }, inner);
-    return el("div", { class: "instance-panel" },
-      el("p", { class: "small", style: "color:var(--muted);margin-bottom:10px" }, `Занято — ${instance.claimedBy?.masterName || "другой мастер"}`),
-      el("div", { style: "pointer-events:none;opacity:.5" }, inner));
+    const body = locked
+      ? el("div", {},
+          el("p", { class: "small", style: "color:var(--muted);margin-bottom:10px" }, `Занято — ${instance.claimedBy?.masterName || "другой мастер"}`),
+          el("div", { style: "pointer-events:none;opacity:.5" }, inner))
+      : inner;
+    panelBody.get(instance.code).replaceChildren(body);
   }
-  function draw() {
-    const hasAnyDiffs = items.some((x) => staged.get(x.code).diffs.length > 0);
-    if (!hasAnyDiffs && tab === "diff") tab = "parts";
-    let dots = null, label = null;
-    const updateActive = () => {
-      if (dots) dots.querySelectorAll(".carousel-dot").forEach((btn, index) => btn.classList.toggle("active", index === activeIndex));
-      if (label) label.textContent = `Экземпляр ${activeIndex + 1} из ${items.length}`;
-    };
-    track = el("div", {
-      class: "instance-track",
-      onscroll: () => {
-        if (syncingScroll || !track) return;
-        const w = track.clientWidth || 1;
-        const idx = Math.max(0, Math.min(items.length - 1, Math.round(track.scrollLeft / w)));
-        if (idx !== activeIndex) { activeIndex = idx; updateActive(); }
-      },
-    }, items.map(panelFor));
-    if (items.length > 1) {
-      dots = el("div", { class: "carousel-dots" },
-        items.map((_, index) => el("button", {
-          type: "button", class: "carousel-dot" + (index === activeIndex ? " active" : ""),
-          "aria-label": `Экземпляр ${index + 1} из ${items.length}`,
-          onclick: () => { activeIndex = index; updateActive(); scrollToIndex(index, true); },
-        })));
-      label = el("p", { class: "small muted", style: "margin:0 0 6px;text-align:center" }, `Экземпляр ${activeIndex + 1} из ${items.length}`);
-    }
-    content.replaceChildren(...[
-      label,
-      hasAnyDiffs ? el("div", { class: "segmented", style: "margin-bottom:14px" },
-        el("button", { class: tab === "diff" ? "active" : "", onclick: () => { tab = "diff"; draw(); } }, "Усложнения"),
-        el("button", { class: tab === "parts" ? "active" : "", onclick: () => { tab = "parts"; draw(); } }, "Запчасти")) : null,
-      track,
-      dots,
-    ].filter(Boolean));
-    scrollToIndex(activeIndex, false);
+
+  const panels = items.map((instance) => {
+    const bodyHost = el("div", {});
+    panelBody.set(instance.code, bodyHost);
+    return el("div", { class: "instance-panel" }, bodyHost);
+  });
+  items.forEach(redrawPanel);
+
+  track = el("div", {
+    class: "instance-track",
+    onscroll: () => {
+      if (syncingScroll || !track) return;
+      const w = track.clientWidth || 1;
+      const idx = Math.max(0, Math.min(items.length - 1, Math.round(track.scrollLeft / w)));
+      if (idx !== activeIndex) { activeIndex = idx; updateActive(); }
+    },
+  }, panels);
+
+  if (items.length > 1) {
+    dots = el("div", { class: "carousel-dots" },
+      items.map((_, index) => el("button", {
+        type: "button", class: "carousel-dot" + (index === activeIndex ? " active" : ""),
+        "aria-label": `Экземпляр ${index + 1} из ${items.length}`,
+        onclick: () => { activeIndex = index; updateActive(); scrollToIndex(index, true); },
+      })));
+    label = el("p", { class: "small muted", style: "margin:0 0 6px;text-align:center" }, `Экземпляр ${activeIndex + 1} из ${items.length}`);
   }
-  draw();
+
+  content.replaceChildren(...[label, track, dots].filter(Boolean));
   sheet = openSheet(it.name, content);
+  // scrollToIndex — уже после openSheet: до него content не в DOM, и
+  // track.clientWidth равен 0, из-за чего scrollLeft всегда сводился к 0
+  // независимо от activeIndex (открывался не тот экземпляр, что задуман).
+  scrollToIndex(activeIndex, false);
 }
 
 // ============================================================================
@@ -3142,7 +3175,11 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
           // Так счётчик всегда на одной и той же высоте, вровень с первой
           // строкой названия, независимо от того, сколько строк оно занимает.
           const rowContent = el("div", { class: "row opt", style: "cursor:pointer;align-items:flex-start" },
-            el("span", { style: "flex:1" }, f.label),
+            // min-width:0 — без него flex-item с длинным неразрывным словом
+            // (напр. «Обслуживание», «Переспицовка») не мог сжаться уже
+            // своего мин-контента, и цена/счётчик справа вылезали за край
+            // строки вместо того, чтобы остаться у правого края.
+            el("span", { style: "flex:1;min-width:0;overflow-wrap:break-word" }, f.label),
             el("div", { style: "display:flex;align-items:center;gap:8px;flex:0 0 auto" },
               priceNode,
               selectButton || (checked ? el("span", { class: "row-check", html: ICON_CHECK }) : null)));
