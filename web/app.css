@@ -307,6 +307,13 @@ label { display:block; font-size:13px; color:var(--muted); margin:var(--sp-4) 0 
 }
 .opt input[type="radio"]:checked::after { content:""; width:8px; height:8px; border-radius:50%; background:var(--on-accent); }
 
+/* Режим работы выглядит как один список выбора, а не как три одинаковые
+   кнопки подряд. Выбранная строка отличается только спокойной подложкой. */
+.quantity-mode-list { margin-top:10px; border:.5px solid var(--line); border-radius:var(--radius-sm); overflow:hidden; background:var(--card); }
+.quantity-mode-list .quantity-mode-row { margin:0; padding:15px 16px; border:0; border-radius:0; background:transparent; }
+.quantity-mode-list .quantity-mode-row + .quantity-mode-row { border-top:.5px solid var(--line); }
+.quantity-mode-list .quantity-mode-row:has(input:checked) { background:var(--accent-weak); }
+
 .check-item { padding:10px 0; border-bottom:.5px solid var(--line); }
 .hint-toggle { border:0; background:none; padding:4px 0; color:var(--accent); min-height:auto; }
 .assess { padding:14px 0; border-bottom:.5px solid var(--line); }
