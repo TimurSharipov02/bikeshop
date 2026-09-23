@@ -1277,7 +1277,7 @@ function viewNewOrder() {
             draft.items = draft.items.filter((x) => x.code !== code);
             redraw();
           },
-        }, siblings);
+        }, [it]);
       },
       getItemRange: (fa) => {
         const items = draft.items.filter((it) => (it.sourceCode || it.code) === fa.code);
@@ -1676,7 +1676,7 @@ function viewOrder(number) {
           onParts: (code, parts) => { const x = added.find((v) => v.code === code); if (x) x.parts = parts; redraw(); },
           onQty: (code, qty) => { const x = added.find((v) => v.code === code); if (x) x.qty = qty; redraw(); },
           onRemove: (code) => { const i = added.findIndex((v) => v.code === code); if (i >= 0) added.splice(i, 1); redraw(); },
-        }, siblings);
+        }, [it]);
       },
       getItemRange: (fa) => {
         const items = added.filter((it) => (it.sourceCode || it.code) === fa.code);
@@ -1813,57 +1813,22 @@ function viewOrder(number) {
         const b = el("div", {});
         const pendingCard = pendingAgreementCard(order, pendingHandlers, stock);
         if (pendingCard) b.append(pendingCard);
-        // Несколько экземпляров одной и той же работы (повторяющаяся работа,
-        // quantityMode:"instances") группируем в одну карточку с каруселью
-        // (repairGroupItem/openRepairSheet) — иначе они шли бы отдельными
-        // одинаковыми карточками подряд, и было бы непонятно, что это части
-        // одного и того же, а не N разных работ.
-        // waitingLast сортирует ПОСЛЕ группировки, а не до: раньше сортировка
-        // применялась к плоскому списку до группировки и перемешивала
-        // экземпляры ВНУТРИ одной и той же повторяющейся работы (если один
-        // из них «ждёт запчасть», а остальные нет) — «Экземпляр 2 из 3» на
-        // карусели тогда указывал на разные физические экземпляры от
-        // перерисовки к перерисовке. Теперь порядок внутри группы всегда
-        // совпадает с порядком в order.items, сортируется только порядок
-        // самих групп/карточек в списке.
-        const groups = [];
-        const groupAt = new Map();
-        order.items.filter((i) => i.agreed).forEach((it) => {
-          const key = it.sourceCode || it.code;
-          if (!groupAt.has(key)) { groupAt.set(key, groups.length); groups.push([it]); }
-          else groups[groupAt.get(key)].push(it);
-        });
-        const groupWaiting = (g) => (g.some((it) => it.waitingForPart && !it.done) ? 1 : 0);
-        groups.sort((a, b) => groupWaiting(a) - groupWaiting(b));
-        groups.forEach((group) => {
-          if (group.length === 1) {
-            const it = group[0];
-            b.append(repairItem(it, stock, {
-              onRun: () => openRunner(it.code),
-              onSave: (patch) => {
-                editOrder(number, (o) => {
-                  const x = o.items.find((i) => i.code === it.code);
-                  if (x) Object.assign(x, patch);
-                });
-                refresh();
-              },
-              onQty: (qty) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) x.qty = qty; }); refresh(); },
-              onRemove: (code) => removeItem(code),
-              onAdd: (template) => addWorkInstance(template),
-            }));
-          } else {
-            b.append(repairGroupItem(group, stock, {
-              onSave: (code, patch) => {
-                editOrder(number, (o) => {
-                  const x = o.items.find((i) => i.code === code);
-                  if (x) Object.assign(x, patch);
-                });
-                refresh();
-              },
-              onAdd: (template) => addWorkInstance(template),
-              onRemove: (code) => removeItem(code),
-            }));
-          }
+        // Разные экземпляры одной работы всегда остаются отдельными задачами.
+        // Они могут иметь разных исполнителей, усложнения и запчасти, поэтому
+        // не объединяем их общей карточкой и не прячем в карусель.
+        order.items.filter((i) => i.agreed).sort(waitingLast).forEach((it) => {
+          b.append(repairItem(it, stock, {
+            onRun: () => openRunner(it.code),
+            onSave: (patch) => {
+              editOrder(number, (o) => {
+                const x = o.items.find((i) => i.code === it.code);
+                if (x) Object.assign(x, patch);
+              });
+              refresh();
+            },
+            onQty: (qty) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) x.qty = qty; }); refresh(); },
+            onRemove: (code) => removeItem(code),
+          }));
         });
         // Итог по всем согласованным работам — раньше был только на отдельном
         // экране-смете, теперь его увели вместе с самим экраном; тут он нужен
@@ -2159,8 +2124,8 @@ function quantityModeEditor(draft) {
   const fieldName = `quantity-mode-${Math.random().toString(36).slice(2)}`;
   const modes = [
     ["single", "Один раз · 1", "Одна задача, один исполнитель"],
-    ["instances", "Каждую отдельно · до 5", "Несколько задач, исполнитель у каждой"],
-    ["quantity", "Общим количеством · до 64", "Одна задача × количество, один исполнитель"],
+    ["instances", "Отдельными работами · до 5", "Каждый раз добавляется новая самостоятельная строка"],
+    ["quantity", "Одной строкой · до 64", "Количество меняется счётчиком, исполнитель один"],
   ];
   const choices = el("div", { class: "quantity-mode-list" },
     ...modes.map(([value, title, hint]) => el("label", { class: "opt quantity-mode-row" },
@@ -3269,6 +3234,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
           const quantityCount = quantityMode && getQuantity ? Math.max(1, getQuantity(f) || 1) : 1;
           const instanceMax = instanceMode ? (getInstanceMax ? getInstanceMax(f) : (f.maxInstances || 0)) : 0;
           const instanceUnavailable = instanceMode && !!getInstanceMax && (f.maxInstances || 0) > 0 && instanceMax <= 0;
+          const instanceAtMax = instanceMode && instanceMax > 0 && instanceCount >= instanceMax;
           const checked = selectedCount > 0;
           const setInstanceCount = (count) => {
             if (instanceUnavailable && count > 0) return;
@@ -3298,7 +3264,14 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
           };
           let selectButton = null;
           if (onlyCustom && f.custom) {
-            if (checked && instanceMode) selectButton = qtyStepper(instanceCount, setInstanceCount, instanceMax, () => setInstanceCount(0));
+            // Разные экземпляры не регулируются общим счётчиком. Каждое
+            // нажатие «+» добавляет новую самостоятельную строку наряда.
+            if (instanceMode) selectButton = el("button", {
+              type: "button", class: "work-select-btn",
+              disabled: instanceUnavailable || instanceAtMax,
+              "aria-label": checked ? "Добавить ещё один экземпляр" : "Добавить работу",
+              onclick: (e) => { e.stopPropagation(); setInstanceCount(instanceCount + 1); },
+            }, "+");
             else if (checked && quantityMode) selectButton = qtyStepper(quantityCount, setQuantityCount, WORK_QUANTITY_LIMIT, () => setQuantityCount(0));
             else selectButton = el("button", {
               type: "button", class: "work-select-btn" + (checked ? " selected" : ""),
@@ -3306,8 +3279,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
               "aria-label": checked ? "Убрать работу" : "Добавить работу",
               onclick: (e) => {
                 e.stopPropagation();
-                if (instanceMode) setInstanceCount(1);
-                else if (quantityMode) setQuantityCount(1);
+                if (quantityMode) setQuantityCount(1);
                 else setSingleSelected(!checked);
               },
             }, checked ? "×" : "+");
@@ -3358,8 +3330,11 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
             // справа отвечает только за добавление/снятие, поэтому повторный
             // тап по строке уже не удаляет выбранную позицию случайно.
             if (onlyCustom && f.custom) {
-              if (instanceUnavailable) return;
-              if (!checked) { s.faults.add(i); if (f.code) onCheck(f); draw(); }
+              if (!checked) {
+                if (instanceUnavailable) return;
+                if (instanceMode) setInstanceCount(1);
+                else { s.faults.add(i); if (f.code) onCheck(f); draw(); }
+              }
               if (f.code && onOpen) onOpen(f, draw);
               return;
             }
