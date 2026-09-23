@@ -1284,15 +1284,6 @@ function viewNewOrder() {
             if (item) item.parts = parts;
             redraw();
           },
-          onQty: (code, qty) => {
-            const item = draft.items.find((x) => x.code === code);
-            if (item) item.qty = qty;
-            redraw();
-          },
-          onRemove: (code) => {
-            draft.items = draft.items.filter((x) => x.code !== code);
-            redraw();
-          },
         }, [it]);
       },
       getItemRange: (fa) => {
@@ -1355,9 +1346,10 @@ function viewNewOrder() {
           el("span", {}, "Новый велосипед")));
       bikeFields.replaceChildren();
       if (f.bike === "new")
-        bikeFields.append(
-          el("label", {}, "Велосипед"),
-          el("input", { type: "text", value: f.bikeName, placeholder: "например, Stels Navigator", oninput: (e) => (f.bikeName = e.target.value) }));
+        bikeFields.append(el("input", {
+          type: "text", value: f.bikeName, placeholder: "Марка, модель",
+          oninput: (e) => (f.bikeName = e.target.value),
+        }));
       bikeSlot.append(bikeFields);
     }
 
@@ -1685,8 +1677,6 @@ function viewOrder(number) {
           onSet: (code, di, state) => { const x = added.find((v) => v.code === code); if (x?.difficulties?.[di]) x.difficulties[di].state = state; redraw(); },
           onDiffQty: (code, di, qty) => { const x = added.find((v) => v.code === code); if (x?.difficulties?.[di]) x.difficulties[di].qty = qty; redraw(); },
           onParts: (code, parts) => { const x = added.find((v) => v.code === code); if (x) x.parts = parts; redraw(); },
-          onQty: (code, qty) => { const x = added.find((v) => v.code === code); if (x) x.qty = qty; redraw(); },
-          onRemove: (code) => { const i = added.findIndex((v) => v.code === code); if (i >= 0) added.splice(i, 1); redraw(); },
         }, [it]);
       },
       getItemRange: (fa) => {
@@ -2128,6 +2118,20 @@ function qtyStepper(value, onChange, max, onRemove) {
       onclick: () => onChange(max > 0 ? Math.min(max, (value || 1) + 1) : (value || 1) + 1) }, "+"));
 }
 
+// Одна кнопка выбора для работ и усложнений. В невыбранном состоянии это
+// «+», в выбранном — «×». Раньше одинаковая кнопка собиралась отдельно на
+// экране приёмки и в карточке ремонта, поэтому правки размера и скругления
+// приходилось повторять в нескольких местах.
+function addRemoveControl(selected, onChange, ariaLabel, disabled = false) {
+  return el("button", {
+    type: "button",
+    class: "work-select-btn" + (selected ? " selected" : ""),
+    disabled,
+    "aria-label": ariaLabel,
+    onclick: (e) => { e.stopPropagation(); onChange(!selected); },
+  }, selected ? "×" : "+");
+}
+
 // Как работа считается в наряде. Одинаковые экземпляры повторяют целиком
 // одну работу с общей карточкой и мастером. Новую независимую задачу мастер
 // добавляет повторным выбором этой работы из каталога.
@@ -2270,6 +2274,19 @@ function costLines(it) {
   return lines;
 }
 
+function costBreakdown(it) {
+  return el("div", { class: "small muted", style: "margin-top:4px" },
+    costLines(it).map((line) => el("div", {}, "– " + line)));
+}
+
+function workStatePill(it) {
+  if (it.waitingForPart && !it.done) {
+    return el("span", { class: "pill", style: "background:var(--yellow-weak);color:var(--yellow-ink)" }, "ждёт запчасть");
+  }
+  if (it.done) return el("span", { class: "pill" }, completionsSummary(it) || "готово");
+  return null;
+}
+
 // Та же вёрстка, что у repairItem («В работе») — только без клика на форму
 // (тут карточка для сверки перед звонком клиенту/выдачей, редактировать
 // нечего): имя+статус «готово» одной строкой, сумма отдельной строкой
@@ -2279,12 +2296,11 @@ function detailedItemRow(it) {
   const r = itemRange(it);
   const nameRow = el("div", { style: "display:flex;align-items:center;gap:8px" },
     el("b", { style: "flex:1;min-width:0" }, it.name, usesQuantity(it) && (it.qty || 1) > 1 ? el("span", { class: "small muted" }, ` × ${it.qty}`) : null),
-    it.waitingForPart && !it.done ? el("span", { class: "pill", style: "background:var(--yellow-weak);color:var(--yellow-ink)" }, "ждёт запчасть") : null,
-    it.done ? el("span", { class: "pill" }, completionsSummary(it) || "готово") : null);
+    workStatePill(it));
   return el("div", { class: "assess" },
     nameRow,
     el("div", { class: "price-tag", style: "margin-top:2px" }, rangeText(r)),
-    el("div", { class: "small muted", style: "margin-top:4px" }, costLines(it).map((l) => el("div", {}, "– " + l))),
+    costBreakdown(it),
     it.notes ? el("p", { class: "small muted", style: "margin-top:4px" }, it.notes) : null);
 }
 
@@ -2357,12 +2373,15 @@ const DIFFICULTY_FACT_LABELS = { yes: "было", no: "не было" };
 const difficultyQty = (d) => d.multiple ? Math.max(1, d.qty || 1) : 1;
 const difficultyAmount = (d) => (d.add || 0) * difficultyQty(d);
 const difficultyMinutes = (d) => (d.addMinutes || 0) * difficultyQty(d);
+
+// Цена рядом с кнопкой или счётчиком. Компонент сам задаёт размер, фон и
+// скругление, поэтому он одинаков независимо от того, где находится:
+// в приёмке, усложнениях или ремонте.
+function controlPriceTag(text, included = true) {
+  return el("span", { class: "control-price" + (included ? "" : " excluded") }, text);
+}
 function difficultyPriceTag(d) {
-  const included = d.state === "yes";
-  return el("span", {
-    class: "pill",
-    style: included ? "margin-left:0" : "margin-left:0;background:var(--fill);color:var(--muted)",
-  }, `+${money(difficultyAmount(d))}`);
+  return controlPriceTag(`+${money(difficultyAmount(d))}`, d.state === "yes");
 }
 function difficultyStateToggle(d, labels, onSet) {
   const symbols = { yes: "✓", no: "×", unknown: "?" };
@@ -2399,13 +2418,11 @@ function difficultyList(difficulties, onSet, onQty, fact) {
     const multipleControl = d.multiple
       ? (done
           ? difficultyQtyStepper(d, (qty) => onQty(di, qty), () => onSet(di, "no"))
-          : el("button", { type: "button", class: "work-select-btn", "aria-label": `${d.label}: добавить`, onclick: () => onSet(di, "yes") }, "+"))
+          : addRemoveControl(false, () => onSet(di, "yes"), `${d.label}: добавить`))
       : null;
-    const factControl = !fact || d.multiple ? null : el("button", {
-            type: "button", class: "work-select-btn" + (done ? " selected" : ""),
-            "aria-label": `${d.label}: ${done ? "было" : "не было"}`,
-            onclick: () => onSet(di, done ? "no" : "yes"),
-          }, done ? "×" : "+");
+    const factControl = !fact || d.multiple ? null : addRemoveControl(done,
+      (selected) => onSet(di, selected ? "yes" : "no"),
+      `${d.label}: ${done ? "было" : "не было"}`);
     const stateControl = multipleControl || (fact ? factControl : difficultyStateToggle(d, labels, (state) => onSet(di, state)));
     const addedMinutes = difficultyMinutes(d);
     box.append(el("div", { style: "margin-top:8px" },
@@ -2434,12 +2451,12 @@ function difficultyList(difficulties, onSet, onQty, fact) {
 // (позвонив клиенту). Без этого шага работа просто предлагается молча —
 // то как «+ доп. работа», то как невидимая навсегда, — и тут явный шаг
 // нужен в обоих случаях одинаково.
-function pendingAgreementRow(it, { onAgree, onRemove, onSet, onDiffQty, onParts, onQty }, stock) {
+function pendingAgreementRow(it, { onAgree, onRemove, onSet, onDiffQty, onParts }, stock) {
   const r = itemRange(it);
   const box = el("div", { class: "assess" });
   const nameRow = el("div", {
     style: "display:flex;align-items:center;gap:8px;cursor:pointer",
-    onclick: () => openPendingSheet(it, stock, { onSet, onDiffQty, onParts, onQty, onRemove }),
+    onclick: () => openPendingSheet(it, stock, { onSet, onDiffQty, onParts }),
   },
     el("b", { style: "flex:1;min-width:0" }, it.name, usesQuantity(it) && (it.qty || 1) > 1 ? el("span", { class: "small muted" }, ` × ${it.qty}`) : null),
     el("span", { style: "flex:0 0 auto;color:var(--line);font-size:19px" }, "›"));
@@ -2468,7 +2485,7 @@ const carouselNearestIndex = (track, count) => {
   return nearest;
 };
 
-function openPendingSheet(it, stock, { onSet, onDiffQty, onParts, onQty, onRemove }, siblings = [it]) {
+function openPendingSheet(it, stock, { onSet, onDiffQty, onParts }, siblings = [it]) {
   let items = siblings.length ? siblings : [it];
   let activeIndex = Math.max(0, items.findIndex((x) => x.code === it.code));
   // Вкладка принадлежит экземпляру и едет вместе с ним в карусели. Так при
@@ -2489,15 +2506,6 @@ function openPendingSheet(it, stock, { onSet, onDiffQty, onParts, onQty, onRemov
     else track.scrollLeft = left;
     setTimeout(() => { syncingScroll = false; }, smooth ? 260 : 0);
   }
-  function removeInstance(instance) {
-    onRemove(instance.code);
-    items = items.filter((x) => x.code !== instance.code);
-    tabs.delete(instance.code);
-    if (!items.length) { sheet.close(); return; }
-    activeIndex = Math.min(activeIndex, items.length - 1);
-    draw();
-    if (items.length > 1) scrollToIndex(activeIndex, false);
-  }
   function panelFor(instance) {
     const hasDiffs = (instance.difficulties || []).length > 0;
     let tab = tabs.get(instance.code) || (hasDiffs ? "diff" : "parts");
@@ -2507,9 +2515,6 @@ function openPendingSheet(it, stock, { onSet, onDiffQty, onParts, onQty, onRemov
       hasDiffs ? el("div", { class: "segmented", style: "margin-bottom:14px" },
         el("button", { class: tab === "diff" ? "active" : "", onclick: () => { tabs.set(instance.code, "diff"); draw(); } }, "Усложнения"),
         el("button", { class: tab === "parts" ? "active" : "", onclick: () => { tabs.set(instance.code, "parts"); draw(); } }, "Запчасти")) : null,
-      usesQuantity(instance) ? el("div", { style: "margin-bottom:14px" }, qtyStepper(instance.qty,
-        (qty) => { onQty(instance.code, qty); draw(); }, workQuantityLimitOf(instance),
-        onRemove ? () => removeInstance(instance) : undefined)) : null,
       tab === "diff"
         ? (hasDiffs ? difficultyList(instance.difficulties, (di, st) => { onSet(instance.code, di, st); draw(); }, (di, qty) => { onDiffQty(instance.code, di, qty); draw(); })
           : el("p", { class: "small muted" }, "Трудностей не ожидается."))
@@ -2585,13 +2590,12 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove, onAdd }) {
   const box = el("div", { class: "assess" });
   const nameRow = el("div", { style: "display:flex;align-items:center;gap:8px" },
     el("b", { style: "flex:1;min-width:0" }, it.name),
-    it.waitingForPart && !it.done ? el("span", { class: "pill", style: "background:var(--yellow-weak);color:var(--yellow-ink)" }, "ждёт запчасть") : null,
-    it.done ? el("span", { class: "pill" }, completionsSummary(it) || "готово") : null,
+    workStatePill(it),
     el("span", { style: "flex:0 0 auto;color:var(--line);font-size:19px" }, "›"));
   const quantityControl = usesQuantity(it)
     ? qtyStepper(it.qty, onQty, workQuantityLimitOf(it), onRemove ? () => onRemove(it.code) : undefined)
     : null;
-  const priceControl = el("span", { class: "pill", style: "margin-left:0" }, rangeText(itemRange(it)));
+  const priceControl = controlPriceTag(rangeText(itemRange(it)));
   // Кликабельна вся карточка (имя + сумма + разбивка по составляющим), а не
   // только строка с именем — с разбивкой карточка стала заметно выше, и тап
   // ниже имени должен так же открывать форму, а не проваливаться в никуда.
@@ -2607,7 +2611,7 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove, onAdd }) {
     nameRow,
     // Та же разбивка по составляющим, что и в списке «выдан» — не нужно
     // открывать форму, чтобы увидеть, из чего сложилась сумма.
-    el("div", { class: "small muted", style: "margin-top:4px" }, costLines(it).map((l) => el("div", {}, "– " + l))),
+    costBreakdown(it),
     el("div", { style: "margin-top:10px" }, pricedControlGroup(priceControl, quantityControl)));
   box.append(openArea);
   if (it.notes) box.append(el("p", { class: "small muted" }, it.notes));
@@ -3283,23 +3287,13 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
             // будет в наряде. В ремонте они не объединяются: у каждой будет
             // собственный исполнитель, готовность, усложнения и запчасти.
             if (checked && instanceMode) selectButton = qtyStepper(instanceCount, setInstanceCount, instanceMax, () => setInstanceCount(0));
-            else if (instanceMode) selectButton = el("button", {
-              type: "button", class: "work-select-btn",
-              disabled: instanceUnavailable,
-              "aria-label": "Добавить работу",
-              onclick: (e) => { e.stopPropagation(); setInstanceCount(1); },
-            }, "+");
+            else if (instanceMode) selectButton = addRemoveControl(false,
+              () => setInstanceCount(1), "Добавить работу", instanceUnavailable);
             else if (checked && quantityMode) selectButton = qtyStepper(quantityCount, setQuantityCount, WORK_QUANTITY_LIMIT, () => setQuantityCount(0));
-            else selectButton = el("button", {
-              type: "button", class: "work-select-btn" + (checked ? " selected" : ""),
-              disabled: instanceUnavailable,
-              "aria-label": checked ? "Убрать работу" : "Добавить работу",
-              onclick: (e) => {
-                e.stopPropagation();
-                if (quantityMode) setQuantityCount(1);
-                else setSingleSelected(!checked);
-              },
-            }, checked ? "×" : "+");
+            else selectButton = addRemoveControl(checked, (selected) => {
+              if (quantityMode) setQuantityCount(selected ? 1 : 0);
+              else setSingleSelected(selected);
+            }, checked ? "Убрать работу" : "Добавить работу", instanceUnavailable);
           }
           // Цена — рядом со счётчиком/кнопкой добавления справа, а не сразу
           // после названия: так видно одним взглядом, что именно сейчас
@@ -3318,7 +3312,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
           const liveRange = checked && getItemRange ? getItemRange(f) : null;
           const priceRange = liveRange || definitionRange;
           const priceNode = priceRange
-            ? el("span", { class: "pill", style: checked ? "margin-left:0" : "margin-left:0;background:var(--fill);color:var(--muted)" }, rangePlusText(priceRange))
+            ? controlPriceTag(rangePlusText(priceRange), checked)
             : null;
           // align-items:flex-start (не center из .opt) — иначе у длинных
           // названий, переносящихся на 2-3 строки, цена/счётчик съезжали
