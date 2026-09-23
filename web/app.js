@@ -1771,34 +1771,21 @@ function viewOrder(number) {
   }
 
   if (order.status === "взята в работу") {
-    // Заявку должен вести только один мастер одновременно — иначе два
-    // человека могут одновременно править один и тот же наряд, не видя друг
-    // друга. Поэтому вход в свободную заявку сразу занимает её тем, кто
-    // открыл экран; освободить можно только явной кнопкой «Выйти».
+    // Раньше заявку мог вести только один мастер одновременно — остальные
+    // видели её только на чтение. Теперь несколько мастеров могут вести
+    // заявку разом (нужно для повторяющихся работ — один экземпляр себе
+    // забирает один мастер, другой экземпляр другой, см. repairGroupItem/
+    // openRepairSheet). occupiedBy остаётся только информационной меткой
+    // «кто сюда заходил», ни на что не влияет и ничего не блокирует.
     if (!order.occupiedBy) {
       editOrder(number, (o) => { o.occupiedBy = SESSION?.id || null; o.occupiedByName = SESSION?.name || ""; });
     }
     const leaveOrder = () => {
-      // «Выйти» — снимаем хозяина, но остаёмся в «В работе»: отдельного
-      // статуса-очереди больше нет.
       editOrder(number, (o) => { o.occupiedBy = null; o.occupiedByName = ""; });
       go("/");
     };
 
-    if (order.occupiedBy && order.occupiedBy !== SESSION?.id) {
-      // Заявку ведёт другой мастер — смотреть можно (тот же список работ и
-      // итог, что и в обычном виде), редактировать и отмечать готовым нельзя:
-      // detailedItemRow (через itemList c edit=null) не кликабельна и не
-      // даёт ни открыть форму, ни поменять статус — ровно то же самое, что
-      // и на «выдан», где список тоже только для просмотра.
-      const agreedItems = order.items.filter((i) => i.agreed);
-      main.append(stage("Ремонт",
-        el("p", { class: "small muted" }, `Заявку сейчас ведёт: ${order.occupiedByName || "другой мастер"}.`),
-        itemList({ items: agreedItems }, true, null, true, false),
-        agreedItems.length ? el("div", { class: "card card-flush", style: "margin-top:12px" },
-          el("span", { class: "muted small" }, "Итого"),
-          el("div", { class: "total" }, rangeText(range))) : null));
-    } else {
+    {
       // Склад почти всегда уже в кэше (его подтягивали раньше на этом же
       // экране) — строим список сразу, без заглушек-скелетонов: иначе каждое
       // «Готово»/«Отменить» дёргает refresh() → viewOrder() заново, и список
@@ -1808,18 +1795,45 @@ function viewOrder(number) {
         const b = el("div", {});
         const pendingCard = pendingAgreementCard(order, pendingHandlers, stock);
         if (pendingCard) b.append(pendingCard);
-        order.items.filter((i) => i.agreed).sort(waitingLast).forEach((it) => b.append(repairItem(it, stock, {
-          onRun: () => openRunner(it.code),
-          onSave: (patch) => {
-            editOrder(number, (o) => {
-              const x = o.items.find((i) => i.code === it.code);
-              if (x) Object.assign(x, patch);
-            });
-            refresh();
-          },
-          onQty: (qty) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) x.qty = qty; }); refresh(); },
-          onRemove: (code) => removeItem(code),
-        })));
+        // Несколько экземпляров одной и той же работы (повторяющаяся работа,
+        // quantityMode:"instances") группируем в одну карточку с каруселью
+        // (repairGroupItem/openRepairSheet) — иначе они шли бы отдельными
+        // одинаковыми карточками подряд, и было бы непонятно, что это части
+        // одного и того же, а не N разных работ.
+        const groups = [];
+        const groupAt = new Map();
+        order.items.filter((i) => i.agreed).sort(waitingLast).forEach((it) => {
+          const key = it.sourceCode || it.code;
+          if (!groupAt.has(key)) { groupAt.set(key, groups.length); groups.push([it]); }
+          else groups[groupAt.get(key)].push(it);
+        });
+        groups.forEach((group) => {
+          if (group.length === 1) {
+            const it = group[0];
+            b.append(repairItem(it, stock, {
+              onRun: () => openRunner(it.code),
+              onSave: (patch) => {
+                editOrder(number, (o) => {
+                  const x = o.items.find((i) => i.code === it.code);
+                  if (x) Object.assign(x, patch);
+                });
+                refresh();
+              },
+              onQty: (qty) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) x.qty = qty; }); refresh(); },
+              onRemove: (code) => removeItem(code),
+            }));
+          } else {
+            b.append(repairGroupItem(group, stock, {
+              onSave: (code, patch) => {
+                editOrder(number, (o) => {
+                  const x = o.items.find((i) => i.code === code);
+                  if (x) Object.assign(x, patch);
+                });
+                refresh();
+              },
+            }));
+          }
+        });
         // Итог по всем согласованным работам — раньше был только на отдельном
         // экране-смете, теперь его увели вместе с самим экраном; тут он нужен
         // так же, звонить клиенту с итоговой суммой можно прямо отсюда.
@@ -2504,7 +2518,10 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove }) {
   // Счётчик количества ниже — вне этой области, у него свои кнопки.
   const openArea = el("div", {
     style: "cursor:pointer",
-    onclick: () => openRepairSheet(it, stock, onSave),
+    // openRepairSheet теперь всегда принимает (code, patch) — тут это одна-
+    // единственная позиция без соседей, просто отбрасываем code и зовём
+    // прежний, привязанный к конкретной работе onSave(patch).
+    onclick: () => openRepairSheet(it, stock, (code, patch) => onSave(patch), [it]),
   },
     nameRow,
     el("div", { class: "price-tag", style: "margin-top:2px" }, rangeText(itemRange(it))),
@@ -2517,84 +2534,190 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove }) {
   return onRemove ? swipeToDelete(box, () => { onRemove(it.code); return true; }) : box;
 }
 
-// Содержимое bottom sheet для repairItem — усложнения/запчасти на вкладках
-// (одна вкладка, если запчастям нечего показывать усложнения, и наоборот).
-// Правки (было/не было, запчасти) сохраняются сами по себе сразу. Кнопка
-// внизу («Отметить/снять готово») сама меняет статус и закрывает форму —
-// это финальное действие по этому пункту, дальше по нему обычно нечего
-// делать, форму саму закрыть тоже незачем.
-function openRepairSheet(it, stock, onSave) {
+// Карточка-сводка для группы из нескольких экземпляров одной и той же
+// повторяющейся работы (quantityMode:"instances") — вместо N одинаковых
+// карточек подряд. Открывает ту же шторку, что и repairItem, только сразу
+// с каруселью по всем экземплярам (см. openRepairSheet).
+function repairGroupItem(items, stock, { onSave }) {
+  const box = el("div", { class: "assess" });
+  const r = items.reduce((a, it) => { const x = itemRange(it); return { min: a.min + x.min, max: a.max + x.max }; }, { min: 0, max: 0 });
+  const doneCount = items.filter((i) => i.done).length;
+  const myId = SESSION?.id || null;
+  const mine = items.filter((i) => i.claimedBy?.masterId === myId).length;
+  const nameRow = el("div", { style: "display:flex;align-items:center;gap:8px" },
+    el("b", { style: "flex:1;min-width:0" }, items[0].name, el("span", { class: "small muted" }, ` × ${items.length}`)),
+    el("span", { style: "flex:0 0 auto;color:var(--line);font-size:19px" }, "›"));
+  // Открываем сразу на «своём» экземпляре, если такой уже есть; иначе — на
+  // первом ещё ничьём; иначе (всё занято другими) — просто на первом, для
+  // просмотра.
+  const startIndex = (() => {
+    let i = items.findIndex((x) => x.claimedBy?.masterId === myId);
+    if (i === -1) i = items.findIndex((x) => !x.claimedBy);
+    return i === -1 ? 0 : i;
+  })();
+  box.append(el("div", {
+    style: "cursor:pointer",
+    onclick: () => openRepairSheet(items[startIndex], stock, onSave, items),
+  },
+    nameRow,
+    el("div", { class: "price-tag", style: "margin-top:2px" }, rangeText(r)),
+    el("p", { class: "small muted", style: "margin-top:4px" },
+      `Готово: ${doneCount} из ${items.length}` + (mine ? ` · ваших: ${mine}` : ""))));
+  return box;
+}
+
+// Содержимое bottom sheet для repairItem/repairGroupItem — усложнения/
+// запчасти на вкладках (одна, если нечего показывать на другой), плюс
+// «Жду запчасть»/«Отметить готово». Правки сохраняются сами по себе сразу.
+// siblings.length > 1 — несколько экземпляров одной и той же повторяющейся
+// работы: карусель (свайп/точки, тот же паттерн, что и в openPendingSheet)
+// вместо одной карточки, свой набор контролов на каждый экземпляр. Табы
+// «Усложнения»/«Запчасти» общие на все экземпляры сразу.
+//
+// Экземпляр становится «занят» тем мастером, который первым что-то в нём
+// реально отметил (усложнение/запчасть/готово/жду запчасть) — просто
+// открыть и посмотреть не занимает. Чужой занятый экземпляр виден (не
+// спрятан), но заблокирован: контролы недоступны, сверху подпись, кто занял.
+function openRepairSheet(it, stock, onSave, siblings = [it]) {
+  let items = siblings.length ? siblings : [it];
+  const myId = SESSION?.id || null;
+  const isAdmin = SESSION?.role === "admin";
+  const isLocked = (inst) => inst.claimedBy && inst.claimedBy.masterId !== myId && !isAdmin;
+  // Стейджинг правок — свой на каждый экземпляр, создаётся один раз при
+  // открытии из текущих сохранённых значений, а не при каждой перерисовке,
+  // иначе несохранённые правки терялись бы при любом draw().
   // «неизвестно» — прогнозное состояние (по умолчанию у новой работы), тут
   // такого выбора нет (см. fact:true ниже) — приводим к «не было», иначе
   // помеченная «готово» работа продолжала бы считаться диапазоном цены,
   // а не точной суммой.
-  const diffs = JSON.parse(JSON.stringify(it.difficulties || [])).map((d) => (d.state === "unknown" ? { ...d, state: "no" } : d));
-  const pickedParts = (it.parts || []).map((p) => ({ ...p }));
-  const save = (extra) => onSave({ parts: pickedParts, difficulties: diffs, ...extra });
-  const hasDiffs = diffs.length > 0;
-  let tab = hasDiffs ? "diff" : "parts";
+  const staged = new Map(items.map((inst) => [inst.code, {
+    diffs: JSON.parse(JSON.stringify(inst.difficulties || [])).map((d) => (d.state === "unknown" ? { ...d, state: "no" } : d)),
+    parts: (inst.parts || []).map((p) => ({ ...p })),
+  }]));
+  let tab = items.some((inst) => (inst.difficulties || []).length > 0) ? "diff" : "parts";
+  let activeIndex = (() => {
+    let i = items.findIndex((x) => x.claimedBy?.masterId === myId);
+    if (i === -1) i = items.findIndex((x) => !x.claimedBy);
+    return i === -1 ? 0 : i;
+  })();
 
   const content = el("div", {});
-  function draw() {
+  let sheet, track;
+  let syncingScroll = false;
+  function scrollToIndex(index, smooth) {
+    if (!track) return;
+    syncingScroll = true;
+    const left = index * track.clientWidth;
+    if (smooth) track.scrollTo({ left, behavior: "smooth" });
+    else track.scrollLeft = left;
+    setTimeout(() => { syncingScroll = false; }, smooth ? 260 : 0);
+  }
+  // Первое реальное действие над экземпляром — сразу и занимает его тем,
+  // кто это сделал (если ещё ничей); дальше он же (или админ) им и правит.
+  function save(instance, extra) {
+    const s = staged.get(instance.code);
+    const patch = { parts: s.parts, difficulties: s.diffs, ...extra };
+    if (!instance.claimedBy) {
+      instance.claimedBy = { masterId: myId, masterName: SESSION?.name || "—" };
+      patch.claimedBy = instance.claimedBy;
+    }
+    onSave(instance.code, patch);
+  }
+  function panelFor(instance) {
+    const s = staged.get(instance.code);
+    const locked = isLocked(instance);
+    const hasDiffs = s.diffs.length > 0;
     const diffBox = el("div", {});
-    // Тут уже не прогноз, а факт — работа сделана, известно точно, было
-    // усложнение или нет. Третий вариант («неизвестно») тут ни к чему.
-    const drawDiffs = () => diffBox.replaceChildren(difficultyList(diffs,
-      (di, st) => { diffs[di].state = st; drawDiffs(); save(); },
-      (di, qty) => { diffs[di].qty = qty; drawDiffs(); save(); }, true));
+    const drawDiffs = () => diffBox.replaceChildren(hasDiffs
+      ? difficultyList(s.diffs, (di, st) => { s.diffs[di].state = st; drawDiffs(); save(instance, {}); }, (di, qty) => { s.diffs[di].qty = qty; drawDiffs(); save(instance, {}); }, true)
+      : el("p", { class: "small muted" }, "Трудностей не ожидается."));
     drawDiffs();
-    // Пункт неделим — один мастер отмечает «готово» целиком. Отдельные
-    // одинаковые задачи создаются через тип количества работы, а не здесь.
+    // Пункт неделим — один мастер отмечает «готово» целиком.
     const markDone = () => {
-      it.done = true;
-      it.doneBy = { masterId: SESSION?.id || null, masterName: SESSION?.name || "—", at: new Date().toISOString() };
-      // Готово — значит запчасть, если её ждали, уже не при делах.
-      it.waitingForPart = null;
-      save({ done: true, doneBy: it.doneBy, waitingForPart: null });
+      instance.done = true;
+      instance.doneBy = { masterId: myId, masterName: SESSION?.name || "—", at: new Date().toISOString() };
+      instance.waitingForPart = null;
+      save(instance, { done: true, doneBy: instance.doneBy, waitingForPart: null });
       toast("Отмечено готово");
-      sheet.close();
+      // Групповую шторку не закрываем — по другим экземплярам ещё есть что
+      // делать (себе или другому мастеру); одиночную, как и раньше, закрываем.
+      if (items.length === 1) sheet.close(); else draw();
     };
     const unmarkDone = () => {
-      it.done = false;
-      it.doneBy = null;
-      save({ done: false, doneBy: null });
+      instance.done = false;
+      instance.doneBy = null;
+      save(instance, { done: false, doneBy: null });
       draw();
     };
     // «Жду запчасть» — мастер начал работу, но встал из-за отсутствующей
-    // детали; занимает эту пометку тот, кто её поставил (кто начал — тот и
-    // занял), снять/продолжить может он же или админ — остальные видят
-    // только факт и чьё имя, без кнопки.
-    const canManageWait = it.waitingForPart && (it.waitingForPart.masterId === (SESSION?.id || null) || SESSION?.role === "admin");
-    const waitBlock = it.done ? null : el("div", { style: "margin-top:16px" },
-      it.waitingForPart
+    // детали; занимает эту пометку тот, кто её поставил, снять/продолжить
+    // может он же или админ — остальные видят только факт и чьё имя.
+    const canManageWait = instance.waitingForPart && (instance.waitingForPart.masterId === myId || isAdmin);
+    const waitBlock = instance.done ? null : el("div", { style: "margin-top:16px" },
+      instance.waitingForPart
         ? el("div", {},
-            el("p", { class: "small", style: "color:var(--yellow-ink)" }, `Ждёт запчасть — ${it.waitingForPart.masterName || "—"}`),
+            el("p", { class: "small", style: "color:var(--yellow-ink)" }, `Ждёт запчасть — ${instance.waitingForPart.masterName || "—"}`),
             canManageWait ? el("button", {
               style: "width:100%;margin-top:6px",
-              onclick: () => { it.waitingForPart = null; save({ waitingForPart: null }); draw(); },
+              onclick: () => { instance.waitingForPart = null; save(instance, { waitingForPart: null }); draw(); },
             }, "Запчасть пришла — продолжить") : null)
         : el("button", {
             style: "width:100%",
             onclick: () => {
-              it.waitingForPart = { masterId: SESSION?.id || null, masterName: SESSION?.name || "—", at: new Date().toISOString() };
-              save({ waitingForPart: it.waitingForPart });
+              instance.waitingForPart = { masterId: myId, masterName: SESSION?.name || "—", at: new Date().toISOString() };
+              save(instance, { waitingForPart: instance.waitingForPart });
               draw();
             },
           }, "Жду запчасть"));
-    const doneBlock = it.done
+    const doneBlock = instance.done
       ? el("button", { style: "width:100%;margin-top:16px", onclick: unmarkDone }, "Снять отметку «готово»")
       : el("button", { class: "btn-ok", style: "width:100%;margin-top:16px", onclick: markDone }, "Отметить готово");
+    const inner = el("div", {},
+      tab === "diff" ? diffBox : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(s.parts, stock, () => save(instance, { parts: s.parts }), partBlockIdOf(instance))),
+      waitBlock, doneBlock);
+    if (!locked) return el("div", { class: "instance-panel" }, inner);
+    return el("div", { class: "instance-panel" },
+      el("p", { class: "small", style: "color:var(--muted);margin-bottom:10px" }, `Занято — ${instance.claimedBy?.masterName || "другой мастер"}`),
+      el("div", { style: "pointer-events:none;opacity:.5" }, inner));
+  }
+  function draw() {
+    const hasAnyDiffs = items.some((x) => staged.get(x.code).diffs.length > 0);
+    if (!hasAnyDiffs && tab === "diff") tab = "parts";
+    let dots = null, label = null;
+    const updateActive = () => {
+      if (dots) dots.querySelectorAll(".carousel-dot").forEach((btn, index) => btn.classList.toggle("active", index === activeIndex));
+      if (label) label.textContent = `Экземпляр ${activeIndex + 1} из ${items.length}`;
+    };
+    track = el("div", {
+      class: "instance-track",
+      onscroll: () => {
+        if (syncingScroll || !track) return;
+        const w = track.clientWidth || 1;
+        const idx = Math.max(0, Math.min(items.length - 1, Math.round(track.scrollLeft / w)));
+        if (idx !== activeIndex) { activeIndex = idx; updateActive(); }
+      },
+    }, items.map(panelFor));
+    if (items.length > 1) {
+      dots = el("div", { class: "carousel-dots" },
+        items.map((_, index) => el("button", {
+          type: "button", class: "carousel-dot" + (index === activeIndex ? " active" : ""),
+          "aria-label": `Экземпляр ${index + 1} из ${items.length}`,
+          onclick: () => { activeIndex = index; updateActive(); scrollToIndex(index, true); },
+        })));
+      label = el("p", { class: "small muted", style: "margin:0 0 6px;text-align:center" }, `Экземпляр ${activeIndex + 1} из ${items.length}`);
+    }
     content.replaceChildren(...[
-      hasDiffs ? el("div", { class: "segmented", style: "margin-bottom:14px" },
+      label,
+      hasAnyDiffs ? el("div", { class: "segmented", style: "margin-bottom:14px" },
         el("button", { class: tab === "diff" ? "active" : "", onclick: () => { tab = "diff"; draw(); } }, "Усложнения"),
         el("button", { class: tab === "parts" ? "active" : "", onclick: () => { tab = "parts"; draw(); } }, "Запчасти")) : null,
-      tab === "diff" ? diffBox : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(pickedParts, stock, save, partBlockIdOf(it))),
-      waitBlock,
-      doneBlock,
+      track,
+      dots,
     ].filter(Boolean));
+    scrollToIndex(activeIndex, false);
   }
   draw();
-  const sheet = openSheet(it.name, content);
+  sheet = openSheet(it.name, content);
 }
 
 // ============================================================================
