@@ -1234,6 +1234,11 @@ function viewNewOrder() {
         draft.items = draft.items.filter((it) => (it.sourceCode || it.code) !== fa.code);
       },
       getInstanceCount: (fa) => draft.items.filter((it) => (it.sourceCode || it.code) === fa.code).length,
+      getQuantity: (fa) => draft.items.find((it) => (it.sourceCode || it.code) === fa.code)?.qty || 1,
+      onQuantity: (fa, qty) => {
+        const item = draft.items.find((it) => (it.sourceCode || it.code) === fa.code);
+        if (item) item.qty = qty;
+      },
       onInstanceCount: (fa, count) => {
         let current = draft.items.filter((it) => (it.sourceCode || it.code) === fa.code);
         while (current.length < count) { addDraftItem(fa); current = draft.items.filter((it) => (it.sourceCode || it.code) === fa.code); }
@@ -1606,6 +1611,11 @@ function viewOrder(number) {
         if (i >= 0) added.splice(i, 1);
       },
       getInstanceCount: (fa) => added.filter((it) => (it.sourceCode || it.code) === fa.code).length,
+      getQuantity: (fa) => added.find((it) => (it.sourceCode || it.code) === fa.code)?.qty || 1,
+      onQuantity: (fa, qty) => {
+        const item = added.find((it) => (it.sourceCode || it.code) === fa.code);
+        if (item) item.qty = qty;
+      },
       getInstanceMax: (fa) => {
         if (!(fa.maxInstances > 0)) return 0;
         const existing = order.items.filter((it) => (it.sourceCode || it.code) === fa.code).length;
@@ -2635,7 +2645,7 @@ const DIAG_TOGGLES = [
 // (напр. «+ доп. работа» на «в работе»), а не монтируют как весь экран:
 // тогда не оборачиваем содержимое в свой <main class="wrap"> (иначе он
 // вложился бы во внешний main.wrap — невалидная вложенность и двойные отступы).
-function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, getInstanceCount, getInstanceMax, onDone, request = "", onRequest, onlyBlocks, inline = false, onlyCustom = false, totalText }) {
+function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, getInstanceCount, getInstanceMax, onQuantity, getQuantity, onDone, request = "", onRequest, onlyBlocks, inline = false, onlyCustom = false, totalText }) {
   const toggles = { тормоза: "гидравлика", покрышки: "камера", трансмиссия: "механика" };
   let req = request;
   const states = {}; // instId -> { open, faults:Set<number> }
@@ -2849,8 +2859,10 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
           // фона — та не задалась ни цветом, ни соседством выбранных строк
           // подряд) — единственный индикатор.
           const instanceMode = quantityModeOf(f) === "instances";
+          const quantityMode = quantityModeOf(f) === "quantity";
           const selectedCount = getInstanceCount ? getInstanceCount(f) : (s.faults.has(i) ? 1 : 0);
           const instanceCount = instanceMode ? selectedCount : (selectedCount > 0 ? 1 : 0);
+          const quantityCount = quantityMode && getQuantity ? Math.max(1, getQuantity(f) || 1) : 1;
           const instanceMax = instanceMode ? (getInstanceMax ? getInstanceMax(f) : (f.maxInstances || 0)) : 0;
           const instanceUnavailable = instanceMode && !!getInstanceMax && (f.maxInstances || 0) > 0 && instanceMax <= 0;
           const checked = selectedCount > 0;
@@ -2863,24 +2875,40 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
             else if (!next && checked && !codeCheckedElsewhere(f.code, inst.id)) onUncheck(f);
             draw();
           };
-          const selectButton = onlyCustom && f.custom && instanceMode && checked
-            ? qtyStepper(instanceCount, setInstanceCount, instanceMax, () => setInstanceCount(0))
-            : onlyCustom && f.custom ? el("input", {
-            type: "checkbox",
-            checked,
-            disabled: instanceUnavailable,
-            "aria-label": checked ? "Убрать работу" : "Добавить работу",
-            onclick: (e) => e.stopPropagation(),
-            onchange: () => {
-              if (instanceMode) setInstanceCount(checked ? 0 : 1);
-              else {
-                if (checked) { s.faults.delete(i); if (f.code && !codeCheckedElsewhere(f.code, inst.id)) onUncheck(f); }
-                else { s.faults.add(i); if (f.code) onCheck(f); }
-                draw();
-              }
-            },
-          }) : null;
-          const rowContent = el("div", { class: "row opt", style: "cursor:pointer" },
+          const setQuantityCount = (count) => {
+            const next = Math.max(0, Math.min(WORK_QUANTITY_LIMIT, count));
+            if (!next) {
+              s.faults.delete(i);
+              if (checked && f.code && !codeCheckedElsewhere(f.code, inst.id)) onUncheck(f);
+            } else {
+              s.faults.add(i);
+              if (!checked && f.code) onCheck(f);
+              if (onQuantity) onQuantity(f, next);
+            }
+            draw();
+          };
+          const setSingleSelected = (selected) => {
+            if (selected) { s.faults.add(i); if (f.code) onCheck(f); }
+            else { s.faults.delete(i); if (f.code && !codeCheckedElsewhere(f.code, inst.id)) onUncheck(f); }
+            draw();
+          };
+          let selectButton = null;
+          if (onlyCustom && f.custom) {
+            if (checked && instanceMode) selectButton = qtyStepper(instanceCount, setInstanceCount, instanceMax, () => setInstanceCount(0));
+            else if (checked && quantityMode) selectButton = qtyStepper(quantityCount, setQuantityCount, WORK_QUANTITY_LIMIT, () => setQuantityCount(0));
+            else selectButton = el("button", {
+              type: "button", class: "work-select-btn" + (checked ? " selected" : ""),
+              disabled: instanceUnavailable,
+              "aria-label": checked ? "Убрать работу" : "Добавить работу",
+              onclick: (e) => {
+                e.stopPropagation();
+                if (instanceMode) setInstanceCount(1);
+                else if (quantityMode) setQuantityCount(1);
+                else setSingleSelected(!checked);
+              },
+            }, checked ? "×" : "+");
+          }
+          const rowContent = el("div", { class: "row opt" + (checked ? " work-selected" : ""), style: "cursor:pointer" },
             el("span", { style: "flex:1" }, f.label,
               f.code && !f.custom ? el("span", { class: "pill" }, rangeText(codeRange(f.code))) : null,
               f.custom ? el("span", { class: "pill" }, rangePlusText(customFaultRange(f))) : null),
