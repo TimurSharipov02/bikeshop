@@ -2418,16 +2418,17 @@ function difficultyList(difficulties, onSet, onQty, fact) {
           onSet(di, done ? "no" : "yes");
         } : null,
       },
-        estimateControl,
         el("div", { class: "small", style: "flex:1;min-width:0" },
           d.label,
           fact
             ? (d.addMinutes ? el("span", { class: "muted" }, ` (+${d.addMinutes} мин)`) : null)
             : el("span", { class: "muted" }, ` (+${money(d.add)}${d.addMinutes ? `, +${d.addMinutes} мин` : ""})`)),
-        fact ? el("div", { style: "display:flex;align-items:center;gap:8px;flex:0 0 auto" }, factPrice, factControl) : null),
+        fact ? el("div", { style: "display:flex;align-items:center;gap:8px;flex:0 0 auto" }, factPrice, factControl) : estimateControl),
       // У повторяемого усложнения количество остаётся отдельной строкой,
       // чтобы компактный тройной тумблер не менял ширину и не прыгал.
-      !fact && d.multiple && onQty && d.state !== "no" ? el("div", { style: "margin-top:6px" }, qtyStepper(d.qty, (qty) => onQty(di, qty))) : null));
+      !fact && d.multiple && onQty && d.state !== "no" ? el("div", {
+        style: "display:flex;justify-content:flex-end;margin-top:6px",
+      }, qtyStepper(d.qty, (qty) => onQty(di, qty))) : null));
   });
   return box;
 }
