@@ -2908,11 +2908,21 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
               },
             }, checked ? "×" : "+");
           }
-          const rowContent = el("div", { class: "row opt" + (checked ? " work-selected" : ""), style: "cursor:pointer" },
-            el("span", { style: "flex:1" }, f.label,
-              f.code && !f.custom ? el("span", { class: "pill" }, rangeText(codeRange(f.code))) : null,
-              f.custom ? el("span", { class: "pill" }, rangePlusText(customFaultRange(f))) : null),
-            selectButton || (checked ? el("span", { class: "row-check", html: ICON_CHECK }) : null));
+          // Цена — рядом со счётчиком/кнопкой добавления справа, а не сразу
+          // после названия: так видно одним взглядом, что именно сейчас
+          // считается в сумму. Серая, пока работа не выбрана, и становится
+          // синей (тем же акцентом, что и раньше был у рамки) ровно тогда,
+          // когда работа реально выбрана и её цена входит в счёт — рамку
+          // вокруг всей строки убрали, этого достаточно как индикатора.
+          const priceText = f.code && !f.custom ? rangeText(codeRange(f.code)) : f.custom ? rangePlusText(customFaultRange(f)) : null;
+          const priceNode = priceText
+            ? el("span", { class: "pill", style: checked ? "" : "background:var(--fill);color:var(--muted)" }, priceText)
+            : null;
+          const rowContent = el("div", { class: "row opt", style: "cursor:pointer" },
+            el("span", { style: "flex:1" }, f.label),
+            el("div", { style: "display:flex;align-items:center;gap:8px;flex:0 0 auto" },
+              priceNode,
+              selectButton || (checked ? el("span", { class: "row-check", html: ICON_CHECK }) : null)));
           // Слушатель добавлен ПОСЛЕ swipeActions(rowContent, ...) ниже (не
           // через onclick в el() при создании) — важен порядок регистрации:
           // у swipeActions есть свой click-обработчик на этом же узле,
