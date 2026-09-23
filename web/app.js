@@ -2086,8 +2086,8 @@ function quantityModeEditor(draft) {
     ["instances", "Каждую отдельно · до 5", "Несколько задач, исполнитель у каждой"],
     ["quantity", "Общим количеством · до 64", "Одна задача × количество, один исполнитель"],
   ];
-  const choices = el("div", { style: "display:grid;gap:6px;margin-top:6px" },
-    ...modes.map(([value, title, hint]) => el("label", { class: "opt", style: "margin:0" },
+  const choices = el("div", { style: "display:grid;gap:10px;margin-top:10px" },
+    ...modes.map(([value, title, hint]) => el("label", { class: "opt", style: "margin:0;padding:15px 16px" },
       el("input", {
         type: "radio", name: fieldName, value, checked: draft.quantityMode === value,
         onchange: () => {
@@ -2095,9 +2095,11 @@ function quantityModeEditor(draft) {
           draft.maxInstances = value === "instances" ? WORK_INSTANCE_LIMIT : 0;
         },
       }),
-      el("span", {}, title, el("span", { class: "small muted", style: "display:block;margin-top:2px" }, hint)))));
+      el("span", { style: "line-height:1.25" }, title,
+        el("span", { class: "small muted", style: "display:block;margin-top:5px;line-height:1.4" }, hint)))));
   draft.maxInstances = instanceLimitOf(draft);
-  return el("div", { style: "margin-top:8px" }, el("label", {}, "Как учитывать работу"), choices);
+  return el("div", { style: "margin-top:18px;margin-bottom:4px" },
+    el("label", { style: "display:block;margin:0" }, "Как учитывать работу"), choices);
 }
 
 // Редактор списка усложнений (название + надбавка к цене + надбавка к времени
