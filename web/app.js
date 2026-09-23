@@ -2133,24 +2133,22 @@ const iconBtnStyle = "border:0;background:none;color:var(--muted);cursor:pointer
 // max — необязательный потолок (например, у запчасти на складе); 0/undefined
 // значит без ограничения. При достижении потолка «+» просто отключается —
 // это подстраховка от случайного «натыкал лишнего», а не жёсткий запрет.
-// onRemove — необязательный: если задан, при количестве 1 кнопка «−»
-// превращается в иконку корзины и убирает позицию целиком, вместо отдельной
-// кнопки ✕ рядом.
-function qtyStepper(value, onChange, max, onRemove, keepMinusAtMin = false) {
+// onRemove — необязательный: если задан, «−» при количестве 1 убирает
+// позицию целиком. Сам элемент всегда остаётся одной капсулой «− 1 +», как
+// счётчик количества в корзинах приложений доставки.
+function qtyStepper(value, onChange, max, onRemove) {
   const atMax = max > 0 && (value || 1) >= max;
   const atMin = (value || 1) <= 1;
-  const showTrash = atMin && onRemove && !keepMinusAtMin;
   const removesAtMin = atMin && onRemove;
-  return el("div", { style: "display:flex;align-items:center;gap:8px", onclick: (e) => e.stopPropagation() },
+  return el("div", { class: "qty-stepper", onclick: (e) => e.stopPropagation() },
     el("button", {
-      class: showTrash ? "step-trash-btn" : "",
-      "aria-label": showTrash ? "Удалить" : removesAtMin ? "Убрать" : "Уменьшить",
-      style: iconBtnStyle + ";font-size:15px",
-      html: showTrash ? ICON_TRASH : null,
+      type: "button",
+      "aria-label": removesAtMin ? "Убрать" : "Уменьшить",
+      disabled: atMin && !onRemove,
       onclick: () => { if (removesAtMin) onRemove(); else onChange(Math.max(1, (value || 1) - 1)); },
-    }, showTrash ? null : "−"),
-    el("span", { class: "small", style: "min-width:16px;text-align:center" }, String(value || 1)),
-    el("button", { "aria-label": "Увеличить", style: iconBtnStyle + ";font-size:15px", disabled: atMax,
+    }, "−"),
+    el("span", { class: "qty-stepper-value" }, String(value || 1)),
+    el("button", { type: "button", "aria-label": "Увеличить", disabled: atMax,
       onclick: () => onChange(max > 0 ? Math.min(max, (value || 1) + 1) : (value || 1) + 1) }, "+"));
 }
 
@@ -2400,7 +2398,7 @@ function difficultyStateToggle(d, labels, onSet) {
     }, symbols[value])));
 }
 function difficultyQtyStepper(d, onQty, onClear) {
-  return qtyStepper(difficultyQty(d), onQty, 0, onClear, true);
+  return qtyStepper(difficultyQty(d), onQty, 0, onClear);
 }
 function pricedControlGroup(price, action) {
   return el("div", { class: "priced-control-group" }, price, action);
