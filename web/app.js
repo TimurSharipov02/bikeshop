@@ -458,10 +458,17 @@ function effectivePrice(code) {
     work: ov.price ?? base.work,
     minutes: ov.minutes ?? base.minutes,
     difficulties: ov.complications ?? base.difficulties,
-    multiple: ov.multiple ?? base.multiple,
+    quantityMode: ov.quantityMode ?? (ov.multiple ?? base.multiple ? "quantity" : "single"),
+    maxInstances: ov.maxInstances ?? base.maxInstances ?? 0,
   };
 }
 const priceOf = effectivePrice;
+
+const quantityModeOf = (x) => {
+  if (["single", "instances", "quantity"].includes(x?.quantityMode)) return x.quantityMode;
+  return x?.multiple ? "quantity" : "single";
+};
+const usesQuantity = (x) => quantityModeOf(x) === "quantity";
 
 const yy = () => String(new Date().getFullYear()).slice(2);
 const nextOrderNumber = (d) => (d.counters.order++, `V${yy()}-${String(d.counters.order).padStart(6, "0")}`);
@@ -578,7 +585,8 @@ function makeItem(code, notes = "") {
     workPrice: price.work || 0,
     estimateMinutes: price.minutes || 0,
     partsPrice: 0,
-    multiple: !!price.multiple, qty: 1,
+    quantityMode: quantityModeOf(price), maxInstances: price.maxInstances || 0,
+    multiple: quantityModeOf(price) === "quantity", qty: 1,
     difficulties: (price.difficulties || []).map((d) => ({ label: d.label, add: d.add, addMinutes: d.addMinutes || 0, multiple: !!d.multiple, qty: 1, state: "unknown" })),
   };
 }
@@ -591,7 +599,8 @@ function makeCustomItem(fa, notes = "") {
     workPrice: fa.price || 0,
     estimateMinutes: fa.minutes || 0,
     partsPrice: 0,
-    multiple: !!fa.multiple, qty: 1,
+    quantityMode: quantityModeOf(fa), maxInstances: fa.maxInstances || 0,
+    multiple: quantityModeOf(fa) === "quantity", qty: 1,
     difficulties: (fa.complications || []).map((c) => ({ label: c.label, add: c.add, addMinutes: c.addMinutes || 0, multiple: !!c.multiple, qty: 1, state: "unknown" })),
   };
 }
@@ -666,7 +675,8 @@ async function loadWorkPool(bikeKind) {
   const repairs = await ensureRepairs();
   return repairs.map((r) => ({
     code: `CF-${r.id}`, name: r.label, label: r.label, custom: true, id: r.id, group: r.group,
-    price: r.price, minutes: r.minutes, complications: r.complications, multiple: r.multiple,
+    price: r.price, minutes: r.minutes, complications: r.complications,
+    quantityMode: quantityModeOf(r), maxInstances: r.maxInstances || 0,
   }));
 }
 
@@ -1217,8 +1227,17 @@ function viewNewOrder() {
       onUncheck: (fa) => {
         draft.items = draft.items.filter((it) => (it.sourceCode || it.code) !== fa.code);
       },
+      getInstanceCount: (fa) => draft.items.filter((it) => (it.sourceCode || it.code) === fa.code).length,
+      onInstanceCount: (fa, count) => {
+        let current = draft.items.filter((it) => (it.sourceCode || it.code) === fa.code);
+        while (current.length < count) { addDraftItem(fa); current = draft.items.filter((it) => (it.sourceCode || it.code) === fa.code); }
+        while (current.length > count) {
+          const remove = current.pop();
+          draft.items = draft.items.filter((it) => it.code !== remove.code);
+        }
+      },
       onOpen: async (fa, redraw) => {
-        const it = draft.items.find((item) => (item.sourceCode || item.code) === fa.code);
+        const it = draft.items.filter((item) => (item.sourceCode || item.code) === fa.code).at(-1);
         if (!it) return;
         const stock = await ensureStock();
         openPendingSheet(it, stock, {
@@ -1240,6 +1259,10 @@ function viewNewOrder() {
           onQty: (code, qty) => {
             const item = draft.items.find((x) => x.code === code);
             if (item) item.qty = qty;
+            redraw();
+          },
+          onRemove: (code) => {
+            draft.items = draft.items.filter((x) => x.code !== code);
             redraw();
           },
         });
@@ -1575,8 +1598,29 @@ function viewOrder(number) {
         const i = added.findIndex((it) => (it.sourceCode || it.code) === fa.code);
         if (i >= 0) added.splice(i, 1);
       },
+      getInstanceCount: (fa) => added.filter((it) => (it.sourceCode || it.code) === fa.code).length,
+      getInstanceMax: (fa) => {
+        if (!(fa.maxInstances > 0)) return 0;
+        const existing = order.items.filter((it) => (it.sourceCode || it.code) === fa.code).length;
+        return Math.max(0, fa.maxInstances - existing);
+      },
+      onInstanceCount: (fa, count) => {
+        let current = added.filter((it) => (it.sourceCode || it.code) === fa.code);
+        while (current.length < count) {
+          const item = makeCustomItem(fa);
+          item.agreed = true;
+          if (current.length) { item.sourceCode = fa.code; item.code = instanceCode(fa.code); }
+          added.push(item);
+          current = added.filter((it) => (it.sourceCode || it.code) === fa.code);
+        }
+        while (current.length > count) {
+          const remove = current.pop();
+          const i = added.findIndex((it) => it.code === remove.code);
+          if (i >= 0) added.splice(i, 1);
+        }
+      },
       onOpen: async (fa, redraw) => {
-        const it = added.find((item) => (item.sourceCode || item.code) === fa.code);
+        const it = added.filter((item) => (item.sourceCode || item.code) === fa.code).at(-1);
         if (!it) return;
         const stock = await ensureStock();
         openPendingSheet(it, stock, {
@@ -1584,6 +1628,7 @@ function viewOrder(number) {
           onDiffQty: (code, di, qty) => { const x = added.find((v) => v.code === code); if (x?.difficulties?.[di]) x.difficulties[di].qty = qty; redraw(); },
           onParts: (code, parts) => { const x = added.find((v) => v.code === code); if (x) x.parts = parts; redraw(); },
           onQty: (code, qty) => { const x = added.find((v) => v.code === code); if (x) x.qty = qty; redraw(); },
+          onRemove: (code) => { const i = added.findIndex((v) => v.code === code); if (i >= 0) added.splice(i, 1); redraw(); },
         });
       },
       totalText: () => rangeText(orderRangeAll({ items: [...order.items.filter((it) => it.agreed), ...added] })),
@@ -1679,7 +1724,7 @@ function viewOrder(number) {
       const r = itemRange(it);
       body.append(el("label", { class: "opt" },
         el("input", { type: "checkbox", checked: it.agreed, onchange: (e) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) x.agreed = e.target.checked; }); refresh(); } }),
-        el("span", { style: "flex:1" }, el("b", {}, it.name), it.multiple && (it.qty || 1) > 1 ? ` × ${it.qty}` : "", el("br"),
+        el("span", { style: "flex:1" }, el("b", {}, it.name), usesQuantity(it) && (it.qty || 1) > 1 ? ` × ${it.qty}` : "", el("br"),
           el("span", { class: "small muted" }, rangeText(r)))));
     });
     body.append(
@@ -1735,14 +1780,9 @@ function viewOrder(number) {
         order.items.filter((i) => i.agreed).sort(waitingLast).forEach((it) => b.append(repairItem(it, stock, {
           onRun: () => openRunner(it.code),
           onSave: (patch) => {
-            // newItems — копия этой же работы или материализованное
-            // усложнение (см. openRepairSheet): отдельная позиция наряда,
-            // не правка текущей.
-            const { newItems, ...rest } = patch;
             editOrder(number, (o) => {
               const x = o.items.find((i) => i.code === it.code);
-              if (x) Object.assign(x, rest);
-              if (newItems) o.items.push(...newItems);
+              if (x) Object.assign(x, patch);
             });
             refresh();
           },
@@ -1992,7 +2032,7 @@ function itemRow(it, showFacts) {
   const r = itemRange(it);
   return el("div", { class: "row", style: "cursor:default;align-items:flex-start" },
     el("span", { style: "flex:1" }, it.name,
-      it.multiple && (it.qty || 1) > 1 ? el("span", { class: "small muted" }, ` × ${it.qty}`) : null,
+      usesQuantity(it) && (it.qty || 1) > 1 ? el("span", { class: "small muted" }, ` × ${it.qty}`) : null,
       showFacts && !it.agreed ? el("span", { class: "pill", style: "background:var(--fill);color:var(--muted)" }, "не согласовано") : null,
       it.notes ? el("span", { class: "small muted" }, el("br"), it.notes) : null,
       showFacts && it.done && (it.parts.length || it.doneBy) ? el("span", { class: "small muted" }, el("br"),
@@ -2018,7 +2058,7 @@ function qtyStepper(value, onChange, max, onRemove) {
   const atMax = max > 0 && (value || 1) >= max;
   const atMin = (value || 1) <= 1;
   const showTrash = atMin && onRemove;
-  return el("div", { style: "display:flex;align-items:center;gap:8px" },
+  return el("div", { style: "display:flex;align-items:center;gap:8px", onclick: (e) => e.stopPropagation() },
     el("button", {
       class: showTrash ? "step-trash-btn" : "",
       style: iconBtnStyle + ";font-size:15px",
@@ -2027,6 +2067,25 @@ function qtyStepper(value, onChange, max, onRemove) {
     }, showTrash ? null : "−"),
     el("span", { class: "small", style: "min-width:16px;text-align:center" }, String(value || 1)),
     el("button", { style: iconBtnStyle + ";font-size:15px", disabled: atMax, onclick: () => onChange(max > 0 ? Math.min(max, (value || 1) + 1) : (value || 1) + 1) }, "+"));
+}
+
+// Как работа считается в наряде. «Отдельные задачи» нужны для парных и
+// повторяемых работ, которые могут выполнять разные мастера; «Количество»
+// оставляет одну задачу и умножает её цену, например для нескольких спиц.
+function quantityModeEditor(draft) {
+  const maxWrap = el("div", { style: "margin-top:8px;display:none" },
+    el("label", {}, "Максимум отдельных задач"),
+    el("input", { type: "number", min: 0, value: draft.maxInstances || "", placeholder: "без ограничения",
+      oninput: (e) => (draft.maxInstances = Math.max(0, +e.target.value || 0)) }));
+  const select = el("select", { onchange: (e) => {
+    draft.quantityMode = e.target.value;
+    maxWrap.style.display = draft.quantityMode === "instances" ? "" : "none";
+  } },
+    el("option", { value: "single", selected: draft.quantityMode === "single" }, "Одна задача"),
+    el("option", { value: "instances", selected: draft.quantityMode === "instances" }, "Отдельные одинаковые задачи"),
+    el("option", { value: "quantity", selected: draft.quantityMode === "quantity" }, "Одна задача с количеством"));
+  maxWrap.style.display = draft.quantityMode === "instances" ? "" : "none";
+  return el("div", { style: "margin-top:8px" }, el("label", {}, "Как считать работу"), select, maxWrap);
 }
 
 // Редактор списка усложнений (название + надбавка к цене + надбавка к времени
@@ -2070,7 +2129,7 @@ function editableItemRow(it, { onRemove, onSave, refresh, onDiffSet, onDiffQty }
   const rowContent = el("div", { class: "row", style: "align-items:flex-start;flex-direction:column;gap:6px" },
     el("span", { style: "width:100%" }, it.name, it.notes ? el("span", { class: "small muted" }, el("br"), it.notes) : null),
     el("div", { style: "display:flex;align-items:center;gap:10px;width:100%" },
-      it.multiple ? qtyStepper(it.qty, (qty) => onSave(it.code, { qty })) : null,
+      usesQuantity(it) ? qtyStepper(it.qty, (qty) => onSave(it.code, { qty }), 0, () => onRemove(it.code)) : null,
       el("span", { class: "price-tag", style: "flex:1" }, rangeText(r))));
   const header = swipeActions(rowContent, [
     { label: ICON_EDIT, ariaLabel: "Изменить работу", onClick: () => { editingItemCode = isEditing ? null : it.code; refresh(); } },
@@ -2150,7 +2209,7 @@ function costLines(it) {
 function detailedItemRow(it) {
   const r = itemRange(it);
   const nameRow = el("div", { style: "display:flex;align-items:center;gap:8px" },
-    el("b", { style: "flex:1;min-width:0" }, it.name, it.multiple && (it.qty || 1) > 1 ? el("span", { class: "small muted" }, ` × ${it.qty}`) : null),
+    el("b", { style: "flex:1;min-width:0" }, it.name, usesQuantity(it) && (it.qty || 1) > 1 ? el("span", { class: "small muted" }, ` × ${it.qty}`) : null),
     it.waitingForPart && !it.done ? el("span", { class: "pill", style: "background:var(--yellow-weak);color:var(--yellow-ink)" }, "ждёт запчасть") : null,
     it.done ? el("span", { class: "pill" }, completionsSummary(it) || "готово") : null);
   return el("div", { class: "assess" },
@@ -2258,9 +2317,9 @@ function pendingAgreementRow(it, { onAgree, onRemove, onSet, onDiffQty, onParts,
   const box = el("div", { class: "assess" });
   const nameRow = el("div", {
     style: "display:flex;align-items:center;gap:8px;cursor:pointer",
-    onclick: () => openPendingSheet(it, stock, { onSet, onDiffQty, onParts, onQty }),
+    onclick: () => openPendingSheet(it, stock, { onSet, onDiffQty, onParts, onQty, onRemove }),
   },
-    el("b", { style: "flex:1;min-width:0" }, it.name, it.multiple && (it.qty || 1) > 1 ? el("span", { class: "small muted" }, ` × ${it.qty}`) : null),
+    el("b", { style: "flex:1;min-width:0" }, it.name, usesQuantity(it) && (it.qty || 1) > 1 ? el("span", { class: "small muted" }, ` × ${it.qty}`) : null),
     el("span", { style: "flex:0 0 auto;color:var(--line);font-size:19px" }, "›"));
   box.append(nameRow, el("div", { class: "price-tag", style: "margin-top:2px" }, rangeText(r)));
   // «Согласовано»/«Убрать» — основное действие для этой карточки, оставляем
@@ -2273,13 +2332,15 @@ function pendingAgreementRow(it, { onAgree, onRemove, onSet, onDiffQty, onParts,
 
 // Форма деталей для «Ждёт согласования» — усложнения (прогноз) и запчасти
 // на вкладках, тем же bottom sheet, что и у согласованной работы.
-function openPendingSheet(it, stock, { onSet, onDiffQty, onParts, onQty }) {
+function openPendingSheet(it, stock, { onSet, onDiffQty, onParts, onQty, onRemove }) {
   const hasDiffs = (it.difficulties || []).length > 0;
   let tab = hasDiffs ? "diff" : "parts";
   const content = el("div", {});
   function draw() {
     content.replaceChildren(...[
-      it.multiple ? el("div", { style: "margin-bottom:14px" }, qtyStepper(it.qty, (qty) => { onQty(it.code, qty); draw(); })) : null,
+      usesQuantity(it) ? el("div", { style: "margin-bottom:14px" }, qtyStepper(it.qty,
+        (qty) => { onQty(it.code, qty); draw(); }, 0,
+        onRemove ? () => { onRemove(it.code); sheet.close(); } : undefined)) : null,
       hasDiffs ? el("div", { class: "segmented", style: "margin-bottom:14px" },
         el("button", { class: tab === "diff" ? "active" : "", onclick: () => { tab = "diff"; draw(); } }, "Усложнения"),
         el("button", { class: tab === "parts" ? "active" : "", onclick: () => { tab = "parts"; draw(); } }, "Запчасти")) : null,
@@ -2329,7 +2390,7 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove }) {
     // открывать форму, чтобы увидеть, из чего сложилась сумма.
     el("div", { class: "small muted", style: "margin-top:4px" }, costLines(it).map((l) => el("div", {}, "– " + l))));
   box.append(openArea);
-  if (it.multiple) box.append(el("div", { style: "margin-top:10px" }, qtyStepper(it.qty, onQty)));
+  if (usesQuantity(it)) box.append(el("div", { style: "margin-top:10px" }, qtyStepper(it.qty, onQty, 0, onRemove ? () => onRemove(it.code) : undefined)));
   if (it.notes) box.append(el("p", { class: "small muted" }, it.notes));
   return onRemove ? swipeToDelete(box, () => { onRemove(it.code); return true; }) : box;
 }
@@ -2360,10 +2421,8 @@ function openRepairSheet(it, stock, onSave) {
       (di, st) => { diffs[di].state = st; drawDiffs(); save(); },
       (di, qty) => { diffs[di].qty = qty; drawDiffs(); save(); }, true));
     drawDiffs();
-    // Пункт неделим — один мастер отмечает «готово» целиком, независимо от
-    // qty (qty влияет только на цену, см. itemRange). Если по факту нужен
-    // второй мастер на то же самое — «Дублировать» ниже добавляет копию
-    // этой работы отдельной позицией наряда, а не делит одну.
+    // Пункт неделим — один мастер отмечает «готово» целиком. Отдельные
+    // одинаковые задачи создаются через тип количества работы, а не здесь.
     const markDone = () => {
       it.done = true;
       it.doneBy = { masterId: SESSION?.id || null, masterName: SESSION?.name || "—", at: new Date().toISOString() };
@@ -2378,23 +2437,6 @@ function openRepairSheet(it, stock, onSave) {
       it.doneBy = null;
       save({ done: false, doneBy: null });
       draw();
-    };
-    const duplicateItem = () => {
-      // Копия наследует усложнения и запчасти ровно в том виде, какой они
-      // сейчас на экране (pickedParts/diffs — живые черновики, могут быть
-      // ещё не сохранены) — второй мастер начинает не с чистого листа, а с
-      // того же самого набора, что уже был у оригинала на момент дубля.
-      // Готовность/ожидание запчасти — своё, отдельное для новой позиции.
-      const dup = {
-        ...JSON.parse(JSON.stringify(it)),
-        code: instanceCode(it.code),
-        done: false, doneBy: null, waitingForPart: null,
-        parts: JSON.parse(JSON.stringify(pickedParts)),
-        difficulties: JSON.parse(JSON.stringify(diffs)),
-      };
-      save({ newItems: [dup] });
-      toast("Работа дублирована");
-      sheet.close();
     };
     // «Жду запчасть» — мастер начал работу, но встал из-за отсутствующей
     // детали; занимает эту пометку тот, кто её поставил (кто начал — тот и
@@ -2420,10 +2462,6 @@ function openRepairSheet(it, stock, onSave) {
     const doneBlock = it.done
       ? el("button", { style: "width:100%;margin-top:16px", onclick: unmarkDone }, "Снять отметку «готово»")
       : el("button", { class: "btn-ok", style: "width:100%;margin-top:16px", onclick: markDone }, "Отметить готово");
-    const duplicateBlock = el("button", {
-      class: "small", style: "width:100%;margin-top:10px;border:0;background:none;color:var(--muted);text-decoration:underline;padding:0",
-      onclick: duplicateItem,
-    }, "Дублировать");
     content.replaceChildren(...[
       hasDiffs ? el("div", { class: "segmented", style: "margin-bottom:14px" },
         el("button", { class: tab === "diff" ? "active" : "", onclick: () => { tab = "diff"; draw(); } }, "Усложнения"),
@@ -2431,7 +2469,6 @@ function openRepairSheet(it, stock, onSave) {
       tab === "diff" ? diffBox : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(pickedParts, stock, save, partBlockIdOf(it))),
       waitBlock,
       doneBlock,
-      duplicateBlock,
     ].filter(Boolean));
   }
   draw();
@@ -2571,7 +2608,7 @@ const DIAG_TOGGLES = [
 // (напр. «+ доп. работа» на «в работе»), а не монтируют как весь экран:
 // тогда не оборачиваем содержимое в свой <main class="wrap"> (иначе он
 // вложился бы во внешний main.wrap — невалидная вложенность и двойные отступы).
-function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onDone, request = "", onRequest, onlyBlocks, inline = false, onlyCustom = false, totalText }) {
+function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, getInstanceCount, getInstanceMax, onDone, request = "", onRequest, onlyBlocks, inline = false, onlyCustom = false, totalText }) {
   const toggles = { тормоза: "гидравлика", покрышки: "камера", трансмиссия: "механика" };
   let req = request;
   const states = {}; // instId -> { open, faults:Set<number> }
@@ -2606,7 +2643,8 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onDone, request = 
     })).filter((f) => !OVERRIDES[f.overrideKey]?.hidden)),
     ...repairs.filter((r) => r.group === b.id).map((r) => ({
       label: r.label, code: `CF-${r.id}`, custom: true, id: r.id,
-      price: r.price, minutes: r.minutes, complications: r.complications, multiple: r.multiple,
+      price: r.price, minutes: r.minutes, complications: r.complications,
+      quantityMode: quantityModeOf(r), maxInstances: r.maxInstances || 0,
     })),
   ];
   const faultVisible = (f) => !f.if || toggles[f.if.param] === f.if.value;
@@ -2643,7 +2681,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onDone, request = 
       name: OVERRIDES[f.overrideKey]?.name || f.label,
       price: eff.work || 0, minutes: eff.minutes || 0,
       complications: JSON.parse(JSON.stringify(eff.difficulties || [])),
-      multiple: !!eff.multiple,
+      quantityMode: quantityModeOf(eff), maxInstances: eff.maxInstances || 0,
     };
     const compsBox = hasPrice ? complicationsEditor(draftOv.complications) : null;
     return el("div", { class: "card card-flush", style: "margin-top:8px" },
@@ -2653,15 +2691,14 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onDone, request = 
       hasPrice ? el("div", { style: "display:flex;flex-wrap:wrap;gap:8px;margin-top:8px" },
         el("div", { style: "flex:1;min-width:120px" }, el("label", {}, "Цена, ₽"), el("input", { type: "number", value: draftOv.price, oninput: (e) => (draftOv.price = +e.target.value || 0) })),
         el("div", { style: "flex:1;min-width:120px" }, el("label", {}, "Минуты"), el("input", { type: "number", value: draftOv.minutes, oninput: (e) => (draftOv.minutes = +e.target.value || 0) }))) : null,
-      hasPrice ? el("label", { class: "opt", style: "margin-top:8px" },
-        el("input", { type: "checkbox", checked: draftOv.multiple, onchange: (e) => (draftOv.multiple = e.target.checked) }),
-        el("span", { class: "small" }, "можно несколько раз на одном велосипеде")) : null,
+      hasPrice ? quantityModeEditor(draftOv) : null,
       hasPrice ? el("label", { style: "margin-top:8px" }, "Усложнения (надбавка к цене и времени)") : null,
       hasPrice ? compsBox : null,
       el("div", { class: "btn-row", style: "margin-top:10px" },
         el("button", { class: "btn-primary", onclick: async () => {
           const patch = { code: f.overrideKey, name: draftOv.name.trim() || null };
-          if (hasPrice) Object.assign(patch, { price: draftOv.price, minutes: draftOv.minutes || null, complications: draftOv.complications, multiple: draftOv.multiple });
+          if (hasPrice) Object.assign(patch, { price: draftOv.price, minutes: draftOv.minutes || null, complications: draftOv.complications,
+            quantityMode: draftOv.quantityMode, maxInstances: draftOv.quantityMode === "instances" ? draftOv.maxInstances : 0 });
           const ok = await overridesApi("PUT", patch);
           if (ok) onClose();
         } }, "Сохранить"),
@@ -2671,7 +2708,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onDone, request = 
   // Форма добавления своей неисправности (только у администратора) — цена,
   // время и усложнения задаются сразу тут же, без .proc-процедуры.
   function customFaultForm(blockId) {
-    const draftFa = { label: "", price: 0, minutes: 0, complications: [], multiple: false };
+    const draftFa = { label: "", price: 0, minutes: 0, complications: [], quantityMode: "single", maxInstances: 0 };
     const compsBox = complicationsEditor(draftFa.complications);
     return el("div", { class: "card card-flush", style: "margin-top:8px" },
       el("label", {}, "Название неисправности"),
@@ -2679,9 +2716,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onDone, request = 
       el("div", { style: "display:flex;flex-wrap:wrap;gap:8px;margin-top:8px" },
         el("div", { style: "flex:1;min-width:120px" }, el("label", {}, "Цена, ₽"), el("input", { type: "number", oninput: (e) => (draftFa.price = +e.target.value || 0) })),
         el("div", { style: "flex:1;min-width:120px" }, el("label", {}, "Минуты"), el("input", { type: "number", oninput: (e) => (draftFa.minutes = +e.target.value || 0) }))),
-      el("label", { class: "opt", style: "margin-top:8px" },
-        el("input", { type: "checkbox", onchange: (e) => (draftFa.multiple = e.target.checked) }),
-        el("span", { class: "small" }, "можно несколько раз на одном велосипеде")),
+      quantityModeEditor(draftFa),
       el("label", { style: "margin-top:8px" }, "Усложнения (надбавка к цене и времени, необязательно)"),
       compsBox,
       el("div", { class: "btn-row", style: "margin-top:10px" },
@@ -2689,7 +2724,8 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onDone, request = 
           if (!draftFa.label.trim()) return alert("Укажите название");
           const r = await fetch("/api/repairs", {
             method: "POST", headers: { "content-type": "application/json" },
-            body: JSON.stringify({ group: blockId, label: draftFa.label.trim(), price: draftFa.price, minutes: draftFa.minutes, complications: draftFa.complications, multiple: draftFa.multiple }),
+            body: JSON.stringify({ group: blockId, label: draftFa.label.trim(), price: draftFa.price, minutes: draftFa.minutes,
+              complications: draftFa.complications, quantityMode: draftFa.quantityMode, maxInstances: draftFa.maxInstances }),
           });
           const j = await r.json().catch(() => ({}));
           if (!r.ok) return alert(j.error || "ошибка");
@@ -2703,7 +2739,8 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onDone, request = 
   // Правка своей неисправности (заведённой через «+ своя неисправность»,
   // хранится в catalog/repairs) — то же самое, что и при создании, но PUT.
   function customFaultEditForm(f, onClose) {
-    const draftFa = { label: f.label, price: f.price || 0, minutes: f.minutes || 0, complications: JSON.parse(JSON.stringify(f.complications || [])), multiple: !!f.multiple };
+    const draftFa = { label: f.label, price: f.price || 0, minutes: f.minutes || 0,
+      complications: JSON.parse(JSON.stringify(f.complications || [])), quantityMode: quantityModeOf(f), maxInstances: f.maxInstances || 0 };
     const compsBox = complicationsEditor(draftFa.complications);
     return el("div", { class: "card card-flush", style: "margin-top:8px" },
       el("label", {}, "Название неисправности"),
@@ -2711,9 +2748,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onDone, request = 
       el("div", { style: "display:flex;flex-wrap:wrap;gap:8px;margin-top:8px" },
         el("div", { style: "flex:1;min-width:120px" }, el("label", {}, "Цена, ₽"), el("input", { type: "number", value: draftFa.price, oninput: (e) => (draftFa.price = +e.target.value || 0) })),
         el("div", { style: "flex:1;min-width:120px" }, el("label", {}, "Минуты"), el("input", { type: "number", value: draftFa.minutes, oninput: (e) => (draftFa.minutes = +e.target.value || 0) }))),
-      el("label", { class: "opt", style: "margin-top:8px" },
-        el("input", { type: "checkbox", checked: draftFa.multiple, onchange: (e) => (draftFa.multiple = e.target.checked) }),
-        el("span", { class: "small" }, "можно несколько раз на одном велосипеде")),
+      quantityModeEditor(draftFa),
       el("label", { style: "margin-top:8px" }, "Усложнения (надбавка к цене и времени, необязательно)"),
       compsBox,
       el("div", { class: "btn-row", style: "margin-top:10px" },
@@ -2721,7 +2756,8 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onDone, request = 
           if (!draftFa.label.trim()) return alert("Укажите название");
           const r = await fetch("/api/repairs", {
             method: "PUT", headers: { "content-type": "application/json" },
-            body: JSON.stringify({ id: f.id, label: draftFa.label.trim(), price: draftFa.price, minutes: draftFa.minutes, complications: draftFa.complications, multiple: draftFa.multiple }),
+            body: JSON.stringify({ id: f.id, label: draftFa.label.trim(), price: draftFa.price, minutes: draftFa.minutes,
+              complications: draftFa.complications, quantityMode: draftFa.quantityMode, maxInstances: draftFa.maxInstances }),
           });
           const j = await r.json().catch(() => ({}));
           if (!r.ok) return alert(j.error || "ошибка");
@@ -2786,16 +2822,36 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onDone, request = 
           // любом месте строки переключает, а галочка справа (без заливки
           // фона — та не задалась ни цветом, ни соседством выбранных строк
           // подряд) — единственный индикатор.
-          const checked = s.faults.has(i);
-          const selectButton = onlyCustom && f.custom ? el("input", {
+          const instanceMode = quantityModeOf(f) === "instances";
+          const selectedCount = getInstanceCount ? getInstanceCount(f) : (s.faults.has(i) ? 1 : 0);
+          const instanceCount = instanceMode ? selectedCount : (selectedCount > 0 ? 1 : 0);
+          const instanceMax = instanceMode ? (getInstanceMax ? getInstanceMax(f) : (f.maxInstances || 0)) : 0;
+          const instanceUnavailable = instanceMode && !!getInstanceMax && (f.maxInstances || 0) > 0 && instanceMax <= 0;
+          const checked = selectedCount > 0;
+          const setInstanceCount = (count) => {
+            if (instanceUnavailable && count > 0) return;
+            const next = Math.max(0, instanceMax > 0 ? Math.min(instanceMax, count) : count);
+            if (next) s.faults.add(i); else s.faults.delete(i);
+            if (onInstanceCount) onInstanceCount(f, next);
+            else if (next && !checked) onCheck(f);
+            else if (!next && checked && !codeCheckedElsewhere(f.code, inst.id)) onUncheck(f);
+            draw();
+          };
+          const selectButton = onlyCustom && f.custom && instanceMode && checked
+            ? qtyStepper(instanceCount, setInstanceCount, instanceMax, () => setInstanceCount(0))
+            : onlyCustom && f.custom ? el("input", {
             type: "checkbox",
             checked,
+            disabled: instanceUnavailable,
             "aria-label": checked ? "Убрать работу" : "Добавить работу",
             onclick: (e) => e.stopPropagation(),
             onchange: () => {
-              if (checked) { s.faults.delete(i); if (f.code && !codeCheckedElsewhere(f.code, inst.id)) onUncheck(f); }
-              else { s.faults.add(i); if (f.code) onCheck(f); }
-              draw();
+              if (instanceMode) setInstanceCount(checked ? 0 : 1);
+              else {
+                if (checked) { s.faults.delete(i); if (f.code && !codeCheckedElsewhere(f.code, inst.id)) onUncheck(f); }
+                else { s.faults.add(i); if (f.code) onCheck(f); }
+                draw();
+              }
             },
           }) : null;
           const rowContent = el("div", { class: "row opt", style: "cursor:pointer" },
@@ -2816,6 +2872,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onDone, request = 
             // справа отвечает только за добавление/снятие, поэтому повторный
             // тап по строке уже не удаляет выбранную позицию случайно.
             if (onlyCustom && f.custom) {
+              if (instanceUnavailable) return;
               if (!checked) { s.faults.add(i); if (f.code) onCheck(f); draw(); }
               if (f.code && onOpen) onOpen(f, draw);
               return;
@@ -3475,7 +3532,8 @@ function overridesScreen(byCode, error) {
     if (ov.price != null) bits.push(`цена: ${money(ov.price)}`);
     if (ov.minutes != null) bits.push(`время: ${ov.minutes} мин`);
     if (ov.complications?.length) bits.push(`усложнений: ${ov.complications.length}`);
-    if (ov.multiple) bits.push("можно несколько раз");
+    if (ov.quantityMode === "instances") bits.push(`отдельные экземпляры${ov.maxInstances ? `, максимум ${ov.maxInstances}` : ""}`);
+    if (ov.quantityMode === "quantity" || ov.multiple) bits.push("числовое количество");
     return el("div", { class: "card" },
       el("div", {}, el("b", {}, ov.name || proc?.name || code), " ", el("span", { class: "small muted" }, code)),
       el("p", { class: "small muted" }, bits.join(" · ") || "—"),
