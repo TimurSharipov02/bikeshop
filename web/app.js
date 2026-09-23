@@ -2393,32 +2393,84 @@ function pendingAgreementRow(it, { onAgree, onRemove, onSet, onDiffQty, onParts,
 // Форма деталей для «Ждёт согласования» — усложнения (прогноз) и запчасти
 // на вкладках, тем же bottom sheet, что и у согласованной работы.
 function openPendingSheet(it, stock, { onSet, onDiffQty, onParts, onQty, onRemove }, siblings = [it]) {
-  const items = siblings.length ? siblings : [it];
+  let items = siblings.length ? siblings : [it];
   let activeIndex = Math.max(0, items.findIndex((x) => x.code === it.code));
+  // Табы «Усложнения»/«Запчасти» — один на все экземпляры сразу, не по
+  // отдельности на каждый: переключение между экземплярами — это пролистать
+  // одну и ту же карточку вбок, а не другой набор вкладок.
   let tab = (it.difficulties || []).length ? "diff" : "parts";
   const content = el("div", {});
-  let sheet;
+  let sheet, track;
+  let syncingScroll = false;
+  // Прыжок к экземпляру: смахивание пальцем — обычный горизонтальный скролл
+  // со scroll-snap (нативный, без своего жеста), тут только для тапа по
+  // точке-индикатору — те же координаты, что расставил браузер по снапу.
+  function scrollToIndex(index, smooth) {
+    if (!track) return;
+    syncingScroll = true;
+    const left = index * track.clientWidth;
+    if (smooth) track.scrollTo({ left, behavior: "smooth" });
+    else track.scrollLeft = left;
+    setTimeout(() => { syncingScroll = false; }, smooth ? 260 : 0);
+  }
+  function removeInstance(instance) {
+    onRemove(instance.code);
+    items = items.filter((x) => x.code !== instance.code);
+    if (!items.length) { sheet.close(); return; }
+    activeIndex = Math.min(activeIndex, items.length - 1);
+    draw();
+    scrollToIndex(activeIndex, false);
+  }
+  function panelFor(instance) {
+    const hasDiffs = (instance.difficulties || []).length > 0;
+    return el("div", { class: "instance-panel" },
+      usesQuantity(instance) ? el("div", { style: "margin-bottom:14px" }, qtyStepper(instance.qty,
+        (qty) => { onQty(instance.code, qty); draw(); }, WORK_QUANTITY_LIMIT,
+        onRemove ? () => removeInstance(instance) : undefined)) : null,
+      tab === "diff"
+        ? (hasDiffs ? difficultyList(instance.difficulties, (di, st) => { onSet(instance.code, di, st); draw(); }, (di, qty) => { onDiffQty(instance.code, di, qty); draw(); })
+          : el("p", { class: "small muted" }, "Трудностей не ожидается."))
+        : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(instance.parts, stock, () => { onParts(instance.code, instance.parts); draw(); }, partBlockIdOf(instance))));
+  }
   function draw() {
-    const active = items[activeIndex] || it;
-    const hasDiffs = (active.difficulties || []).length > 0;
-    if (!hasDiffs && tab === "diff") tab = "parts";
+    const hasAnyDiffs = items.some((x) => (x.difficulties || []).length > 0);
+    if (!hasAnyDiffs && tab === "diff") tab = "parts";
+    let dots = null, label = null;
+    // Свайп/тап по точке двигает только сам счётчик и подсветку точек, без
+    // полной перерисовки шторки (та бы сбросила прокрутку карусели) — но
+    // подпись «Экземпляр N из M» тоже часть этого «текущего номера», иначе
+    // она молча отстаёт от того, что реально показано под ней.
+    const updateActive = () => {
+      if (dots) dots.querySelectorAll(".carousel-dot").forEach((btn, index) => btn.classList.toggle("active", index === activeIndex));
+      if (label) label.textContent = `Экземпляр ${activeIndex + 1} из ${items.length}`;
+    };
+    track = el("div", {
+      class: "instance-track",
+      onscroll: () => {
+        if (syncingScroll || !track) return;
+        const w = track.clientWidth || 1;
+        const idx = Math.max(0, Math.min(items.length - 1, Math.round(track.scrollLeft / w)));
+        if (idx !== activeIndex) { activeIndex = idx; updateActive(); }
+      },
+    }, items.map(panelFor));
+    if (items.length > 1) {
+      dots = el("div", { class: "carousel-dots" },
+        items.map((_, index) => el("button", {
+          type: "button", class: "carousel-dot" + (index === activeIndex ? " active" : ""),
+          "aria-label": `Экземпляр ${index + 1} из ${items.length}`,
+          onclick: () => { activeIndex = index; updateActive(); scrollToIndex(index, true); },
+        })));
+      label = el("p", { class: "small muted", style: "margin:0 0 6px;text-align:center" }, `Экземпляр ${activeIndex + 1} из ${items.length}`);
+    }
     content.replaceChildren(...[
-      items.length > 1 ? el("div", { style: "margin-bottom:14px" },
-        el("label", { style: "margin:0 0 6px" }, `Экземпляр ${activeIndex + 1} из ${items.length}`),
-        el("div", { class: "segmented instance-picker" },
-          items.map((_, index) => el("button", { type: "button", class: index === activeIndex ? "active" : "",
-            onclick: () => { activeIndex = index; draw(); } }, String(index + 1))))) : null,
-      usesQuantity(active) ? el("div", { style: "margin-bottom:14px" }, qtyStepper(active.qty,
-        (qty) => { onQty(active.code, qty); draw(); }, WORK_QUANTITY_LIMIT,
-        onRemove ? () => { onRemove(active.code); sheet.close(); } : undefined)) : null,
-      hasDiffs ? el("div", { class: "segmented", style: "margin-bottom:14px" },
+      label,
+      hasAnyDiffs ? el("div", { class: "segmented", style: "margin-bottom:14px" },
         el("button", { class: tab === "diff" ? "active" : "", onclick: () => { tab = "diff"; draw(); } }, "Усложнения"),
         el("button", { class: tab === "parts" ? "active" : "", onclick: () => { tab = "parts"; draw(); } }, "Запчасти")) : null,
-      tab === "diff"
-        ? (hasDiffs ? difficultyList(active.difficulties, (di, st) => { onSet(active.code, di, st); draw(); }, (di, qty) => { onDiffQty(active.code, di, qty); draw(); })
-          : el("p", { class: "small muted" }, "Трудностей не ожидается."))
-        : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(active.parts, stock, () => { onParts(active.code, active.parts); draw(); }, partBlockIdOf(active))),
+      track,
+      dots,
     ].filter(Boolean));
+    scrollToIndex(activeIndex, false);
   }
   draw();
   sheet = openSheet(it.name, content);
