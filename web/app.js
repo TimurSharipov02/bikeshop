@@ -2517,9 +2517,7 @@ function openPendingSheet(it, stock, { onSet, onDiffQty, onParts }, siblings = [
         el("button", { class: tab === "diff" ? "active" : "", onclick: () => { tabs.set(instance.code, "diff"); draw(); } }, "Усложнения"),
         el("button", { class: tab === "parts" ? "active" : "", onclick: () => { tabs.set(instance.code, "parts"); draw(); } }, "Запчасти")) : null,
       tab === "diff"
-        ? (hasDiffs ? el("div", {},
-            el("p", { class: "small muted", style: "margin:0 0 12px" }, "В оценку войдут только отмеченные для этого велосипеда усложнения. «Неизвестно» увеличит верхнюю границу."),
-            difficultyList(instance.difficulties, (di, st) => { onSet(instance.code, di, st); draw(); }, (di, qty) => { onDiffQty(instance.code, di, qty); draw(); }))
+        ? (hasDiffs ? difficultyList(instance.difficulties, (di, st) => { onSet(instance.code, di, st); draw(); }, (di, qty) => { onDiffQty(instance.code, di, qty); draw(); })
           : el("p", { class: "small muted" }, "Трудностей не ожидается."))
         : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(instance.parts, stock, () => { onParts(instance.code, instance.parts); draw(); }, partBlockIdOf(instance))));
   }
