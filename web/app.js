@@ -2658,10 +2658,10 @@ function repairGroupItem(items, stock, { onSave, onAdd, onRemove }) {
   // пилюль сразу было видно и сколько всего экземпляров, и статус каждого.
   const instanceTags = el("div", { style: "display:flex;flex-wrap:wrap;gap:6px;margin-top:6px" },
     ...items.map((i) => {
-      // Готово и «в работе» пилюли выглядели бы одинаково (просто имя
-      // мастера в обеих) — готово подсвечиваем зелёным (тот же приём, что и
-      // у .tag-done), чтобы по цвету сразу было видно, что это не «занято».
-      if (i.done) return el("span", { class: "pill", style: "background:var(--ok-weak);color:var(--ok)" }, i.doneBy?.masterName || "готово");
+      // Исполнитель готового экземпляра выглядит так же, как у единичной
+      // работы: синяя пилюля. Цвет статуса не должен зависеть от того,
+      // сгруппирована работа или нет.
+      if (i.done) return el("span", { class: "pill" }, i.doneBy?.masterName || "готово");
       if (i.waitingForPart) return el("span", { class: "pill", style: "background:var(--yellow-weak);color:var(--yellow-ink)" }, "ждёт запчасть");
       if (i.claimedBy) return el("span", { class: "pill" }, i.claimedBy.masterName || "—");
       return el("span", { class: "pill", style: "background:var(--fill);color:var(--muted)" }, "Свободен");
