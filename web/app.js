@@ -2083,9 +2083,9 @@ function quantityModeEditor(draft) {
     el("input", { type: "number", min: 0, value: draft.maxInstances || "", placeholder: "без ограничения",
       oninput: (e) => (draft.maxInstances = Math.max(0, +e.target.value || 0)) }));
   const modes = [
-    ["single", "Одна задача", "Один результат и один исполнитель"],
-    ["instances", "Отдельные задачи", "Каждое выполнение считается отдельно"],
-    ["quantity", "Количество", "Одна задача с общим количеством"],
+    ["single", "Один раз", "Одна задача, один исполнитель"],
+    ["instances", "Каждую отдельно", "Несколько задач, исполнитель у каждой"],
+    ["quantity", "Общим количеством", "Одна задача × количество, один исполнитель"],
   ];
   const choices = el("div", { style: "display:grid;gap:6px;margin-top:6px" },
     ...modes.map(([value, title, hint]) => el("label", { class: "opt", style: "margin:0" },
@@ -2098,7 +2098,7 @@ function quantityModeEditor(draft) {
       }),
       el("span", {}, title, el("span", { class: "small muted", style: "display:block;margin-top:2px" }, hint)))));
   maxWrap.style.display = draft.quantityMode === "instances" ? "" : "none";
-  return el("div", { style: "margin-top:8px" }, el("label", {}, "Как считать работу"), choices, maxWrap);
+  return el("div", { style: "margin-top:8px" }, el("label", {}, "Как учитывать работу"), choices, maxWrap);
 }
 
 // Редактор списка усложнений (название + надбавка к цене + надбавка к времени
