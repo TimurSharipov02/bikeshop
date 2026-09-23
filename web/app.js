@@ -2373,6 +2373,35 @@ function openHandedItemEdit(orderNumber, it, onSaved) {
 // не бывает для завершённой работы.
 const DIFFICULTY_STATE_LABELS = { yes: "будет", no: "не будет", unknown: "неизвестно" };
 const DIFFICULTY_FACT_LABELS = { yes: "было", no: "не было" };
+
+// Общие элементы усложнения для приёмки и ремонта. Режимы отличаются только
+// способом выбора состояния; количество, итоговая надбавка и строка одни и те
+// же, чтобы правки внешнего вида и расчёта не расходились между экранами.
+const difficultyQty = (d) => d.multiple ? Math.max(1, d.qty || 1) : 1;
+const difficultyAmount = (d) => (d.add || 0) * difficultyQty(d);
+const difficultyMinutes = (d) => (d.addMinutes || 0) * difficultyQty(d);
+function difficultyPriceTag(d) {
+  const included = d.state === "yes";
+  return el("span", {
+    class: "pill",
+    style: included ? "margin-left:0" : "margin-left:0;background:var(--fill);color:var(--muted)",
+  }, `+${money(difficultyAmount(d))}`);
+}
+function difficultyStateToggle(d, labels, onSet) {
+  const symbols = { yes: "✓", no: "×", unknown: "?" };
+  return el("div", { class: "segmented difficulty-state-toggle" },
+    Object.entries(labels).map(([value, label]) => el("button", {
+      type: "button",
+      class: d.state === value ? `active sel-${value}` : "",
+      title: label,
+      "aria-label": `${d.label}: ${label}`,
+      onclick: () => onSet(value),
+    }, symbols[value])));
+}
+function difficultyQtyStepper(d, onQty) {
+  return qtyStepper(difficultyQty(d), onQty);
+}
+
 function difficultyList(difficulties, onSet, onQty, fact) {
   const labels = fact ? DIFFICULTY_FACT_LABELS : DIFFICULTY_STATE_LABELS;
   const box = el("div", {});
@@ -2387,26 +2416,15 @@ function difficultyList(difficulties, onSet, onQty, fact) {
     const factControl = !fact ? null
       : d.multiple
         ? (done
-            ? qtyStepper(d.qty || 1, (qty) => onQty(di, qty), 0, () => onSet(di, "no"))
+            ? difficultyQtyStepper(d, (qty) => onQty(di, qty))
             : el("button", { type: "button", class: "work-select-btn", "aria-label": `${d.label}: было`, onclick: () => onSet(di, "yes") }, "+"))
         : el("button", {
             type: "button", class: "work-select-btn" + (done ? " selected" : ""),
             "aria-label": `${d.label}: ${done ? "было" : "не было"}`,
             onclick: () => onSet(di, done ? "no" : "yes"),
           }, done ? "×" : "+");
-    const factPrice = fact ? el("span", {
-      class: "pill",
-      style: done ? "margin-left:0" : "margin-left:0;background:var(--fill);color:var(--muted)",
-    }, `+${money(d.add)}`) : null;
-    const stateSymbols = { yes: "✓", no: "×", unknown: "?" };
-    const estimateControl = !fact ? el("div", { class: "segmented difficulty-state-toggle" },
-      Object.entries(labels).map(([v, lbl]) => el("button", {
-        type: "button",
-        class: d.state === v ? `active sel-${v}` : "",
-        title: lbl,
-        "aria-label": `${d.label}: ${lbl}`,
-        onclick: () => onSet(di, v),
-      }, stateSymbols[v]))) : null;
+    const stateControl = fact ? factControl : difficultyStateToggle(d, labels, (state) => onSet(di, state));
+    const addedMinutes = difficultyMinutes(d);
     box.append(el("div", { style: "margin-top:8px" },
       el("div", {
         style: `display:flex;align-items:${fact ? "center" : "flex-start"};gap:10px${fact ? ";cursor:pointer" : ""}`,
@@ -2420,15 +2438,14 @@ function difficultyList(difficulties, onSet, onQty, fact) {
       },
         el("div", { class: "small", style: "flex:1;min-width:0" },
           d.label,
-          fact
-            ? (d.addMinutes ? el("span", { class: "muted" }, ` (+${d.addMinutes} мин)`) : null)
-            : el("span", { class: "muted" }, ` (+${money(d.add)}${d.addMinutes ? `, +${d.addMinutes} мин` : ""})`)),
-        fact ? el("div", { style: "display:flex;align-items:center;gap:8px;flex:0 0 auto" }, factPrice, factControl) : estimateControl),
+          addedMinutes ? el("span", { class: "muted" }, ` (+${addedMinutes} мин)`) : null),
+        el("div", { style: "display:flex;align-items:center;gap:8px;flex:0 0 auto" },
+          difficultyPriceTag(d), stateControl)),
       // У повторяемого усложнения количество остаётся отдельной строкой,
       // чтобы компактный тройной тумблер не менял ширину и не прыгал.
       !fact && d.multiple && onQty && d.state !== "no" ? el("div", {
         style: "display:flex;justify-content:flex-end;margin-top:6px",
-      }, qtyStepper(d.qty, (qty) => onQty(di, qty))) : null));
+      }, difficultyQtyStepper(d, (qty) => onQty(di, qty))) : null));
   });
   return box;
 }
