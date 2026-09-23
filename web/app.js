@@ -2598,15 +2598,19 @@ function repairGroupItem(items, stock, { onSave, onAdd, onRemove }) {
     return i === -1 ? 0 : i;
   })();
   // Вместо «Готово: X из Y» — ярлык на каждый экземпляр, тот же приём, что
-  // и у обычных (не повторяющихся) работ: пилюля с именем мастера, если
-  // экземпляр сделан или уже занят кем-то, иначе «Ожидает».
+  // и у обычных (не повторяющихся) работ: имя мастера, если сделано или
+  // занято; «ждёт запчасть» — тот же жёлтый ярлык, что и у самой работы
+  // (repairItem/pendingCard); ничей — «Свободен» серым, чтобы по ряду
+  // пилюль сразу было видно и сколько всего экземпляров, и статус каждого.
   const instanceTags = el("div", { style: "display:flex;flex-wrap:wrap;gap:6px;margin-top:6px" },
     ...items.map((i) => {
-      const label = i.done ? (completionsSummary(i) || "готово") : i.claimedBy ? i.claimedBy.masterName || "—" : "Ожидает";
-      return el("span", {
-        class: "pill",
-        style: i.done || i.claimedBy ? "" : "background:var(--fill);color:var(--muted)",
-      }, label);
+      // Готово и «в работе» пилюли выглядели бы одинаково (просто имя
+      // мастера в обеих) — готово подсвечиваем зелёным (тот же приём, что и
+      // у .tag-done), чтобы по цвету сразу было видно, что это не «занято».
+      if (i.done) return el("span", { class: "pill", style: "background:var(--ok-weak);color:var(--ok)" }, i.doneBy?.masterName || "готово");
+      if (i.waitingForPart) return el("span", { class: "pill", style: "background:var(--yellow-weak);color:var(--yellow-ink)" }, "ждёт запчасть");
+      if (i.claimedBy) return el("span", { class: "pill" }, i.claimedBy.masterName || "—");
+      return el("span", { class: "pill", style: "background:var(--fill);color:var(--muted)" }, "Свободен");
     }));
   box.append(el("div", {
     style: "cursor:pointer",
