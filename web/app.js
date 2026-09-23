@@ -2605,10 +2605,10 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove, onAdd }) {
     onclick: () => openRepairSheet(it, stock, (code, patch) => onSave(patch), [it], { onAdd, onRemove }),
   },
     nameRow,
-    el("div", { style: "margin-top:8px" }, pricedControlGroup(priceControl, quantityControl)),
     // Та же разбивка по составляющим, что и в списке «выдан» — не нужно
     // открывать форму, чтобы увидеть, из чего сложилась сумма.
-    el("div", { class: "small muted", style: "margin-top:4px" }, costLines(it).map((l) => el("div", {}, "– " + l))));
+    el("div", { class: "small muted", style: "margin-top:4px" }, costLines(it).map((l) => el("div", {}, "– " + l))),
+    el("div", { style: "margin-top:10px" }, pricedControlGroup(priceControl, quantityControl)));
   box.append(openArea);
   if (it.notes) box.append(el("p", { class: "small muted" }, it.notes));
   return onRemove ? swipeToDelete(box, () => { onRemove(it.code); return true; }) : box;
@@ -2795,10 +2795,16 @@ function openRepairSheet(it, stock, onSave, siblings = [it], { onAdd: onAddInsta
     const tabs = hasDiffs ? el("div", { class: "segmented", style: "margin-bottom:14px" },
       el("button", { class: s.tab === "diff" ? "active" : "", onclick: () => { s.tab = "diff"; redrawPanel(instance); } }, "Усложнения"),
       el("button", { class: s.tab === "parts" ? "active" : "", onclick: () => { s.tab = "parts"; redrawPanel(instance); } }, "Запчасти")) : null;
+    const tabContent = s.tab === "diff"
+      ? diffBox
+      : el("div", {},
+          el("label", { style: "margin-top:0" }, "Запчасти"),
+          partsEditor(s.parts, stock, () => save(instance, { parts: s.parts }), partBlockIdOf(instance)),
+          waitBlock);
     const inner = el("div", {},
       tabs,
-      s.tab === "diff" ? diffBox : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(s.parts, stock, () => save(instance, { parts: s.parts }), partBlockIdOf(instance))),
-      waitBlock, doneBlock);
+      tabContent,
+      doneBlock);
     const body = locked
       ? el("div", {},
           el("p", { class: "small", style: "color:var(--muted);margin-bottom:10px" }, `Занято — ${instance.claimedBy?.masterName || "другой мастер"}`),
