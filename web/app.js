@@ -2086,8 +2086,8 @@ function quantityModeEditor(draft) {
     ["instances", "Каждую отдельно · до 5", "Несколько задач, исполнитель у каждой"],
     ["quantity", "Общим количеством · до 64", "Одна задача × количество, один исполнитель"],
   ];
-  const choices = el("div", { style: "display:grid;gap:10px;margin-top:10px" },
-    ...modes.map(([value, title, hint]) => el("label", { class: "opt", style: "margin:0;padding:15px 16px" },
+  const choices = el("div", { class: "quantity-mode-list" },
+    ...modes.map(([value, title, hint]) => el("label", { class: "opt quantity-mode-row" },
       el("input", {
         type: "radio", name: fieldName, value, checked: draft.quantityMode === value,
         onchange: () => {
