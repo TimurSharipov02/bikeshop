@@ -2332,23 +2332,36 @@ function difficultyList(difficulties, onSet, onQty, fact) {
   const labels = fact ? DIFFICULTY_FACT_LABELS : DIFFICULTY_STATE_LABELS;
   const box = el("div", {});
   (difficulties || []).forEach((d, di) => {
+    const done = d.state === "yes";
+    // По факту (fact=true, «Отметить готово») — тот же счётчик, что и у
+    // самих работ в списке на «Новый наряд»: не отмечено — «+», отмечено и
+    // можно несколько раз — счётчик с корзиной вместо минуса на единице,
+    // иначе просто «+/×». Раньше тут был отдельный тумблер и, если можно
+    // несколько, ещё отдельный счётчик отдельной строкой ниже — два разных
+    // элемента на одно и то же состояние.
+    const factControl = !fact ? null
+      : d.multiple
+        ? (done
+            ? qtyStepper(d.qty || 1, (qty) => onQty(di, qty), 0, () => onSet(di, "no"))
+            : el("button", { type: "button", class: "work-select-btn", "aria-label": `${d.label}: было`, onclick: () => onSet(di, "yes") }, "+"))
+        : el("button", {
+            type: "button", class: "work-select-btn" + (done ? " selected" : ""),
+            "aria-label": `${d.label}: ${done ? "было" : "не было"}`,
+            onclick: () => onSet(di, done ? "no" : "yes"),
+          }, done ? "×" : "+");
     box.append(el("div", { style: "margin-top:8px" },
       el("div", { style: "display:flex;align-items:center;gap:10px" },
         el("div", { class: "small", style: "flex:1" }, d.label, " ", el("span", { class: "muted" }, `(+${money(d.add)}${d.addMinutes ? `, +${d.addMinutes} мин` : ""})`)),
-        fact ? el("button", {
-          class: "switch" + (d.state === "yes" ? " on" : ""),
-          role: "switch", "aria-checked": d.state === "yes",
-          "aria-label": `${d.label}: ${d.state === "yes" ? "было" : "не было"}`,
-          onclick: () => onSet(di, d.state === "yes" ? "no" : "yes"),
-        }, el("span", {})) : null),
+        factControl),
       // Свой ряд на всю ширину — сегментед-контрол (тот же паттерн, что и
       // везде в приложении), один тап сразу меняет состояние, без открытия
       // выпадающего списка. Счётчик количества — отдельной строкой ниже,
-      // чтобы не тесниться с кнопками.
+      // чтобы не тесниться с кнопками. Это только прогноз (fact=false) —
+      // по факту счётчик уже встроен в сам factControl выше.
       fact ? null : el("div", { class: "segmented", style: "margin-top:4px" },
         Object.entries(labels).map(([v, lbl]) =>
           el("button", { class: d.state === v ? `active sel-${v}` : "", onclick: () => onSet(di, v) }, lbl))),
-      d.multiple && onQty && d.state !== "no" ? el("div", { style: "margin-top:6px" }, qtyStepper(d.qty, (qty) => onQty(di, qty))) : null));
+      !fact && d.multiple && onQty && d.state !== "no" ? el("div", { style: "margin-top:6px" }, qtyStepper(d.qty, (qty) => onQty(di, qty))) : null));
   });
   return box;
 }
