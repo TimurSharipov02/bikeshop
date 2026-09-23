@@ -472,6 +472,9 @@ const quantityModeOf = (x) => {
   return "single";
 };
 const usesQuantity = (x) => quantityModeOf(x) === "quantity";
+const WORK_INSTANCE_LIMIT = 5;
+const WORK_QUANTITY_LIMIT = 64;
+const instanceLimitOf = (x) => quantityModeOf(x) === "instances" ? WORK_INSTANCE_LIMIT : 0;
 
 const yy = () => String(new Date().getFullYear()).slice(2);
 const nextOrderNumber = (d) => (d.counters.order++, `V${yy()}-${String(d.counters.order).padStart(6, "0")}`);
@@ -588,7 +591,7 @@ function makeItem(code, notes = "") {
     workPrice: price.work || 0,
     estimateMinutes: price.minutes || 0,
     partsPrice: 0,
-    quantityMode: quantityModeOf(price), maxInstances: price.maxInstances || 0,
+    quantityMode: quantityModeOf(price), maxInstances: instanceLimitOf(price),
     multiple: quantityModeOf(price) === "quantity", qty: 1,
     difficulties: (price.difficulties || []).map((d) => ({ label: d.label, add: d.add, addMinutes: d.addMinutes || 0, multiple: !!d.multiple, qty: 1, state: "unknown" })),
   };
@@ -602,7 +605,7 @@ function makeCustomItem(fa, notes = "") {
     workPrice: fa.price || 0,
     estimateMinutes: fa.minutes || 0,
     partsPrice: 0,
-    quantityMode: quantityModeOf(fa), maxInstances: fa.maxInstances || 0,
+    quantityMode: quantityModeOf(fa), maxInstances: instanceLimitOf(fa),
     multiple: quantityModeOf(fa) === "quantity", qty: 1,
     difficulties: (fa.complications || []).map((c) => ({ label: c.label, add: c.add, addMinutes: c.addMinutes || 0, multiple: !!c.multiple, qty: 1, state: "unknown" })),
   };
@@ -679,7 +682,7 @@ async function loadWorkPool(bikeKind) {
   return repairs.map((r) => ({
     code: `CF-${r.id}`, name: r.label, label: r.label, custom: true, id: r.id, group: r.group,
     price: r.price, minutes: r.minutes, complications: r.complications,
-    quantityMode: quantityModeOf(r), maxInstances: r.maxInstances || 0,
+    quantityMode: quantityModeOf(r), maxInstances: instanceLimitOf(r),
   }));
 }
 
@@ -2078,14 +2081,10 @@ function qtyStepper(value, onChange, max, onRemove) {
 // оставляет одну задачу и умножает её цену, например для нескольких спиц.
 function quantityModeEditor(draft) {
   const fieldName = `quantity-mode-${Math.random().toString(36).slice(2)}`;
-  const maxWrap = el("div", { style: "margin-top:8px;display:none" },
-    el("label", {}, "Максимум отдельных задач"),
-    el("input", { type: "number", min: 0, value: draft.maxInstances || "", placeholder: "без ограничения",
-      oninput: (e) => (draft.maxInstances = Math.max(0, +e.target.value || 0)) }));
   const modes = [
-    ["single", "Один раз", "Одна задача, один исполнитель"],
-    ["instances", "Каждую отдельно", "Несколько задач, исполнитель у каждой"],
-    ["quantity", "Общим количеством", "Одна задача × количество, один исполнитель"],
+    ["single", "Один раз · 1", "Одна задача, один исполнитель"],
+    ["instances", "Каждую отдельно · до 5", "Несколько задач, исполнитель у каждой"],
+    ["quantity", "Общим количеством · до 64", "Одна задача × количество, один исполнитель"],
   ];
   const choices = el("div", { style: "display:grid;gap:6px;margin-top:6px" },
     ...modes.map(([value, title, hint]) => el("label", { class: "opt", style: "margin:0" },
@@ -2093,12 +2092,12 @@ function quantityModeEditor(draft) {
         type: "radio", name: fieldName, value, checked: draft.quantityMode === value,
         onchange: () => {
           draft.quantityMode = value;
-          maxWrap.style.display = value === "instances" ? "" : "none";
+          draft.maxInstances = value === "instances" ? WORK_INSTANCE_LIMIT : 0;
         },
       }),
       el("span", {}, title, el("span", { class: "small muted", style: "display:block;margin-top:2px" }, hint)))));
-  maxWrap.style.display = draft.quantityMode === "instances" ? "" : "none";
-  return el("div", { style: "margin-top:8px" }, el("label", {}, "Как учитывать работу"), choices, maxWrap);
+  draft.maxInstances = instanceLimitOf(draft);
+  return el("div", { style: "margin-top:8px" }, el("label", {}, "Как учитывать работу"), choices);
 }
 
 // Редактор списка усложнений (название + надбавка к цене + надбавка к времени
@@ -2142,7 +2141,7 @@ function editableItemRow(it, { onRemove, onSave, refresh, onDiffSet, onDiffQty }
   const rowContent = el("div", { class: "row", style: "align-items:flex-start;flex-direction:column;gap:6px" },
     el("span", { style: "width:100%" }, it.name, it.notes ? el("span", { class: "small muted" }, el("br"), it.notes) : null),
     el("div", { style: "display:flex;align-items:center;gap:10px;width:100%" },
-      usesQuantity(it) ? qtyStepper(it.qty, (qty) => onSave(it.code, { qty }), 0, () => onRemove(it.code)) : null,
+      usesQuantity(it) ? qtyStepper(it.qty, (qty) => onSave(it.code, { qty }), WORK_QUANTITY_LIMIT, () => onRemove(it.code)) : null,
       el("span", { class: "price-tag", style: "flex:1" }, rangeText(r))));
   const header = swipeActions(rowContent, [
     { label: ICON_EDIT, ariaLabel: "Изменить работу", onClick: () => { editingItemCode = isEditing ? null : it.code; refresh(); } },
@@ -2352,7 +2351,7 @@ function openPendingSheet(it, stock, { onSet, onDiffQty, onParts, onQty, onRemov
   function draw() {
     content.replaceChildren(...[
       usesQuantity(it) ? el("div", { style: "margin-bottom:14px" }, qtyStepper(it.qty,
-        (qty) => { onQty(it.code, qty); draw(); }, 0,
+        (qty) => { onQty(it.code, qty); draw(); }, WORK_QUANTITY_LIMIT,
         onRemove ? () => { onRemove(it.code); sheet.close(); } : undefined)) : null,
       hasDiffs ? el("div", { class: "segmented", style: "margin-bottom:14px" },
         el("button", { class: tab === "diff" ? "active" : "", onclick: () => { tab = "diff"; draw(); } }, "Усложнения"),
@@ -2403,7 +2402,7 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove }) {
     // открывать форму, чтобы увидеть, из чего сложилась сумма.
     el("div", { class: "small muted", style: "margin-top:4px" }, costLines(it).map((l) => el("div", {}, "– " + l))));
   box.append(openArea);
-  if (usesQuantity(it)) box.append(el("div", { style: "margin-top:10px" }, qtyStepper(it.qty, onQty, 0, onRemove ? () => onRemove(it.code) : undefined)));
+  if (usesQuantity(it)) box.append(el("div", { style: "margin-top:10px" }, qtyStepper(it.qty, onQty, WORK_QUANTITY_LIMIT, onRemove ? () => onRemove(it.code) : undefined)));
   if (it.notes) box.append(el("p", { class: "small muted" }, it.notes));
   return onRemove ? swipeToDelete(box, () => { onRemove(it.code); return true; }) : box;
 }
@@ -2657,7 +2656,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
     ...repairs.filter((r) => r.group === b.id).map((r) => ({
       label: r.label, code: `CF-${r.id}`, custom: true, id: r.id,
       price: r.price, minutes: r.minutes, complications: r.complications,
-      quantityMode: quantityModeOf(r), maxInstances: r.maxInstances || 0,
+      quantityMode: quantityModeOf(r), maxInstances: instanceLimitOf(r),
     })),
   ];
   const faultVisible = (f) => !f.if || toggles[f.if.param] === f.if.value;
@@ -2694,7 +2693,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
       name: OVERRIDES[f.overrideKey]?.name || f.label,
       price: eff.work || 0, minutes: eff.minutes || 0,
       complications: JSON.parse(JSON.stringify(eff.difficulties || [])),
-      quantityMode: quantityModeOf(eff), maxInstances: eff.maxInstances || 0,
+      quantityMode: quantityModeOf(eff), maxInstances: instanceLimitOf(eff),
     };
     const compsBox = hasPrice ? complicationsEditor(draftOv.complications) : null;
     return el("div", { class: "card card-flush", style: "margin-top:8px" },
@@ -2711,7 +2710,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
         el("button", { class: "btn-primary", onclick: async () => {
           const patch = { code: f.overrideKey, name: draftOv.name.trim() || null };
           if (hasPrice) Object.assign(patch, { price: draftOv.price, minutes: draftOv.minutes || null, complications: draftOv.complications,
-            quantityMode: draftOv.quantityMode, maxInstances: draftOv.quantityMode === "instances" ? draftOv.maxInstances : 0 });
+            quantityMode: draftOv.quantityMode });
           const ok = await overridesApi("PUT", patch);
           if (ok) onClose();
         } }, "Сохранить"),
@@ -2738,7 +2737,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
           const r = await fetch("/api/repairs", {
             method: "POST", headers: { "content-type": "application/json" },
             body: JSON.stringify({ group: blockId, label: draftFa.label.trim(), price: draftFa.price, minutes: draftFa.minutes,
-              complications: draftFa.complications, quantityMode: draftFa.quantityMode, maxInstances: draftFa.maxInstances }),
+              complications: draftFa.complications, quantityMode: draftFa.quantityMode }),
           });
           const j = await r.json().catch(() => ({}));
           if (!r.ok) return alert(j.error || "ошибка");
@@ -2753,7 +2752,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
   // хранится в catalog/repairs) — то же самое, что и при создании, но PUT.
   function customFaultEditForm(f, onClose) {
     const draftFa = { label: f.label, price: f.price || 0, minutes: f.minutes || 0,
-      complications: JSON.parse(JSON.stringify(f.complications || [])), quantityMode: quantityModeOf(f), maxInstances: f.maxInstances || 0 };
+      complications: JSON.parse(JSON.stringify(f.complications || [])), quantityMode: quantityModeOf(f), maxInstances: instanceLimitOf(f) };
     const compsBox = complicationsEditor(draftFa.complications);
     return el("div", { class: "card card-flush", style: "margin-top:8px" },
       el("label", {}, "Название неисправности"),
@@ -2770,7 +2769,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
           const r = await fetch("/api/repairs", {
             method: "PUT", headers: { "content-type": "application/json" },
             body: JSON.stringify({ id: f.id, label: draftFa.label.trim(), price: draftFa.price, minutes: draftFa.minutes,
-              complications: draftFa.complications, quantityMode: draftFa.quantityMode, maxInstances: draftFa.maxInstances }),
+              complications: draftFa.complications, quantityMode: draftFa.quantityMode }),
           });
           const j = await r.json().catch(() => ({}));
           if (!r.ok) return alert(j.error || "ошибка");
