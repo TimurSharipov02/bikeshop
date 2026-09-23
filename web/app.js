@@ -2778,17 +2778,10 @@ function openRepairSheet(it, stock, onSave, siblings = [it], { onAdd: onAddInsta
     const tabs = hasDiffs ? el("div", { class: "segmented", style: "margin-bottom:14px" },
       el("button", { class: s.tab === "diff" ? "active" : "", onclick: () => { s.tab = "diff"; redrawPanel(instance); } }, "Усложнения"),
       el("button", { class: s.tab === "parts" ? "active" : "", onclick: () => { s.tab = "parts"; redrawPanel(instance); } }, "Запчасти")) : null;
-    // Убрать именно этот экземпляр — только у повторяющихся работ
-    // (quantityMode:"instances"): каждый экземпляр самостоятелен, ошиблись
-    // количеством — убирается конкретный, а не вся работа целиком.
-    const removeBtn = onRemoveInstance && isInstanceWork(instance) ? el("button", {
-      class: "small", style: "width:100%;margin-top:10px;border:0;background:none;color:var(--warn);text-decoration:underline;padding:0",
-      onclick: () => { if (confirm("Убрать этот экземпляр из наряда?")) removeInstance(instance); },
-    }, "Убрать этот экземпляр") : null;
     const inner = el("div", {},
       tabs,
       s.tab === "diff" ? diffBox : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(s.parts, stock, () => save(instance, { parts: s.parts }), partBlockIdOf(instance))),
-      waitBlock, doneBlock, removeBtn);
+      waitBlock, doneBlock);
     const body = locked
       ? el("div", {},
           el("p", { class: "small", style: "color:var(--muted);margin-bottom:10px" }, `Занято — ${instance.claimedBy?.masterName || "другой мастер"}`),
