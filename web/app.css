@@ -106,9 +106,9 @@ header.bar .bar-title-lg { font-size:19px; font-weight:700; }
 
 /* Один общий счётчик для работ, усложнений и запчастей. */
 .qty-stepper { flex:0 0 auto; display:inline-grid; grid-template-columns:36px minmax(24px,auto) 36px;
-  align-items:center; min-height:40px; padding:0 2px; border-radius:999px; background:var(--fill); }
+  align-items:center; min-height:40px; padding:0 2px; border-radius:9px; background:var(--fill); }
 .qty-stepper button { width:36px; min-width:36px; height:40px; min-height:40px; padding:0; border:0;
-  border-radius:999px; background:transparent; box-shadow:none; color:var(--muted); font:inherit;
+  border-radius:7px; background:transparent; box-shadow:none; color:var(--muted); font:inherit;
   font-size:20px; font-weight:500; line-height:1; }
 .qty-stepper button:active { background:color-mix(in srgb, var(--line) 35%, transparent); }
 .qty-stepper button:disabled { opacity:.35; }
@@ -232,6 +232,7 @@ button:disabled:active { transform:none; }
   align-items:start; row-gap:6px; }
 .priced-control-group { width:100%; min-width:0; display:flex; justify-content:flex-end;
   align-items:center; gap:8px; }
+.priced-control-group > .pill { border-radius:9px; }
 
 /* Карусель экземпляров одной и той же работы (шторка «Ждёт согласования»/
    «Ремонт») — настоящий свайп пальцем через нативный скролл со snap, без
@@ -315,7 +316,7 @@ label { display:block; font-size:13px; color:var(--muted); margin:var(--sp-4) 0 
 .row.opt.priced-control-row { display:grid; grid-template-columns:minmax(0,1fr);
   align-items:start; row-gap:6px; }
 .work-select-btn { flex:0 0 auto; width:40px; min-width:40px; height:40px; min-height:40px; padding:0;
-  border:0; border-radius:999px; background:var(--fill); color:var(--accent); font-size:24px;
+  border:0; border-radius:9px; background:var(--fill); color:var(--accent); font-size:24px;
   font-weight:400; box-shadow:none; }
 .work-select-btn.selected { background:var(--fill); color:var(--muted); font-size:22px; }
 .row-check { flex:0 0 auto; display:flex; color:var(--accent); }
