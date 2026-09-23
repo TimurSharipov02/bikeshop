@@ -3135,7 +3135,13 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
           const priceNode = priceRange
             ? el("span", { class: "pill", style: checked ? "" : "background:var(--fill);color:var(--muted)" }, rangePlusText(priceRange))
             : null;
-          const rowContent = el("div", { class: "row opt", style: "cursor:pointer" },
+          // align-items:flex-start (не center из .opt) — иначе у длинных
+          // названий, переносящихся на 2-3 строки, цена/счётчик съезжали
+          // вниз или вверх каждый раз по-разному (центр всей строки, а не
+          // по первой строке текста) — соседние строки списка «плясали».
+          // Так счётчик всегда на одной и той же высоте, вровень с первой
+          // строкой названия, независимо от того, сколько строк оно занимает.
+          const rowContent = el("div", { class: "row opt", style: "cursor:pointer;align-items:flex-start" },
             el("span", { style: "flex:1" }, f.label),
             el("div", { style: "display:flex;align-items:center;gap:8px;flex:0 0 auto" },
               priceNode,
