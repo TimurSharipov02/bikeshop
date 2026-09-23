@@ -232,7 +232,8 @@ button:disabled:active { transform:none; }
   align-items:start; row-gap:6px; }
 .priced-control-group { width:100%; min-width:0; display:flex; justify-content:flex-end;
   align-items:center; gap:8px; }
-.priced-control-group > .pill { border-radius:9px; }
+.priced-control-group > .pill { display:inline-flex; align-items:center; min-height:40px; padding:0 12px;
+  border-radius:9px; font-size:16px; }
 
 /* Карусель экземпляров одной и той же работы (шторка «Ждёт согласования»/
    «Ремонт») — настоящий свайп пальцем через нативный скролл со snap, без
