@@ -228,7 +228,7 @@ button:disabled:active { transform:none; }
    своего жеста: надёжнее и попадает в системную инерцию/пружинку. Точки —
    тот же паттерн, что и везде в мобильных интерфейсах, тап по точке тоже
    работает (переходит тем же scrollTo, что и снап). */
-.instance-track { display:flex; overflow-x:auto; scroll-snap-type:x mandatory;
+.instance-track { display:flex; gap:12px; overflow-x:auto; scroll-snap-type:x mandatory;
   -webkit-overflow-scrolling:touch; scrollbar-width:none; }
 .instance-track::-webkit-scrollbar { display:none; }
 .instance-panel { flex:0 0 100%; min-width:0; scroll-snap-align:start; scroll-snap-stop:always; }
