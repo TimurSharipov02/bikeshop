@@ -2136,17 +2136,18 @@ const iconBtnStyle = "border:0;background:none;color:var(--muted);cursor:pointer
 // onRemove — необязательный: если задан, при количестве 1 кнопка «−»
 // превращается в иконку корзины и убирает позицию целиком, вместо отдельной
 // кнопки ✕ рядом.
-function qtyStepper(value, onChange, max, onRemove) {
+function qtyStepper(value, onChange, max, onRemove, keepMinusAtMin = false) {
   const atMax = max > 0 && (value || 1) >= max;
   const atMin = (value || 1) <= 1;
-  const showTrash = atMin && onRemove;
+  const showTrash = atMin && onRemove && !keepMinusAtMin;
+  const removesAtMin = atMin && onRemove;
   return el("div", { style: "display:flex;align-items:center;gap:8px", onclick: (e) => e.stopPropagation() },
     el("button", {
       class: showTrash ? "step-trash-btn" : "",
-      "aria-label": showTrash ? "Удалить" : "Уменьшить",
+      "aria-label": showTrash ? "Удалить" : removesAtMin ? "Убрать" : "Уменьшить",
       style: iconBtnStyle + ";font-size:15px",
       html: showTrash ? ICON_TRASH : null,
-      onclick: () => { if (showTrash) onRemove(); else onChange(Math.max(1, (value || 1) - 1)); },
+      onclick: () => { if (removesAtMin) onRemove(); else onChange(Math.max(1, (value || 1) - 1)); },
     }, showTrash ? null : "−"),
     el("span", { class: "small", style: "min-width:16px;text-align:center" }, String(value || 1)),
     el("button", { "aria-label": "Увеличить", style: iconBtnStyle + ";font-size:15px", disabled: atMax,
@@ -2398,8 +2399,8 @@ function difficultyStateToggle(d, labels, onSet) {
       onclick: () => onSet(value),
     }, symbols[value])));
 }
-function difficultyQtyStepper(d, onQty) {
-  return qtyStepper(difficultyQty(d), onQty);
+function difficultyQtyStepper(d, onQty, onClear) {
+  return qtyStepper(difficultyQty(d), onQty, 0, onClear, true);
 }
 
 function difficultyList(difficulties, onSet, onQty, fact) {
@@ -2413,17 +2414,20 @@ function difficultyList(difficulties, onSet, onQty, fact) {
     // иначе просто «+/×». Раньше тут был отдельный тумблер и, если можно
     // несколько, ещё отдельный счётчик отдельной строкой ниже — два разных
     // элемента на одно и то же состояние.
-    const factControl = !fact ? null
-      : d.multiple
-        ? (done
-            ? difficultyQtyStepper(d, (qty) => onQty(di, qty))
-            : el("button", { type: "button", class: "work-select-btn", "aria-label": `${d.label}: было`, onclick: () => onSet(di, "yes") }, "+"))
-        : el("button", {
+    // Повторяемое усложнение во всех режимах управляется одним и тем же
+    // счётчиком: нет числа — не выбрано, есть число — входит в стоимость.
+    // Тройное состояние нужно только обычному усложнению на этапе приёмки.
+    const multipleControl = d.multiple
+      ? (done
+          ? difficultyQtyStepper(d, (qty) => onQty(di, qty), () => onSet(di, "no"))
+          : el("button", { type: "button", class: "work-select-btn", "aria-label": `${d.label}: добавить`, onclick: () => onSet(di, "yes") }, "+"))
+      : null;
+    const factControl = !fact || d.multiple ? null : el("button", {
             type: "button", class: "work-select-btn" + (done ? " selected" : ""),
             "aria-label": `${d.label}: ${done ? "было" : "не было"}`,
             onclick: () => onSet(di, done ? "no" : "yes"),
           }, done ? "×" : "+");
-    const stateControl = fact ? factControl : difficultyStateToggle(d, labels, (state) => onSet(di, state));
+    const stateControl = multipleControl || (fact ? factControl : difficultyStateToggle(d, labels, (state) => onSet(di, state)));
     const addedMinutes = difficultyMinutes(d);
     box.append(el("div", { style: "margin-top:8px" },
       el("div", {
@@ -2440,12 +2444,7 @@ function difficultyList(difficulties, onSet, onQty, fact) {
           d.label,
           addedMinutes ? el("span", { class: "muted" }, ` (+${addedMinutes} мин)`) : null),
         el("div", { style: "display:flex;align-items:center;gap:8px;flex:0 0 auto" },
-          difficultyPriceTag(d), stateControl)),
-      // У повторяемого усложнения количество остаётся отдельной строкой,
-      // чтобы компактный тройной тумблер не менял ширину и не прыгал.
-      !fact && d.multiple && onQty && d.state !== "no" ? el("div", {
-        style: "display:flex;justify-content:flex-end;margin-top:6px",
-      }, difficultyQtyStepper(d, (qty) => onQty(di, qty))) : null));
+          difficultyPriceTag(d), stateControl))));
   });
   return box;
 }
