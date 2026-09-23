@@ -2061,12 +2061,14 @@ function qtyStepper(value, onChange, max, onRemove) {
   return el("div", { style: "display:flex;align-items:center;gap:8px", onclick: (e) => e.stopPropagation() },
     el("button", {
       class: showTrash ? "step-trash-btn" : "",
+      "aria-label": showTrash ? "Удалить" : "Уменьшить",
       style: iconBtnStyle + ";font-size:15px",
       html: showTrash ? ICON_TRASH : null,
       onclick: () => { if (showTrash) onRemove(); else onChange(Math.max(1, (value || 1) - 1)); },
     }, showTrash ? null : "−"),
     el("span", { class: "small", style: "min-width:16px;text-align:center" }, String(value || 1)),
-    el("button", { style: iconBtnStyle + ";font-size:15px", disabled: atMax, onclick: () => onChange(max > 0 ? Math.min(max, (value || 1) + 1) : (value || 1) + 1) }, "+"));
+    el("button", { "aria-label": "Увеличить", style: iconBtnStyle + ";font-size:15px", disabled: atMax,
+      onclick: () => onChange(max > 0 ? Math.min(max, (value || 1) + 1) : (value || 1) + 1) }, "+"));
 }
 
 // Как работа считается в наряде. «Отдельные задачи» нужны для парных и
