@@ -1671,7 +1671,7 @@ function viewOrder(number) {
     // То же поле, что и на диагностике (order.request) — тут его тоже можно
     // менять, без захода в диагностику.
     el("div", { style: "margin-top:8px" },
-      el("textarea", { rows: 2, value: order.request || "", placeholder: "Уточнения",
+      el("textarea", { class: "request-field", rows: 2, value: order.request || "", placeholder: "Уточнения",
         onchange: (e) => { editOrder(number, (o) => (o.request = e.target.value.trim())); refresh(); } })),
     order.status === "взята в работу" ? el("button", {
       class: "small", style: "margin-top:10px;width:100%", onclick: openOrderDetailsEditor,
@@ -2793,11 +2793,10 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
     // отмеченное и так видно по заливке прямо в блоках ниже, а сама эта
     // секция росла НАД блоками и раздвигала список при каждой отметке.
     if (!inline && onRequest) {
-      wrap.append(el("div", { class: "card" },
-        // DIAG_TOGGLES (гидравлика/механика и т.п.) пока скрыты — переключатели
-        // остаются в коде с дефолтными значениями, faultVisible ими и пользуется.
-        el("textarea", { rows: 2, value: req, placeholder: "Уточнения",
-          onchange: (e) => { req = e.target.value.trim(); onRequest(req); } })));
+      // Поле самостоятельное: дополнительная карточка вокруг него создавала
+      // рамку в рамке и не несла никакой функции.
+      wrap.append(el("textarea", { class: "request-field request-field-new", rows: 2, value: req, placeholder: "Уточнения",
+        onchange: (e) => { req = e.target.value.trim(); onRequest(req); } }));
     }
 
     for (const inst of list) {
