@@ -2080,26 +2080,50 @@ function qtyStepper(value, onChange, max, onRemove) {
 // повторяемых работ, которые могут выполнять разные мастера; «Количество»
 // оставляет одну задачу и умножает её цену, например для нескольких спиц.
 function quantityModeEditor(draft) {
-  const fieldName = `quantity-mode-${Math.random().toString(36).slice(2)}`;
-  const modes = [
-    ["single", "Один раз · 1", "Одна задача, один исполнитель"],
-    ["instances", "Каждую отдельно · до 5", "Несколько задач, исполнитель у каждой"],
-    ["quantity", "Общим количеством · до 64", "Одна задача × количество, один исполнитель"],
-  ];
-  const choices = el("div", { class: "quantity-mode-list" },
-    ...modes.map(([value, title, hint]) => el("label", { class: "opt quantity-mode-row" },
-      el("input", {
-        type: "radio", name: fieldName, value, checked: draft.quantityMode === value,
-        onchange: () => {
-          draft.quantityMode = value;
-          draft.maxInstances = value === "instances" ? WORK_INSTANCE_LIMIT : 0;
-        },
-      }),
-      el("span", { style: "line-height:1.25" }, title,
-        el("span", { class: "small muted", style: "display:block;margin-top:5px;line-height:1.4" }, hint)))));
+  let repeated = quantityModeOf(draft) !== "single";
+  if (repeated && !["instances", "quantity"].includes(draft.quantityMode)) draft.quantityMode = "instances";
   draft.maxInstances = instanceLimitOf(draft);
+
+  const detail = el("div", { class: "quantity-repeat-detail" });
+  const repeatHint = el("span", { class: "small muted" });
+  const repeatSwitch = el("button", { class: "switch", role: "switch", type: "button" }, el("span"));
+
+  const setMode = (mode) => {
+    draft.quantityMode = mode;
+    draft.maxInstances = mode === "instances" ? WORK_INSTANCE_LIMIT : 0;
+    draw();
+  };
+  const draw = () => {
+    repeatSwitch.className = "switch" + (repeated ? " on" : "");
+    repeatSwitch.setAttribute("aria-checked", String(repeated));
+    repeatSwitch.setAttribute("aria-label", repeated ? "Запретить повторение работы" : "Разрешить повторение работы");
+    repeatHint.textContent = repeated ? "Можно выполнить несколько раз" : "Выполняется только один раз";
+    if (!repeated) {
+      detail.replaceChildren();
+      detail.style.display = "none";
+      return;
+    }
+    detail.style.display = "";
+    const mode = quantityModeOf(draft) === "quantity" ? "quantity" : "instances";
+    detail.replaceChildren(
+      el("label", { style: "display:block;margin:0 0 7px" }, "Как учитывать повторения"),
+      el("div", { class: "segmented" },
+        el("button", { type: "button", class: mode === "instances" ? "active" : "", onclick: () => setMode("instances") }, "Каждую отдельно"),
+        el("button", { type: "button", class: mode === "quantity" ? "active" : "", onclick: () => setMode("quantity") }, "Общим количеством")),
+      el("p", { class: "small muted quantity-mode-help" },
+        mode === "instances" ? "До 5 задач. Исполнитель у каждой." : "Одна задача × до 64. Один исполнитель."));
+  };
+  repeatSwitch.onclick = () => {
+    repeated = !repeated;
+    setMode(repeated ? "instances" : "single");
+  };
+  draw();
   return el("div", { style: "margin-top:18px;margin-bottom:4px" },
-    el("label", { style: "display:block;margin:0" }, "Как учитывать работу"), choices);
+    el("label", { style: "display:block;margin:0" }, "Как учитывать работу"),
+    el("div", { class: "quantity-repeat-row" },
+      el("span", {}, el("b", { style: "display:block;color:var(--ink)" }, "Работа повторяется"), repeatHint),
+      repeatSwitch),
+    detail);
 }
 
 // Редактор списка усложнений (название + надбавка к цене + надбавка к времени
@@ -2109,20 +2133,20 @@ function complicationsEditor(list) {
   const box = el("div", {});
   const draw = () => {
     box.replaceChildren(
-      ...list.map((c, ci) => el("div", { style: "margin-top:8px;padding:8px;background:var(--fill);border-radius:var(--radius-sm)" },
+      ...list.map((c, ci) => el("div", { class: "complication-edit-item" },
         el("div", { style: "display:flex;gap:6px;align-items:center" },
           el("input", { placeholder: "усложнение", value: c.label, style: "flex:1;min-width:0", oninput: (e) => (c.label = e.target.value) }),
-          el("button", { style: iconBtnStyle, onclick: () => { list.splice(ci, 1); draw(); } }, "✕")),
-        el("div", { style: "display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px" },
+          el("button", { class: "complication-remove", "aria-label": "Удалить усложнение", onclick: () => { list.splice(ci, 1); draw(); } }, "✕")),
+        el("div", { class: "complication-edit-meta" },
           el("span", { class: "muted small", style: "flex:0 0 auto" }, "надбавка"),
           el("input", { type: "number", value: c.add, style: "width:64px;text-align:right", oninput: (e) => (c.add = +e.target.value || 0) }),
           el("span", { class: "muted small" }, "₽"),
           el("input", { type: "number", value: c.addMinutes || 0, style: "width:56px;text-align:right", oninput: (e) => (c.addMinutes = +e.target.value || 0) }),
           el("span", { class: "muted small" }, "мин")),
-        el("label", { class: "opt", style: "margin-top:6px" },
-          el("input", { type: "checkbox", checked: !!c.multiple, onchange: (e) => (c.multiple = e.target.checked) }),
+        el("label", { class: "complication-multiple" },
+          el("input", { class: "chk", type: "checkbox", checked: !!c.multiple, onchange: (e) => (c.multiple = e.target.checked) }),
           el("span", { class: "small" }, "можно несколько раз")))),
-      el("button", { style: "margin-top:6px", onclick: () => { list.push({ label: "", add: 0, addMinutes: 0, multiple: false }); draw(); } }, "+ усложнение"),
+      el("button", { class: "compact-add-btn", onclick: () => { list.push({ label: "", add: 0, addMinutes: 0, multiple: false }); draw(); } }, "+ усложнение"),
     );
   };
   draw();
