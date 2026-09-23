@@ -85,6 +85,10 @@ function closeAllSheets() {
   for (const close of [...openSheetClosers]) close(true);
 }
 function openSheet(title, bodyNode) {
+  // iOS оставляет системную панель перехода между полями (стрелки и
+  // галочка), если открыть шторку, пока textarea/input позади неё в фокусе.
+  // Снимаем фокус до показа и ещё раз перед закрытием самой шторки.
+  if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
   const backdrop = el("div", { class: "sheet-backdrop", onclick: () => close() });
   const sheet = el("div", { class: "sheet" },
     el("div", { class: "sheet-handle" }),
@@ -95,6 +99,7 @@ function openSheet(title, bodyNode) {
   function close(immediate = false) {
     if (closed) return;
     closed = true;
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     openSheetClosers.delete(close);
     backdrop.classList.remove("show");
     sheet.classList.remove("show");
@@ -471,10 +476,15 @@ const quantityModeOf = (x) => {
   if (["single", "instances", "quantity"].includes(x?.quantityMode)) return x.quantityMode;
   return "single";
 };
-const usesQuantity = (x) => quantityModeOf(x) === "quantity";
+// И одинаковые экземпляры, и общее количество живут одной строкой и имеют
+// счётчик. Разница в расчёте: экземпляр повторяет всю работу целиком, а
+// общее количество умножает только саму операцию (например, несколько спиц).
+const usesQuantity = (x) => ["instances", "quantity"].includes(quantityModeOf(x));
+const repeatsWholeItem = (x) => quantityModeOf(x) === "instances";
 const WORK_INSTANCE_LIMIT = 5;
 const WORK_QUANTITY_LIMIT = 64;
 const instanceLimitOf = (x) => quantityModeOf(x) === "instances" ? WORK_INSTANCE_LIMIT : 0;
+const workQuantityLimitOf = (x) => repeatsWholeItem(x) ? (x.maxInstances || WORK_INSTANCE_LIMIT) : WORK_QUANTITY_LIMIT;
 
 const yy = () => String(new Date().getFullYear()).slice(2);
 const nextOrderNumber = (d) => (d.counters.order++, `V${yy()}-${String(d.counters.order).padStart(6, "0")}`);
@@ -489,10 +499,12 @@ const nextBikeKey = (d, phone) => `${phone}#${d.bikes.filter((b) => b.ownerPhone
 // стоит галочка «несколько», иначе всегда 1 и ни на что не влияет.
 const partsCost = (parts) => (parts || []).reduce((s, p) => s + (p.price || 0) * (p.qty || 1), 0);
 function itemRange(it) {
-  const base = (it.workPrice || 0) * (it.qty || 1) + (it.partsPrice || 0) + partsCost(it.parts);
+  const qty = it.qty || 1;
+  const wholeItemQty = repeatsWholeItem(it) ? qty : 1;
+  const base = (it.workPrice || 0) * qty + ((it.partsPrice || 0) + partsCost(it.parts)) * wholeItemQty;
   let min = base, max = base;
   for (const d of it.difficulties || []) {
-    const amt = (d.add || 0) * (d.qty || 1);
+    const amt = (d.add || 0) * (d.qty || 1) * wholeItemQty;
     if (d.state === "yes") { min += amt; max += amt; }
     else if (d.state === "unknown") max += amt;
   }
@@ -501,9 +513,11 @@ function itemRange(it) {
 // Ориентировочное время работы с учётом отмеченных трудностей (будет/неизвестно
 // тоже добавляют время, как и цену — на «неизвестно» берём время по максимуму).
 function itemMinutes(it) {
-  let m = (it.estimateMinutes || 0) * (it.qty || 1);
+  const qty = it.qty || 1;
+  const wholeItemQty = repeatsWholeItem(it) ? qty : 1;
+  let m = (it.estimateMinutes || 0) * qty;
   for (const d of it.difficulties || []) {
-    if (d.state === "yes" || d.state === "unknown") m += (d.addMinutes || 0) * (d.qty || 1);
+    if (d.state === "yes" || d.state === "unknown") m += (d.addMinutes || 0) * (d.qty || 1) * wholeItemQty;
   }
   return m;
 }
@@ -542,8 +556,10 @@ const orderWaitingLast = (a, b) => (orderWaitingForPart(a) ? 1 : 0) - (orderWait
 // мастера: цена работы за все качественные единицы плюс подтвердившиеся
 // усложнения. Запчасти — расходники, в доход мастера не идут.
 const itemWorkValue = (it) => {
-  let v = (it.workPrice || 0) * (it.qty || 1);
-  for (const d of it.difficulties || []) if (d.state === "yes") v += (d.add || 0) * (d.qty || 1);
+  const qty = it.qty || 1;
+  const wholeItemQty = repeatsWholeItem(it) ? qty : 1;
+  let v = (it.workPrice || 0) * qty;
+  for (const d of it.difficulties || []) if (d.state === "yes") v += (d.add || 0) * (d.qty || 1) * wholeItemQty;
   return v;
 };
 const completionsSummary = (it) => it.doneBy?.masterName || "";
@@ -1233,23 +1249,23 @@ function viewNewOrder() {
       onUncheck: (fa) => {
         draft.items = draft.items.filter((it) => (it.sourceCode || it.code) !== fa.code);
       },
-      getInstanceCount: (fa) => draft.items.filter((it) => (it.sourceCode || it.code) === fa.code).length,
+      getInstanceCount: (fa) => draft.items.find((it) => (it.sourceCode || it.code) === fa.code)?.qty || 0,
       getQuantity: (fa) => draft.items.find((it) => (it.sourceCode || it.code) === fa.code)?.qty || 1,
       onQuantity: (fa, qty) => {
         const item = draft.items.find((it) => (it.sourceCode || it.code) === fa.code);
         if (item) item.qty = qty;
       },
       onInstanceCount: (fa, count) => {
-        let current = draft.items.filter((it) => (it.sourceCode || it.code) === fa.code);
-        while (current.length < count) { addDraftItem(fa); current = draft.items.filter((it) => (it.sourceCode || it.code) === fa.code); }
-        while (current.length > count) {
-          const remove = current.pop();
-          draft.items = draft.items.filter((it) => it.code !== remove.code);
+        let item = draft.items.find((it) => (it.sourceCode || it.code) === fa.code);
+        if (count <= 0) {
+          if (item) draft.items = draft.items.filter((it) => it.code !== item.code);
+          return;
         }
+        if (!item) { addDraftItem(fa); item = draft.items.find((it) => (it.sourceCode || it.code) === fa.code); }
+        if (item) item.qty = count;
       },
       onOpen: async (fa, redraw) => {
-        const siblings = draft.items.filter((item) => (item.sourceCode || item.code) === fa.code);
-        const it = siblings.at(-1);
+        const it = draft.items.find((item) => (item.sourceCode || item.code) === fa.code);
         if (!it) return;
         const stock = await ensureStock();
         openPendingSheet(it, stock, {
@@ -1639,35 +1655,30 @@ function viewOrder(number) {
         const i = added.findIndex((it) => (it.sourceCode || it.code) === fa.code);
         if (i >= 0) added.splice(i, 1);
       },
-      getInstanceCount: (fa) => added.filter((it) => (it.sourceCode || it.code) === fa.code).length,
+      getInstanceCount: (fa) => added.find((it) => (it.sourceCode || it.code) === fa.code)?.qty || 0,
       getQuantity: (fa) => added.find((it) => (it.sourceCode || it.code) === fa.code)?.qty || 1,
       onQuantity: (fa, qty) => {
         const item = added.find((it) => (it.sourceCode || it.code) === fa.code);
         if (item) item.qty = qty;
       },
       getInstanceMax: (fa) => {
-        if (!(fa.maxInstances > 0)) return 0;
-        const existing = order.items.filter((it) => (it.sourceCode || it.code) === fa.code).length;
-        return Math.max(0, fa.maxInstances - existing);
+        return fa.maxInstances > 0 ? fa.maxInstances : 0;
       },
       onInstanceCount: (fa, count) => {
-        let current = added.filter((it) => (it.sourceCode || it.code) === fa.code);
-        while (current.length < count) {
-          const item = makeCustomItem(fa);
+        let item = added.find((it) => (it.sourceCode || it.code) === fa.code);
+        if (count <= 0) {
+          if (item) added.splice(added.indexOf(item), 1);
+          return;
+        }
+        if (!item) {
+          item = makeCustomItem(fa);
           item.agreed = true;
-          if (current.length) { item.sourceCode = fa.code; item.code = instanceCode(fa.code); }
           added.push(item);
-          current = added.filter((it) => (it.sourceCode || it.code) === fa.code);
         }
-        while (current.length > count) {
-          const remove = current.pop();
-          const i = added.findIndex((it) => it.code === remove.code);
-          if (i >= 0) added.splice(i, 1);
-        }
+        item.qty = count;
       },
       onOpen: async (fa, redraw) => {
-        const siblings = added.filter((item) => (item.sourceCode || item.code) === fa.code);
-        const it = siblings.at(-1);
+        const it = added.find((item) => (item.sourceCode || item.code) === fa.code);
         if (!it) return;
         const stock = await ensureStock();
         openPendingSheet(it, stock, {
@@ -2117,15 +2128,15 @@ function qtyStepper(value, onChange, max, onRemove) {
       onclick: () => onChange(max > 0 ? Math.min(max, (value || 1) + 1) : (value || 1) + 1) }, "+"));
 }
 
-// Как работа считается в наряде. «Отдельные задачи» нужны для парных и
-// повторяемых работ, которые могут выполнять разные мастера; «Количество»
-// оставляет одну задачу и умножает её цену, например для нескольких спиц.
+// Как работа считается в наряде. Одинаковые экземпляры повторяют целиком
+// одну работу с общей карточкой и мастером. Новую независимую задачу мастер
+// добавляет повторным выбором этой работы из каталога.
 function quantityModeEditor(draft) {
   const fieldName = `quantity-mode-${Math.random().toString(36).slice(2)}`;
   const modes = [
     ["single", "Один раз · 1", "Одна задача, один исполнитель"],
-    ["instances", "Отдельными работами · до 5", "Каждый раз добавляется новая самостоятельная строка"],
-    ["quantity", "Одной строкой · до 64", "Количество меняется счётчиком, исполнитель один"],
+    ["instances", "Одинаковые экземпляры · до 5", "Одна строка, общие усложнения, запчасти и мастер"],
+    ["quantity", "Общим количеством · до 64", "Одна операция × количество, один исполнитель"],
   ];
   const choices = el("div", { class: "quantity-mode-list" },
     ...modes.map(([value, title, hint]) => el("label", { class: "opt quantity-mode-row" },
@@ -2185,7 +2196,7 @@ function editableItemRow(it, { onRemove, onSave, refresh, onDiffSet, onDiffQty }
   const rowContent = el("div", { class: "row", style: "align-items:flex-start;flex-direction:column;gap:6px" },
     el("span", { style: "width:100%" }, it.name, it.notes ? el("span", { class: "small muted" }, el("br"), it.notes) : null),
     el("div", { style: "display:flex;align-items:center;gap:10px;width:100%" },
-      usesQuantity(it) ? qtyStepper(it.qty, (qty) => onSave(it.code, { qty }), WORK_QUANTITY_LIMIT, () => onRemove(it.code)) : null,
+      usesQuantity(it) ? qtyStepper(it.qty, (qty) => onSave(it.code, { qty }), workQuantityLimitOf(it), () => onRemove(it.code)) : null,
       el("span", { class: "price-tag", style: "flex:1" }, rangeText(r))));
   const header = swipeActions(rowContent, [
     { label: ICON_EDIT, ariaLabel: "Изменить работу", onClick: () => { editingItemCode = isEditing ? null : it.code; refresh(); } },
@@ -2248,11 +2259,13 @@ function itemList(order, showFacts, edit, detailed, grouped = true) {
 // строкой. Общая для списков «в работе» и «выдан», чтобы мастер сразу видел,
 // из чего складывается сумма, не открывая форму по каждому пункту.
 function costLines(it) {
-  const lines = [`работы ${money((it.workPrice || 0) * (it.qty || 1))}`];
-  for (const p of it.parts || []) lines.push(`${partLabel(p)} ${money((p.price || 0) * (p.qty || 1))}`);
-  if (it.partsPrice) lines.push(`запчасти ${money(it.partsPrice)}`);
+  const qty = it.qty || 1;
+  const wholeItemQty = repeatsWholeItem(it) ? qty : 1;
+  const lines = [`работы ${money((it.workPrice || 0) * qty)}`];
+  for (const p of it.parts || []) lines.push(`${partLabel(p)} ${money((p.price || 0) * (p.qty || 1) * wholeItemQty)}`);
+  if (it.partsPrice) lines.push(`запчасти ${money(it.partsPrice * wholeItemQty)}`);
   for (const d of it.difficulties || []) {
-    if (d.state === "yes") lines.push(`${d.label} ${money((d.add || 0) * (d.qty || 1))}`);
+    if (d.state === "yes") lines.push(`${d.label} ${money((d.add || 0) * (d.qty || 1) * wholeItemQty)}`);
   }
   return lines;
 }
@@ -2495,7 +2508,7 @@ function openPendingSheet(it, stock, { onSet, onDiffQty, onParts, onQty, onRemov
         el("button", { class: tab === "diff" ? "active" : "", onclick: () => { tabs.set(instance.code, "diff"); draw(); } }, "Усложнения"),
         el("button", { class: tab === "parts" ? "active" : "", onclick: () => { tabs.set(instance.code, "parts"); draw(); } }, "Запчасти")) : null,
       usesQuantity(instance) ? el("div", { style: "margin-bottom:14px" }, qtyStepper(instance.qty,
-        (qty) => { onQty(instance.code, qty); draw(); }, WORK_QUANTITY_LIMIT,
+        (qty) => { onQty(instance.code, qty); draw(); }, workQuantityLimitOf(instance),
         onRemove ? () => removeInstance(instance) : undefined)) : null,
       tab === "diff"
         ? (hasDiffs ? difficultyList(instance.difficulties, (di, st) => { onSet(instance.code, di, st); draw(); }, (di, qty) => { onDiffQty(instance.code, di, qty); draw(); })
@@ -2592,7 +2605,7 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove, onAdd }) {
     // открывать форму, чтобы увидеть, из чего сложилась сумма.
     el("div", { class: "small muted", style: "margin-top:4px" }, costLines(it).map((l) => el("div", {}, "– " + l))));
   box.append(openArea);
-  if (usesQuantity(it)) box.append(el("div", { style: "margin-top:10px" }, qtyStepper(it.qty, onQty, WORK_QUANTITY_LIMIT, onRemove ? () => onRemove(it.code) : undefined)));
+  if (usesQuantity(it)) box.append(el("div", { style: "margin-top:10px" }, qtyStepper(it.qty, onQty, workQuantityLimitOf(it), onRemove ? () => onRemove(it.code) : undefined)));
   if (it.notes) box.append(el("p", { class: "small muted" }, it.notes));
   return onRemove ? swipeToDelete(box, () => { onRemove(it.code); return true; }) : box;
 }
