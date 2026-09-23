@@ -317,13 +317,14 @@ label { display:block; font-size:13px; color:var(--muted); margin:var(--sp-4) 0 
 /* Усложнения вторичны относительно самой работы, поэтому редактор у них
    плотнее: небольшие поля, обычный чекбокс без ещё одной карточки и
    текстовая кнопка добавления. */
-.complication-edit-item { margin-top:6px; padding:7px 9px; background:var(--fill); border-radius:var(--radius-sm); }
-.complication-edit-item input:not(.chk) { padding:8px 9px; font-size:14px; background:var(--card); }
-.complication-edit-meta { display:flex; flex-wrap:wrap; gap:5px; align-items:center; margin-top:5px; }
+.complication-edit-item { padding:11px 0; border-bottom:.5px solid var(--line); }
+.complication-edit-item input:not(.chk) { padding:8px 9px; font-size:14px; background:var(--fill); }
+.complication-edit-meta { display:flex; flex-wrap:wrap; gap:4px; align-items:center; margin-top:6px; }
 .complication-remove { flex:0 0 auto; width:36px; min-width:36px; height:36px; min-height:36px; padding:0; border:0; background:none; color:var(--muted); }
-.complication-multiple { display:inline-flex; align-items:center; gap:7px; margin:6px 0 0; cursor:pointer; }
+.complication-time-plus { margin-left:7px; }
+.complication-multiple { display:inline-flex; align-items:center; gap:6px; margin:0 0 0 9px; cursor:pointer; }
 .complication-multiple input.chk { width:18px; height:18px; padding:0; }
-.compact-add-btn { width:auto; min-height:34px; margin-top:6px; padding:4px 2px; border:0; background:none; color:var(--accent); font-size:13px; font-weight:600; }
+.compact-add-btn { width:auto; min-height:34px; margin-top:5px; padding:4px 2px; border:0; background:none; color:var(--accent); font-size:13px; font-weight:600; }
 
 .check-item { padding:10px 0; border-bottom:.5px solid var(--line); }
 .hint-toggle { border:0; background:none; padding:4px 0; color:var(--accent); min-height:auto; }
