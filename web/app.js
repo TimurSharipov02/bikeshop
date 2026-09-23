@@ -3227,7 +3227,6 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
           const quantityCount = quantityMode && getQuantity ? Math.max(1, getQuantity(f) || 1) : 1;
           const instanceMax = instanceMode ? (getInstanceMax ? getInstanceMax(f) : (f.maxInstances || 0)) : 0;
           const instanceUnavailable = instanceMode && !!getInstanceMax && (f.maxInstances || 0) > 0 && instanceMax <= 0;
-          const instanceAtMax = instanceMode && instanceMax > 0 && instanceCount >= instanceMax;
           const checked = selectedCount > 0;
           const setInstanceCount = (count) => {
             if (instanceUnavailable && count > 0) return;
@@ -3257,13 +3256,15 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
           };
           let selectButton = null;
           if (onlyCustom && f.custom) {
-            // Разные экземпляры не регулируются общим счётчиком. Каждое
-            // нажатие «+» добавляет новую самостоятельную строку наряда.
-            if (instanceMode) selectButton = el("button", {
+            // Счётчик показывает, сколько самостоятельных строк этой работы
+            // будет в наряде. В ремонте они не объединяются: у каждой будет
+            // собственный исполнитель, готовность, усложнения и запчасти.
+            if (checked && instanceMode) selectButton = qtyStepper(instanceCount, setInstanceCount, instanceMax, () => setInstanceCount(0));
+            else if (instanceMode) selectButton = el("button", {
               type: "button", class: "work-select-btn",
-              disabled: instanceUnavailable || instanceAtMax,
-              "aria-label": checked ? "Добавить ещё один экземпляр" : "Добавить работу",
-              onclick: (e) => { e.stopPropagation(); setInstanceCount(instanceCount + 1); },
+              disabled: instanceUnavailable,
+              "aria-label": "Добавить работу",
+              onclick: (e) => { e.stopPropagation(); setInstanceCount(1); },
             }, "+");
             else if (checked && quantityMode) selectButton = qtyStepper(quantityCount, setQuantityCount, WORK_QUANTITY_LIMIT, () => setQuantityCount(0));
             else selectButton = el("button", {
