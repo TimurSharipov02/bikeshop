@@ -65,6 +65,32 @@ header.bar .bar-title-lg { font-size:19px; font-weight:700; }
 
 .card-link { display:block; color:inherit; text-decoration:none; transition:background .1s ease; }
 .card-link:active { background:var(--fill); }
+.admin-tiles { display:flex; flex-direction:column; gap:10px; }
+.admin-tile, .admin-person-card, .admin-add-card, .admin-search, .admin-stock-card {
+  background:var(--card); border:.5px solid var(--line); border-radius:var(--radius);
+  box-shadow:var(--shadow-sm); padding:var(--sp-4); margin:0; }
+.admin-tile { display:flex; align-items:center; gap:var(--sp-3); min-height:76px; color:var(--ink); }
+.admin-tile-text { display:flex; flex:1; min-width:0; flex-direction:column; line-height:1.3; gap:3px; }
+.admin-tile-text b, .admin-person-head b { font-size:17px; font-weight:600; }
+.admin-tile .chev, .admin-person-head .chev { color:var(--muted); font-size:22px; }
+.admin-person-head { display:flex; align-items:center; gap:8px; margin-bottom:3px; }
+.admin-person-head .chev { margin-left:auto; }
+.admin-report-link { display:inline-block; margin-top:10px; font-size:14px; }
+.admin-details { border-top:.5px solid var(--line); margin-top:14px; padding-top:10px; }
+.admin-details summary { color:var(--accent); cursor:pointer; list-style:none; font-size:15px; font-weight:600; }
+.admin-details summary::-webkit-details-marker { display:none; }
+.admin-add-card { border-top:.5px solid var(--line); margin-top:0; padding-top:var(--sp-4); }
+.admin-form { padding-top:12px; }
+.admin-form h2 { font-size:17px; margin:0 0 10px; }
+.admin-person-controls { padding-top:4px; }
+.admin-person-controls form { flex-wrap:wrap; }
+.admin-person-controls form input { min-width:110px; }
+.admin-search { margin-bottom:12px; }
+.admin-search > input { width:100%; }
+.admin-stock-list .list { gap:10px; }
+.admin-stock-card { margin-bottom:0; }
+.admin-stock-actions { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; padding:0 0 16px; }
+.admin-stock-actions .btn-row { margin-top:10px; }
 .card { background:var(--card); border:.5px solid var(--line); border-radius:var(--radius); padding:var(--sp-4);
   margin-bottom:var(--sp-4); box-shadow:var(--shadow-sm); }
 .card h2 { margin:0 0 var(--sp-3); font-size:var(--fs-lg); font-weight:700; letter-spacing:-.01em; }
