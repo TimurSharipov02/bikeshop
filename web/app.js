@@ -1279,6 +1279,11 @@ function viewNewOrder() {
           },
         }, siblings);
       },
+      getItemRange: (fa) => {
+        const items = draft.items.filter((it) => (it.sourceCode || it.code) === fa.code);
+        if (!items.length) return null;
+        return items.reduce((a, it) => { const r = itemRange(it); return { min: a.min + r.min, max: a.max + r.max }; }, { min: 0, max: 0 });
+      },
       totalText: () => rangeText(orderRangeAll(draft)),
       onDone: stepClient,
     });
@@ -1571,6 +1576,12 @@ function viewOrder(number) {
       request: order.request || "",
       onRequest: (v) => editOrder(number, (o) => (o.request = v)),
       onlyBlocks: bike?.kind === "колесо" ? ["WHL"] : null,
+      getItemRange: (fa) => {
+        const liveItems = (loadDB().orders.find((o) => o.number === number)?.items) || order.items;
+        const items = liveItems.filter((it) => (it.sourceCode || it.code) === fa.code);
+        if (!items.length) return null;
+        return items.reduce((a, it) => { const r = itemRange(it); return { min: a.min + r.min, max: a.max + r.max }; }, { min: 0, max: 0 });
+      },
     });
   }
   function openRunner(code) {
@@ -1648,6 +1659,11 @@ function viewOrder(number) {
           onQty: (code, qty) => { const x = added.find((v) => v.code === code); if (x) x.qty = qty; redraw(); },
           onRemove: (code) => { const i = added.findIndex((v) => v.code === code); if (i >= 0) added.splice(i, 1); redraw(); },
         }, siblings);
+      },
+      getItemRange: (fa) => {
+        const items = added.filter((it) => (it.sourceCode || it.code) === fa.code);
+        if (!items.length) return null;
+        return items.reduce((a, it) => { const r = itemRange(it); return { min: a.min + r.min, max: a.max + r.max }; }, { min: 0, max: 0 });
       },
       totalText: () => rangeText(orderRangeAll({ items: [...order.items.filter((it) => it.agreed), ...added] })),
       onDone: () => {
@@ -2645,7 +2661,7 @@ const DIAG_TOGGLES = [
 // (напр. «+ доп. работа» на «в работе»), а не монтируют как весь экран:
 // тогда не оборачиваем содержимое в свой <main class="wrap"> (иначе он
 // вложился бы во внешний main.wrap — невалидная вложенность и двойные отступы).
-function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, getInstanceCount, getInstanceMax, onQuantity, getQuantity, onDone, request = "", onRequest, onlyBlocks, inline = false, onlyCustom = false, totalText }) {
+function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, getInstanceCount, getInstanceMax, onQuantity, getQuantity, getItemRange, onDone, request = "", onRequest, onlyBlocks, inline = false, onlyCustom = false, totalText }) {
   const toggles = { тормоза: "гидравлика", покрышки: "камера", трансмиссия: "механика" };
   let req = request;
   const states = {}; // instId -> { open, faults:Set<number> }
@@ -2914,9 +2930,18 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
           // синей (тем же акцентом, что и раньше был у рамки) ровно тогда,
           // когда работа реально выбрана и её цена входит в счёт — рамку
           // вокруг всей строки убрали, этого достаточно как индикатора.
-          const priceText = f.code && !f.custom ? rangeText(codeRange(f.code)) : f.custom ? rangePlusText(customFaultRange(f)) : null;
-          const priceNode = priceText
-            ? el("span", { class: "pill", style: checked ? "" : "background:var(--fill);color:var(--muted)" }, priceText)
+          // Пока работа не выбрана — показываем вилку по каталогу/шаблону
+          // (codeRange/customFaultRange, «от…»). Как только выбрана — вилка
+          // больше не годится: реальная сумма зависит от того, что мастер
+          // отметил в усложнениях (будет/не будет/неизвестно) для КОНКРЕТНОЙ
+          // добавленной позиции, а не от общего диапазона по шаблону. getItemRange
+          // считает сумму по факту отмеченного (несколько экземпляров — сразу
+          // все вместе), если работа выбрана — иначе fallback на вилку шаблона.
+          const definitionRange = f.code && !f.custom ? codeRange(f.code) : f.custom ? customFaultRange(f) : null;
+          const liveRange = checked && getItemRange ? getItemRange(f) : null;
+          const priceRange = liveRange || definitionRange;
+          const priceNode = priceRange
+            ? el("span", { class: "pill", style: checked ? "" : "background:var(--fill);color:var(--muted)" }, rangePlusText(priceRange))
             : null;
           const rowContent = el("div", { class: "row opt", style: "cursor:pointer" },
             el("span", { style: "flex:1" }, f.label),
