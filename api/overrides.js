@@ -13,6 +13,7 @@
 import { redis, readBody, requireUser, requireAdmin } from "./_lib.js";
 
 const KEY = "vella:overrides";
+const WORK_INSTANCE_LIMIT = 5;
 const loadStore = async (r) => (await r.get(KEY)) || { byCode: {} };
 
 function sanitizeComplications(list) {
@@ -50,7 +51,8 @@ export default async function handler(req, res) {
     setOrClear("complications", body.complications, sanitizeComplications);
     setOrClear("hidden", body.hidden, (v) => !!v);
     setOrClear("quantityMode", body.quantityMode, sanitizeQuantityMode);
-    setOrClear("maxInstances", body.maxInstances, (v) => Math.max(0, Number(v) || 0));
+    if (body.quantityMode === null) delete entry.maxInstances;
+    else if (body.quantityMode !== undefined) entry.maxInstances = sanitizeQuantityMode(body.quantityMode) === "instances" ? WORK_INSTANCE_LIMIT : 0;
 
     if (Object.keys(entry).length === 0) delete store.byCode[code];
     else store.byCode[code] = entry;
