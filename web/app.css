@@ -99,11 +99,21 @@ header.bar .bar-title-lg { font-size:19px; font-weight:700; }
 .empty-state-icon svg { width:34px; height:34px; }
 .empty-state p { margin:0; }
 
-/* SVG-иконки в кнопках свайпа (правка/удаление) и «мусорки» у счётчика
-   количества — вместо символов из системного шрифта (✎/✕/🗑), которые на
-   разных устройствах выглядят по-разному и грубее остальных иконок. */
+/* SVG-иконки в кнопках свайпа (правка/удаление) — вместо символов из
+   системного шрифта (✎/✕/🗑), которые на разных устройствах выглядят
+   по-разному и грубее остальных иконок. */
 .swipe-action-btn svg, .swipe-action svg { width:19px; height:19px; }
-.step-trash-btn svg { width:18px; height:18px; }
+
+/* Один общий счётчик для работ, усложнений и запчастей. */
+.qty-stepper { flex:0 0 auto; display:inline-grid; grid-template-columns:40px minmax(24px,auto) 40px;
+  align-items:center; min-height:42px; padding:1px 2px; border-radius:999px; background:var(--fill); }
+.qty-stepper button { width:40px; min-width:40px; height:40px; min-height:40px; padding:0; border:0;
+  border-radius:999px; background:transparent; box-shadow:none; color:var(--muted); font:inherit;
+  font-size:20px; font-weight:500; line-height:1; }
+.qty-stepper button:active { background:color-mix(in srgb, var(--line) 35%, transparent); }
+.qty-stepper button:disabled { opacity:.35; }
+.qty-stepper-value { min-width:24px; text-align:center; color:var(--ink); font-size:16px; font-weight:600;
+  font-variant-numeric:tabular-nums; }
 
 /* Закреплённая мини-сумма снизу экрана — видна независимо от прокрутки
    длинного списка работ. */
