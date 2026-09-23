@@ -1243,7 +1243,8 @@ function viewNewOrder() {
         }
       },
       onOpen: async (fa, redraw) => {
-        const it = draft.items.filter((item) => (item.sourceCode || item.code) === fa.code).at(-1);
+        const siblings = draft.items.filter((item) => (item.sourceCode || item.code) === fa.code);
+        const it = siblings.at(-1);
         if (!it) return;
         const stock = await ensureStock();
         openPendingSheet(it, stock, {
@@ -1271,7 +1272,7 @@ function viewNewOrder() {
             draft.items = draft.items.filter((x) => x.code !== code);
             redraw();
           },
-        });
+        }, siblings);
       },
       totalText: () => rangeText(orderRangeAll(draft)),
       onDone: stepClient,
@@ -1626,7 +1627,8 @@ function viewOrder(number) {
         }
       },
       onOpen: async (fa, redraw) => {
-        const it = added.filter((item) => (item.sourceCode || item.code) === fa.code).at(-1);
+        const siblings = added.filter((item) => (item.sourceCode || item.code) === fa.code);
+        const it = siblings.at(-1);
         if (!it) return;
         const stock = await ensureStock();
         openPendingSheet(it, stock, {
@@ -1635,7 +1637,7 @@ function viewOrder(number) {
           onParts: (code, parts) => { const x = added.find((v) => v.code === code); if (x) x.parts = parts; redraw(); },
           onQty: (code, qty) => { const x = added.find((v) => v.code === code); if (x) x.qty = qty; redraw(); },
           onRemove: (code) => { const i = added.findIndex((v) => v.code === code); if (i >= 0) added.splice(i, 1); redraw(); },
-        });
+        }, siblings);
       },
       totalText: () => rangeText(orderRangeAll({ items: [...order.items.filter((it) => it.agreed), ...added] })),
       onDone: () => {
@@ -2347,26 +2349,36 @@ function pendingAgreementRow(it, { onAgree, onRemove, onSet, onDiffQty, onParts,
 
 // Форма деталей для «Ждёт согласования» — усложнения (прогноз) и запчасти
 // на вкладках, тем же bottom sheet, что и у согласованной работы.
-function openPendingSheet(it, stock, { onSet, onDiffQty, onParts, onQty, onRemove }) {
-  const hasDiffs = (it.difficulties || []).length > 0;
-  let tab = hasDiffs ? "diff" : "parts";
+function openPendingSheet(it, stock, { onSet, onDiffQty, onParts, onQty, onRemove }, siblings = [it]) {
+  const items = siblings.length ? siblings : [it];
+  let activeIndex = Math.max(0, items.findIndex((x) => x.code === it.code));
+  let tab = (it.difficulties || []).length ? "diff" : "parts";
   const content = el("div", {});
+  let sheet;
   function draw() {
+    const active = items[activeIndex] || it;
+    const hasDiffs = (active.difficulties || []).length > 0;
+    if (!hasDiffs && tab === "diff") tab = "parts";
     content.replaceChildren(...[
-      usesQuantity(it) ? el("div", { style: "margin-bottom:14px" }, qtyStepper(it.qty,
-        (qty) => { onQty(it.code, qty); draw(); }, WORK_QUANTITY_LIMIT,
-        onRemove ? () => { onRemove(it.code); sheet.close(); } : undefined)) : null,
+      items.length > 1 ? el("div", { style: "margin-bottom:14px" },
+        el("label", { style: "margin:0 0 6px" }, `Экземпляр ${activeIndex + 1} из ${items.length}`),
+        el("div", { class: "segmented instance-picker" },
+          items.map((_, index) => el("button", { type: "button", class: index === activeIndex ? "active" : "",
+            onclick: () => { activeIndex = index; draw(); } }, String(index + 1))))) : null,
+      usesQuantity(active) ? el("div", { style: "margin-bottom:14px" }, qtyStepper(active.qty,
+        (qty) => { onQty(active.code, qty); draw(); }, WORK_QUANTITY_LIMIT,
+        onRemove ? () => { onRemove(active.code); sheet.close(); } : undefined)) : null,
       hasDiffs ? el("div", { class: "segmented", style: "margin-bottom:14px" },
         el("button", { class: tab === "diff" ? "active" : "", onclick: () => { tab = "diff"; draw(); } }, "Усложнения"),
         el("button", { class: tab === "parts" ? "active" : "", onclick: () => { tab = "parts"; draw(); } }, "Запчасти")) : null,
       tab === "diff"
-        ? (hasDiffs ? difficultyList(it.difficulties, (di, st) => { onSet(it.code, di, st); draw(); }, (di, qty) => { onDiffQty(it.code, di, qty); draw(); })
+        ? (hasDiffs ? difficultyList(active.difficulties, (di, st) => { onSet(active.code, di, st); draw(); }, (di, qty) => { onDiffQty(active.code, di, qty); draw(); })
           : el("p", { class: "small muted" }, "Трудностей не ожидается."))
-        : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(it.parts, stock, () => { onParts(it.code, it.parts); draw(); }, partBlockIdOf(it))),
+        : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(active.parts, stock, () => { onParts(active.code, active.parts); draw(); }, partBlockIdOf(active))),
     ].filter(Boolean));
   }
   draw();
-  openSheet(it.name, content);
+  sheet = openSheet(it.name, content);
 }
 
 function pendingAgreementCard(order, handlers, stock) {
