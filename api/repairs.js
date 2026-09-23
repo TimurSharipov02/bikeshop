@@ -12,8 +12,11 @@ const sanitizeComplications = (list) =>
   Array.isArray(list)
     ? list.map((c) => ({ label: String(c.label || "").trim(), add: Number(c.add) || 0, addMinutes: Number(c.addMinutes) || 0, multiple: !!c.multiple })).filter((c) => c.label)
     : [];
-const sanitizeQuantityMode = (value, legacyMultiple = false) =>
-  ["single", "instances", "quantity"].includes(value) ? value : (legacyMultiple ? "quantity" : "single");
+// Старое multiple не переносим автоматически: раньше оно использовалось
+// неоднозначно и было включено у части обычных работ. Новый режим должен
+// быть выбран явно.
+const sanitizeQuantityMode = (value) =>
+  ["single", "instances", "quantity"].includes(value) ? value : "single";
 
 export default async function handler(req, res) {
   const r = redis();
@@ -37,7 +40,7 @@ export default async function handler(req, res) {
       price: Number(body.price) || 0,
       minutes: Number(body.minutes) || 0,
       complications: sanitizeComplications(body.complications),
-      quantityMode: sanitizeQuantityMode(body.quantityMode, body.multiple),
+      quantityMode: sanitizeQuantityMode(body.quantityMode),
       maxInstances: body.quantityMode === "instances" ? Math.max(0, Number(body.maxInstances) || 0) : 0,
     };
     const store = await loadStore(r);
@@ -56,8 +59,8 @@ export default async function handler(req, res) {
     if (body.price != null) it.price = Number(body.price) || 0;
     if (body.minutes != null) it.minutes = Number(body.minutes) || 0;
     if (body.complications != null) it.complications = sanitizeComplications(body.complications);
-    if (body.quantityMode != null || body.multiple != null) {
-      it.quantityMode = sanitizeQuantityMode(body.quantityMode, body.multiple);
+    if (body.quantityMode != null) {
+      it.quantityMode = sanitizeQuantityMode(body.quantityMode);
       delete it.multiple;
     }
     if (body.maxInstances != null) it.maxInstances = it.quantityMode === "instances" ? Math.max(0, Number(body.maxInstances) || 0) : 0;
