@@ -511,13 +511,6 @@ function itemRange(it) {
   return { min, max };
 }
 
-// Фиксируем, какие усложнения вошли в оценку клиента. В ремонте можно
-// подтвердить фактическое усложнение, не теряя исходный состав вилки.
-function quoteDifficulties(it) {
-  return { ...it, difficulties: (it.difficulties || []).map((d) => ({ ...d,
-    quotedState: d.state, quotedQty: d.qty || 1,
-  })) };
-}
 // Ориентировочное время работы с учётом отмеченных трудностей (будет/неизвестно
 // тоже добавляют время, как и цену — на «неизвестно» берём время по максимуму).
 function itemMinutes(it) {
@@ -1388,7 +1381,7 @@ function viewNewOrder() {
           number, clientPhone: p, clientName: f.name.trim(), bikeNumber: bn,
           request: draft.request, diagnosticNotes: [], status: "взята в работу",
           occupiedBy: SESSION?.id || null, occupiedByName: SESSION?.name || "",
-          items: draft.items.map((it) => quoteDifficulties({ ...it, agreed: true })), createdAt: new Date().toISOString(),
+          items: draft.items.map((it) => ({ ...it, agreed: true })), createdAt: new Date().toISOString(),
         });
       });
       go(`/orders/${number}`);
@@ -1557,7 +1550,7 @@ function viewOrder(number) {
   // находка на повторной диагностике), ждёт явного подтверждения мастером —
   // см. pendingAgreementCard.
   const pendingHandlers = {
-    onAgree: (code) => { editOrder(number, (o) => { const i = o.items.findIndex((x) => x.code === code); if (i >= 0) o.items[i] = quoteDifficulties({ ...o.items[i], agreed: true }); }); refresh(); toast("Согласовано"); },
+    onAgree: (code) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x) x.agreed = true; }); refresh(); toast("Согласовано"); },
     onRemove: (code) => { editOrder(number, (o) => { o.items = o.items.filter((i) => i.code !== code); }); refresh(); },
     onSet: (code, di, st) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x?.difficulties?.[di]) x.difficulties[di].state = st; }); refresh(); },
     onDiffQty: (code, di, qty) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x?.difficulties?.[di]) x.difficulties[di].qty = qty; }); refresh(); },
@@ -2709,10 +2702,7 @@ function openRepairSheet(it, stock, onSave, siblings = [it], { onAdd: onAddInsta
   // помеченная «готово» работа продолжала бы считаться диапазоном цены,
   // а не точной суммой.
   const stagedFor = (inst) => ({
-    diffs: JSON.parse(JSON.stringify(inst.difficulties || [])).map((d) => ({
-      ...d, quotedState: d.quotedState ?? d.state, quotedQty: d.quotedQty ?? (d.qty || 1),
-      state: d.state === "unknown" ? "no" : d.state,
-    })),
+    diffs: JSON.parse(JSON.stringify(inst.difficulties || [])).map((d) => (d.state === "unknown" ? { ...d, state: "no" } : d)),
     parts: (inst.parts || []).map((p) => ({ ...p })),
     tab: (inst.difficulties || []).length > 0 ? "diff" : "parts",
   });
@@ -2756,28 +2746,8 @@ function openRepairSheet(it, stock, onSave, siblings = [it], { onAdd: onAddInsta
     const hasDiffs = s.diffs.length > 0;
     if (!hasDiffs && s.tab === "diff") s.tab = "parts";
     const diffBox = el("div", {});
-    const confirmUnquoted = (di, nextQty) => {
-      const d = s.diffs[di];
-      if (!d?.add || !instance.agreed) return true;
-      const quotedState = d.quotedState ?? instance.difficulties?.[di]?.state ?? "no";
-      const quotedQty = quotedState === "no" ? 0 : (d.quotedQty || 1);
-      const agreedQty = d.extraAgreedQty || 0;
-      if (nextQty <= Math.max(quotedQty, agreedQty)) return true;
-      if (!confirm(`«${d.label}» увеличит цену сверх оценки для клиента. Согласовали доплату с клиентом?`)) return false;
-      d.extraAgreedQty = nextQty;
-      d.extraAgreedAt = new Date().toISOString();
-      return true;
-    };
     const drawDiffs = () => diffBox.replaceChildren(hasDiffs
-      ? difficultyList(s.diffs,
-        (di, st) => {
-          if (st === "yes" && !confirmUnquoted(di, s.diffs[di].qty || 1)) return;
-          s.diffs[di].state = st; drawDiffs(); save(instance, {});
-        },
-        (di, qty) => {
-          if (qty > (s.diffs[di].qty || 1) && !confirmUnquoted(di, qty)) return;
-          s.diffs[di].qty = qty; drawDiffs(); save(instance, {});
-        }, true)
+      ? difficultyList(s.diffs, (di, st) => { s.diffs[di].state = st; drawDiffs(); save(instance, {}); }, (di, qty) => { s.diffs[di].qty = qty; drawDiffs(); save(instance, {}); }, true)
       : el("p", { class: "small muted" }, "Трудностей не ожидается."));
     drawDiffs();
     // Пункт неделим — один мастер отмечает «готово» целиком.
