@@ -2476,13 +2476,27 @@ function pendingAgreementRow(it, { onAgree, onRemove, onSet, onDiffQty, onParts,
 
 // Форма деталей для «Ждёт согласования» — усложнения (прогноз) и запчасти
 // на вкладках, тем же bottom sheet, что и у согласованной работы.
+const carouselPanelOffset = (track, index) => {
+  const panels = [...(track?.querySelectorAll(".instance-panel") || [])];
+  return panels[index] ? panels[index].offsetLeft - (panels[0]?.offsetLeft || 0) : 0;
+};
+const carouselNearestIndex = (track, count) => {
+  const panels = [...(track?.querySelectorAll(".instance-panel") || [])];
+  if (!panels.length) return 0;
+  let nearest = 0;
+  for (let i = 1; i < Math.min(count, panels.length); i += 1) {
+    if (Math.abs(carouselPanelOffset(track, i) - track.scrollLeft) < Math.abs(carouselPanelOffset(track, nearest) - track.scrollLeft)) nearest = i;
+  }
+  return nearest;
+};
+
 function openPendingSheet(it, stock, { onSet, onDiffQty, onParts, onQty, onRemove }, siblings = [it]) {
   let items = siblings.length ? siblings : [it];
   let activeIndex = Math.max(0, items.findIndex((x) => x.code === it.code));
-  // Табы «Усложнения»/«Запчасти» — один на все экземпляры сразу, не по
-  // отдельности на каждый: переключение между экземплярами — это пролистать
-  // одну и ту же карточку вбок, а не другой набор вкладок.
-  let tab = (it.difficulties || []).length ? "diff" : "parts";
+  // Вкладка принадлежит экземпляру и едет вместе с ним в карусели. Так при
+  // свайпе меняется вся карточка, а не только содержимое под общим тумблером.
+  const tabs = new Map(items.map((instance) => [instance.code,
+    (instance.difficulties || []).length ? "diff" : "parts"]));
   const content = el("div", {});
   let sheet, track;
   let syncingScroll = false;
@@ -2492,7 +2506,7 @@ function openPendingSheet(it, stock, { onSet, onDiffQty, onParts, onQty, onRemov
   function scrollToIndex(index, smooth) {
     if (!track) return;
     syncingScroll = true;
-    const left = index * track.clientWidth;
+    const left = carouselPanelOffset(track, index);
     if (smooth) track.scrollTo({ left, behavior: "smooth" });
     else track.scrollLeft = left;
     setTimeout(() => { syncingScroll = false; }, smooth ? 260 : 0);
@@ -2500,6 +2514,7 @@ function openPendingSheet(it, stock, { onSet, onDiffQty, onParts, onQty, onRemov
   function removeInstance(instance) {
     onRemove(instance.code);
     items = items.filter((x) => x.code !== instance.code);
+    tabs.delete(instance.code);
     if (!items.length) { sheet.close(); return; }
     activeIndex = Math.min(activeIndex, items.length - 1);
     draw();
@@ -2507,7 +2522,13 @@ function openPendingSheet(it, stock, { onSet, onDiffQty, onParts, onQty, onRemov
   }
   function panelFor(instance) {
     const hasDiffs = (instance.difficulties || []).length > 0;
+    let tab = tabs.get(instance.code) || (hasDiffs ? "diff" : "parts");
+    if (!hasDiffs) tab = "parts";
+    tabs.set(instance.code, tab);
     return el("div", { class: "instance-panel" },
+      hasDiffs ? el("div", { class: "segmented", style: "margin-bottom:14px" },
+        el("button", { class: tab === "diff" ? "active" : "", onclick: () => { tabs.set(instance.code, "diff"); draw(); } }, "Усложнения"),
+        el("button", { class: tab === "parts" ? "active" : "", onclick: () => { tabs.set(instance.code, "parts"); draw(); } }, "Запчасти")) : null,
       usesQuantity(instance) ? el("div", { style: "margin-bottom:14px" }, qtyStepper(instance.qty,
         (qty) => { onQty(instance.code, qty); draw(); }, WORK_QUANTITY_LIMIT,
         onRemove ? () => removeInstance(instance) : undefined)) : null,
@@ -2517,8 +2538,6 @@ function openPendingSheet(it, stock, { onSet, onDiffQty, onParts, onQty, onRemov
         : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(instance.parts, stock, () => { onParts(instance.code, instance.parts); draw(); }, partBlockIdOf(instance))));
   }
   function draw() {
-    const hasAnyDiffs = items.some((x) => (x.difficulties || []).length > 0);
-    if (!hasAnyDiffs && tab === "diff") tab = "parts";
     let dots = null, label = null;
     // Свайп/тап по точке двигает только сам счётчик и подсветку точек, без
     // полной перерисовки шторки (та бы сбросила прокрутку карусели) — но
@@ -2539,8 +2558,7 @@ function openPendingSheet(it, stock, { onSet, onDiffQty, onParts, onQty, onRemov
         class: "instance-track",
         onscroll: () => {
           if (syncingScroll || !track) return;
-          const w = track.clientWidth || 1;
-          const idx = Math.max(0, Math.min(items.length - 1, Math.round(track.scrollLeft / w)));
+          const idx = carouselNearestIndex(track, items.length);
           if (idx !== activeIndex) { activeIndex = idx; updateActive(); }
         },
       }, items.map(panelFor));
@@ -2556,9 +2574,6 @@ function openPendingSheet(it, stock, { onSet, onDiffQty, onParts, onQty, onRemov
     }
     content.replaceChildren(...[
       label,
-      hasAnyDiffs ? el("div", { class: "segmented", style: "margin-bottom:14px" },
-        el("button", { class: tab === "diff" ? "active" : "", onclick: () => { tab = "diff"; draw(); } }, "Усложнения"),
-        el("button", { class: tab === "parts" ? "active" : "", onclick: () => { tab = "parts"; draw(); } }, "Запчасти")) : null,
       track,
       dots,
     ].filter(Boolean));
@@ -2724,7 +2739,7 @@ function openRepairSheet(it, stock, onSave, siblings = [it], { onAdd: onAddInsta
   function scrollToIndex(index, smooth) {
     if (!track) return;
     syncingScroll = true;
-    const left = index * track.clientWidth;
+    const left = carouselPanelOffset(track, index);
     if (smooth) track.scrollTo({ left, behavior: "smooth" });
     else track.scrollLeft = left;
     setTimeout(() => { syncingScroll = false; }, smooth ? 260 : 0);
@@ -2843,8 +2858,7 @@ function openRepairSheet(it, stock, onSave, siblings = [it], { onAdd: onAddInsta
         class: "instance-track",
         onscroll: () => {
           if (syncingScroll || !track) return;
-          const w = track.clientWidth || 1;
-          const idx = Math.max(0, Math.min(items.length - 1, Math.round(track.scrollLeft / w)));
+          const idx = carouselNearestIndex(track, items.length);
           if (idx !== activeIndex) { activeIndex = idx; updateActive(); }
         },
       }, panels);
