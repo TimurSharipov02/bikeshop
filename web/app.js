@@ -2402,6 +2402,9 @@ function difficultyStateToggle(d, labels, onSet) {
 function difficultyQtyStepper(d, onQty, onClear) {
   return qtyStepper(difficultyQty(d), onQty, 0, onClear, true);
 }
+function pricedControlGroup(price, action) {
+  return el("div", { class: "priced-control-group" }, price, action);
+}
 
 function difficultyList(difficulties, onSet, onQty, fact) {
   const labels = fact ? DIFFICULTY_FACT_LABELS : DIFFICULTY_STATE_LABELS;
@@ -2444,8 +2447,7 @@ function difficultyList(difficulties, onSet, onQty, fact) {
         el("div", { class: "small", style: "flex:1;min-width:0" },
           d.label,
           addedMinutes ? el("span", { class: "muted" }, ` (+${addedMinutes} мин)`) : null),
-        el("div", { class: "priced-control-price" }, difficultyPriceTag(d)),
-        el("div", { class: "priced-control-action" }, stateControl))));
+        pricedControlGroup(difficultyPriceTag(d), stateControl))));
   });
   return box;
 }
@@ -3343,8 +3345,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
             // своего мин-контента, и цена/счётчик справа вылезали за край
             // строки вместо того, чтобы остаться у правого края.
             el("span", { style: "min-width:0;overflow-wrap:break-word" }, f.label),
-            el("div", { class: "priced-control-price" }, priceNode),
-            el("div", { class: "priced-control-action" },
+            pricedControlGroup(priceNode,
               selectButton || (checked ? el("span", { class: "row-check", html: ICON_CHECK }) : null)));
           // Слушатель добавлен ПОСЛЕ swipeActions(rowContent, ...) ниже (не
           // через onclick в el() при создании) — важен порядок регистрации:
