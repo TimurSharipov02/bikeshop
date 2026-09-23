@@ -233,6 +233,8 @@ button:disabled:active { transform:none; }
 input,textarea,select { font:inherit; width:100%; padding:var(--sp-3); border:.5px solid var(--line); border-radius:var(--radius-sm);
   background:var(--fill); color:var(--ink); transition:border-color .12s ease, box-shadow .12s ease; }
 input:focus,textarea:focus,select:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-weak); }
+.request-field { height:78px; min-height:78px; max-height:78px; resize:none; }
+.request-field-new { display:block; margin:0 0 12px; }
 /* Родные стрелки +/- у number-полей на узком экране только крадут место у
    значения и мешают читать (особенно когда таких полей несколько подряд —
    см. экран «Запчасти») — цифры и так вводятся числовой клавиатурой и без
