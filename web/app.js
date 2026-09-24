@@ -324,6 +324,7 @@ const routes = [
   [/^\/admin\/reports$/, adminOnly(viewAllMastersReport)],
   [/^\/admin\/reports\/([^/]+)$/, adminOnly((m) => masterReportScreen(m[1], "/admin/reports"))],
   [/^\/admin\/stock$/, adminOnly(viewStock)],
+  [/^\/admin\/1c$/, adminOnly(view1cSync)],
 ];
 function router() {
   closeAllSheets();
@@ -484,6 +485,7 @@ const ICONS = {
   clients: ICON_SVG('<rect x="3.5" y="5.5" width="17" height="13" rx="2.5"/><circle cx="9" cy="11" r="2"/><path d="M6.3 16c.5-1.7 1.8-2.6 3.3-2.6"/><path d="M14 10h4M14 13.5h4"/>'),
   stock: ICON_SVG('<path d="M3.5 7.5 12 3l8.5 4.5V16L12 20.5 3.5 16V7.5Z"/><path d="M3.5 7.5 12 12l8.5-4.5M12 12v8.5"/>'),
   report: ICON_SVG('<path d="M4 20V10"/><path d="M11 20V4"/><path d="M18 20v-7"/>'),
+  sync: ICON_SVG('<path d="M4 12a8 8 0 0 1 14-5.2M20 12a8 8 0 0 1-14 5.2"/><path d="M18 3v4h-4M6 21v-4h4"/>'),
 };
 const EMPTY_ICON_BOX = ICON_SVG('<path d="M3.5 7.5 12 3l8.5 4.5V16L12 20.5 3.5 16V7.5Z"/><path d="M3.5 7.5 12 12l8.5-4.5M12 12v8.5"/>');
 const EMPTY_ICON_SEARCH = ICON_SVG('<circle cx="10" cy="10" r="6"/><path d="M20 20l-4.35-4.35"/>');
@@ -3115,7 +3117,8 @@ function viewAdmin() {
         tile("Выполненные работы", "История и выработка", "/admin/reports", ICONS.report),
         tile("Мастера", "Сотрудники и ставки", "/admin/masters", ICONS.masters),
         tile("Клиенты", "Контакты и велосипеды", "/admin/clients", ICONS.clients),
-        tile("Запчасти", "Остатки и цены", "/admin/stock", ICONS.stock))),
+        tile("Запчасти", "Остатки и цены", "/admin/stock", ICONS.stock),
+        tile("Синхронизация с 1С", "Сверить выгрузку обращений", "/admin/1c", ICONS.sync))),
   ];
 }
 
@@ -3587,5 +3590,59 @@ function stockScreen(data, error) {
               if (parsed.length) saveStockItems(parsed);
             },
           }, "Импортировать (заменит список)")))),
+  ];
+}
+
+// ---------------------------- синхронизация с 1С -----------------------------
+
+async function load1cSync() {
+  try {
+    const r = await fetch("/api/1c-sync", { cache: "no-store" });
+    const j = await r.json();
+    if (location.hash !== "#/admin/1c") return;
+    render(sync1cScreen(r.ok ? j.orders : [], r.ok ? "" : j.error || "ошибка"));
+  } catch {
+    if (location.hash === "#/admin/1c") render(sync1cScreen([], "нет соединения"));
+  }
+}
+function view1cSync() {
+  load1cSync();
+  return [bar("Синхронизация с 1С", "/admin"), el("main", { class: "wrap" }, skeletonRows())];
+}
+
+async function markAll1cExported() {
+  const r = await fetch("/api/1c-sync", { method: "POST" });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { alert(j.error || "ошибка"); return; }
+  toast(j.marked ? `Помечено выгруженными: ${j.marked}` : "Список уже был пуст");
+  load1cSync();
+}
+
+function sync1cScreen(orders, error) {
+  const total = orders.reduce((s, o) => s + o.laborSum, 0);
+  const orderRow = (o) => el("div", { class: "row", style: "justify-content:space-between" },
+    el("span", {},
+      el("b", {}, o.number), " · ", new Date(o.handedOverAt).toLocaleDateString("ru-RU"),
+      o.clientName ? " · " + o.clientName : ""),
+    el("span", { class: "muted" }, money(o.laborSum)));
+  const confirmMsg = (n) => `Пометить все ${n} обращений как уже выгруженные в 1С? Это стоит делать, ` +
+    "только если они уже занесены в 1С другим способом — иначе автоматическая выгрузка их больше не увидит.";
+  const content = !orders.length
+    ? emptyState("Нечего выгружать — все выданные обращения уже помечены.", EMPTY_ICON_BOX)
+    : el("div", { class: "card" },
+        el("p", {}, el("b", {}, orders.length), " обращений на сумму ", el("b", {}, money(total))),
+        el("div", { class: "list", style: "margin-top:10px" }, orders.map(orderRow)),
+        el("button", {
+          class: "btn-primary", style: "width:100%;margin-top:14px",
+          onclick: () => { if (confirm(confirmMsg(orders.length))) markAll1cExported(); },
+        }, "Пометить все как уже выгруженные"));
+  return [
+    bar("Синхронизация с 1С", "/admin"),
+    el("main", { class: "wrap" },
+      error ? el("p", { class: "small", style: "color:var(--warn)" }, error) : null,
+      el("p", { class: "small muted" },
+        "Здесь — обращения, выданные клиенту, но ещё не помеченные выгруженными в 1С " +
+        "(отдаются автоматике на той же ручке /api/1c-export по секретному ключу)."),
+      content),
   ];
 }

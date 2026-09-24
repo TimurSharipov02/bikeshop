@@ -15,7 +15,7 @@
 
 import { readBody } from "./_lib.js";
 import { dbRedis, loadDB, updateDB } from "./_atomic-db.js";
-import { itemWorkValue } from "../web/pricing.js";
+import { pendingExportOrders } from "../web/pricing.js";
 import { checkKey, keyConfigured } from "./_1c-auth.js";
 
 export default async function handler(req, res, r = dbRedis()) {
@@ -25,29 +25,7 @@ export default async function handler(req, res, r = dbRedis()) {
   if (req.method === "GET") {
     if (!checkKey(req.query?.key)) return res.status(401).json({ error: "неверный ключ" });
     const { data: db } = await loadDB(r);
-    const all = req.query?.all === "1";
-    const orders = (db.orders || [])
-      .filter((o) => o.handedOverAt && (all || !o.exportedTo1C))
-      .map((o) => {
-        const client = (db.clients || []).find((c) => c.phone === o.clientPhone);
-        const bike = (db.bikes || []).find((b) => b.number === o.bikeNumber);
-        const agreed = (o.items || []).filter((it) => it.agreed);
-        const parts = agreed.flatMap((it) => (it.parts || []).map((p) => ({
-          sku: p.sku || "", name: p.name,
-          qty: (p.qty || 1) * (it.quantityMode === "instances" ? (it.qty || 1) : 1),
-        })));
-        const laborSum = agreed.reduce((s, it) => s + itemWorkValue(it), 0);
-        return {
-          number: o.number,
-          handedOverAt: o.handedOverAt,
-          clientName: client?.name || "",
-          clientPhone: o.clientPhone,
-          bikeName: bike?.name || "",
-          parts,
-          laborSum,
-          exportedTo1C: !!o.exportedTo1C,
-        };
-      });
+    const orders = pendingExportOrders(db, { all: req.query?.all === "1" });
     return res.status(200).json({ orders });
   }
 
