@@ -3,20 +3,12 @@
   "version": "0.1.0",
   "type": "module",
   "private": true,
-  "description": "Веломастерская Veloterra — рабочий процесс, раннер техпроцедур, веб-приложение",
+  "description": "Веломастерская Veloterra — рабочий процесс, веб-приложение",
   "scripts": {
-    "cli": "node src/cli.ts",
-    "check": "node src/validate.ts && node src/dryrun.ts && node src/audit.ts",
-    "validate": "node src/validate.ts",
     "build": "node scripts/build-html.js",
-    "test": "node --test tests/*.test.js",
-    "typecheck": "tsc --noEmit"
+    "test": "node --test tests/*.test.js"
   },
   "dependencies": {
     "@upstash/redis": "^1.34.3"
-  },
-  "devDependencies": {
-    "@types/node": "^22.10.0",
-    "typescript": "^5.7.0"
   }
 }

@@ -2,29 +2,22 @@
 //  Веломастерская Veloterra — всё приложение в одном файле.
 //  Обычный JavaScript. Ни сборщиков, ни фреймворков.
 //
-//    CATALOG  — процедуры / неисправности / цены (вшиты в HTML при сборке)
+//    CATALOG  — узлы велосипеда для группировки работ (вшиты в HTML при сборке)
 //    DB       — обращения, клиенты, велосипеды (localStorage браузера)
-//    PRICES   — правки прайса поверх дефолтных (localStorage)
 //
 //  Как всё устроено:
 //    1. Роутер смотрит на #адрес и вызывает нужный экран (view*).
 //    2. Экран строит DOM и кладёт его в #app.
 //
-//  cat (buildCatalog(RAW.procedures), см. runner.js) — старый каталог
-//  ремонтных процедур ранней версии приложения. Сам пошаговый раннер по нему
-//  удалён (нигде не открывался), но cat.byCode/codeRange/priceOf всё ещё
-//  используются экраном «Пройти диагностику» на приёме — это единственное
-//  оставшееся место, где ещё показываются работы из старого каталога, а не
-//  из нового (catalog/repairs, админка).
+//  Все ремонтные работы заводит администратор вручную через приложение
+//  (catalog/repairs, /api/repairs) — старый встроенный каталог процедур
+//  ранней версии приложения (catalog/*.proc) удалён целиком.
 // ============================================================================
 
-import { buildCatalog } from "./runner.js";
 import { itemWorkValue } from "./pricing.js";
 import { reportEntries } from "./report-entries.js";
 
 const RAW = window.CATALOG;
-const cat = buildCatalog(RAW.procedures);
-const defaultPrices = RAW.prices;
 // Версия — время сборки страницы (проставляется при npm run build / деплое).
 const BUILD_TIME = RAW.generatedAt
   ? new Date(RAW.generatedAt).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })
@@ -478,42 +471,6 @@ async function flushPending() {
   return sendSnapshot(++pushGen);
 }
 
-// Переопределения работ каталога — правит администратор (общие для всех,
-// хранятся на сервере), см. /api/overrides. Собраны в объект один раз при
-// запуске и обновляются точечно после каждой правки/скрытия.
-let OVERRIDES = {};
-async function loadOverrides() {
-  try {
-    const r = await fetch("/api/overrides", { cache: "no-store" });
-    const j = await r.json();
-    OVERRIDES = r.ok ? j.byCode || {} : {};
-  } catch { OVERRIDES = {}; }
-}
-async function overridesApi(method, body) {
-  const r = await fetch("/api/overrides", { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) { alert(j.error || "ошибка"); return null; }
-  OVERRIDES = j.byCode || {};
-  return j;
-}
-// Цена работы с учётом переопределения администратора поверх дефолта из прайса.
-function effectivePrice(code) {
-  const base = defaultPrices[code] || { work: 0 };
-  const ov = OVERRIDES[code];
-  if (!ov) return base;
-  return {
-    work: ov.price ?? base.work,
-    minutes: ov.minutes ?? base.minutes,
-    difficulties: ov.complications ?? base.difficulties,
-    // Старый флаг multiple был слишком неоднозначным: им помечались и
-    // обычные работы. Не превращаем его молча в счётчик. Количество
-    // появляется только после явного выбора нового режима в редакторе.
-    quantityMode: ov.quantityMode ?? base.quantityMode ?? "single",
-    maxInstances: ov.maxInstances ?? base.maxInstances ?? 0,
-  };
-}
-const priceOf = effectivePrice;
-
 const quantityModeOf = (x) => {
   if (["single", "instances", "quantity"].includes(x?.quantityMode)) return x.quantityMode;
   return "single";
@@ -626,31 +583,10 @@ function minutesText(m) {
   const h = Math.floor(m / 60), mm = m % 60;
   return "ориентировочно " + (h ? `${h} ч${mm ? " " + mm + " мин" : ""}` : `${mm} мин`);
 }
-// До выбора работы показываем базовую цену, а не сумму всех усложнений
-// каталога: часть из них взаимоисключается или неприменима к этому велосипеду.
-function codeRange(code) {
-  const p = priceOf(code);
-  const base = p.work || 0;
-  return { min: base, max: base };
-}
 // То же для неисправности, заведённой админом вручную (цена лежит в ней самой).
 function customFaultRange(f) {
   const base = f.price || 0;
   return { min: base, max: base };
-}
-
-function makeItem(code, notes = "") {
-  const proc = cat.byCode.get(code);
-  const price = priceOf(code);
-  return {
-    code, name: OVERRIDES[code]?.name || (proc ? proc.name : code), agreed: false, done: false, parts: [], notes,
-    workPrice: price.work || 0,
-    estimateMinutes: price.minutes || 0,
-    partsPrice: 0,
-    quantityMode: quantityModeOf(price), maxInstances: instanceLimitOf(price),
-    multiple: quantityModeOf(price) === "quantity", qty: 1,
-    difficulties: (price.difficulties || []).map((d) => ({ label: d.label, add: d.add, addMinutes: d.addMinutes || 0, multiple: !!d.multiple, qty: 1, state: "no" })),
-  };
 }
 
 // Неисправность, заведённая администратором вручную (без кода .proc-процедуры) —
@@ -853,7 +789,6 @@ const routes = [
   [/^\/admin\/reports$/, adminOnly(viewAllMastersReport)],
   [/^\/admin\/reports\/([^/]+)$/, adminOnly((m) => masterReportScreen(m[1], "/admin/reports"))],
   [/^\/admin\/stock$/, adminOnly(viewStock)],
-  [/^\/admin\/overrides$/, adminOnly(viewOverrides)],
 ];
 function router() {
   closeAllSheets();
@@ -983,7 +918,6 @@ window.addEventListener("popstate", () => {
 
 (async () => {
   await loadSession();
-  if (SESSION) await loadOverrides();
   router();
   if (SESSION) { if (dirty) await flushPending(); else syncFromServer(); }
 })();
@@ -1262,7 +1196,7 @@ function viewNewOrder() {
   const draft = { items: [], request: "" };
 
   const addDraftItem = (pick) => {
-    const item = pick.custom ? makeCustomItem(pick) : makeItem(pick.code);
+    const item = makeCustomItem(pick);
     if (draft.items.some((i) => (i.sourceCode || i.code) === pick.code)) {
       item.sourceCode = pick.code;
       item.code = instanceCode(pick.code);
@@ -1276,9 +1210,7 @@ function viewNewOrder() {
     render([bar("Новый наряд", "/"), host]);
     mountDiagnostics(host, {
       // Это не отдельная «Диагностика»: экран просто служит каталогом работ,
-      // разложенным по привычным узлам велосипеда. В нём показываем только
-      // вручную заведённые позиции, без старого встроенного справочника.
-      onlyCustom: true,
+      // разложенным по привычным узлам велосипеда.
       request: draft.request,
       onRequest: (v) => (draft.request = v),
       onCheck: (fa) => {
@@ -1551,7 +1483,7 @@ function viewOrder(number) {
     editOrder(number, (o) => {
       const ex = o.items.find((i) => i.code === fa.code);
       if (ex) { if (notes) ex.notes = ex.notes ? `${ex.notes}; ${notes}` : notes; return; }
-      const item = fa.custom ? makeCustomItem(fa, notes) : makeItem(fa.code, notes);
+      const item = makeCustomItem(fa, notes);
       if (agreed) item.agreed = true;
       o.items.push(item);
     });
@@ -1666,7 +1598,6 @@ function viewOrder(number) {
     render([subBar("Добавить работу"), host]);
     enterSubScreen(refresh);
     mountDiagnostics(host, {
-      onlyCustom: true,
       onlyBlocks: bike?.kind === "колесо" ? ["WHL"] : null,
       onCheck: (fa) => {
         if (!added.some((it) => (it.sourceCode || it.code) === fa.code)) {
@@ -2810,12 +2741,6 @@ function openRepairSheet(it, stock, onSave, siblings = [it], { onAdd: onAddInsta
 //  Обучение: тот же список + место под справку по каждой неисправности.
 // ============================================================================
 
-const DIAG_TOGGLES = [
-  { param: "тормоза", label: "Тормоза", options: [["гидравлика", "гидравлика"], ["механика", "механика"]] },
-  { param: "покрышки", label: "Покрышки", options: [["камера", "камера"], ["бескамерка", "бескамерка"]] },
-  { param: "трансмиссия", label: "Трансмиссия", options: [["механика", "механика"], ["электроника", "электроника"]] },
-];
-
 // onCheck/onUncheck — список работ живёт у вызывающего (наряд или черновик
 // нового обращения) и меняется сразу по тапу на строку, без ожидания
 // «Готово». Отмеченное видно прямо по заливке строк в блоках (отдельного
@@ -2826,8 +2751,7 @@ const DIAG_TOGGLES = [
 // (напр. «+ доп. работа» на «в работе»), а не монтируют как весь экран:
 // тогда не оборачиваем содержимое в свой <main class="wrap"> (иначе он
 // вложился бы во внешний main.wrap — невалидная вложенность и двойные отступы).
-function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, getInstanceCount, getInstanceMax, onQuantity, getQuantity, getItemRange, onDone, request = "", onRequest, onlyBlocks, inline = false, onlyCustom = false, totalText }) {
-  const toggles = { тормоза: "гидравлика", покрышки: "камера", трансмиссия: "механика" };
+function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, getInstanceCount, getInstanceMax, onQuantity, getQuantity, getItemRange, onDone, request = "", onRequest, onlyBlocks, inline = false, totalText }) {
   let req = request;
   const states = {}; // instId -> { open, faults:Set<number> }
   const st = (id) => (states[id] ||= { open: false, faults: new Set() });
@@ -2850,22 +2774,14 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
     }
     return out;
   };
-  // overrideKey — ключ для переопределения/скрытия: у обычной работы это её
-  // код операции (WHL-05 и т.п.); у неисправности без кода (определяется на
-  // разборке, code:"") — свой синтетический ключ, т.к. code у них у всех
-  // одинаковый ("") и по нему нельзя различить разные пункты списка.
-  const blockFaults = (b) => [
-    ...(onlyCustom ? [] : b.sections.flatMap((s) => s.faults.map((f, fi) => {
-      const overrideKey = f.code || `NC-${s.id}-${fi}`;
-      return { ...f, section: s.title, overrideKey, label: OVERRIDES[overrideKey]?.name || f.label };
-    })).filter((f) => !OVERRIDES[f.overrideKey]?.hidden)),
-    ...repairs.filter((r) => r.group === b.id).map((r) => ({
-      label: r.label, code: `CF-${r.id}`, custom: true, id: r.id,
-      price: r.price, minutes: r.minutes, complications: r.complications,
-      quantityMode: quantityModeOf(r), maxInstances: instanceLimitOf(r),
-    })),
-  ];
-  const faultVisible = (f) => !f.if || toggles[f.if.param] === f.if.value;
+  // Список работ узла — только заведённые администратором вручную
+  // (catalog/repairs). Старый встроенный каталог процедур (.proc) отсюда
+  // убран — он больше нигде не отображается.
+  const blockFaults = (b) => repairs.filter((r) => r.group === b.id).map((r) => ({
+    label: r.label, code: `CF-${r.id}`, custom: true, id: r.id,
+    price: r.price, minutes: r.minutes, complications: r.complications,
+    quantityMode: quantityModeOf(r), maxInstances: instanceLimitOf(r),
+  }));
   // Снять галочку с чекбокса(ов) этого кода во всех узлах — работа могла быть
   // убрана не через сам чекбокс (из сводного списка или удалением неисправности).
   const uncheckByCode = (code) => {
@@ -2885,42 +2801,6 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
   async function reloadRepairs() {
     repairsCache = null;
     repairs = await ensureRepairs();
-  }
-
-  // Форма правки встроенной (из каталога) неисправности — переопределяет
-  // название/цену/время/усложнения поверх дефолта, хранится на сервере.
-  function overrideForm(f, onClose) {
-    // У неисправности без кода (f.code === "") нет ни цены, ни усложнений —
-    // конкретная операция и её стоимость определяются на разборке; тут можно
-    // только переименовать формулировку.
-    const hasPrice = !!f.code;
-    const eff = hasPrice ? priceOf(f.code) : {};
-    const draftOv = {
-      name: OVERRIDES[f.overrideKey]?.name || f.label,
-      price: eff.work || 0, minutes: eff.minutes || 0,
-      complications: JSON.parse(JSON.stringify(eff.difficulties || [])),
-      quantityMode: quantityModeOf(eff), maxInstances: instanceLimitOf(eff),
-    };
-    const compsBox = hasPrice ? complicationsEditor(draftOv.complications) : null;
-    return el("div", { class: "card card-flush", style: "margin-top:8px" },
-      el("label", {}, "Название"),
-      el("input", { value: draftOv.name, oninput: (e) => (draftOv.name = e.target.value) }),
-      !hasPrice ? el("p", { class: "small muted", style: "margin-top:6px" }, "Без кода операции — цена определяется на разборке, тут доступно только название.") : null,
-      hasPrice ? el("div", { style: "display:flex;flex-wrap:wrap;gap:8px;margin-top:8px" },
-        el("div", { style: "flex:1;min-width:120px" }, el("label", {}, "Цена, ₽"), el("input", { type: "number", value: draftOv.price, oninput: (e) => (draftOv.price = +e.target.value || 0) })),
-        el("div", { style: "flex:1;min-width:120px" }, el("label", {}, "Минуты"), el("input", { type: "number", value: draftOv.minutes, oninput: (e) => (draftOv.minutes = +e.target.value || 0) }))) : null,
-      hasPrice ? quantityModeEditor(draftOv) : null,
-      hasPrice ? el("label", { style: "margin-top:8px" }, "Усложнения (надбавка к цене и времени)") : null,
-      hasPrice ? compsBox : null,
-      el("div", { class: "btn-row", style: "margin-top:10px" },
-        el("button", { class: "btn-primary", onclick: async () => {
-          const patch = { code: f.overrideKey, name: draftOv.name.trim() || null };
-          if (hasPrice) Object.assign(patch, { price: draftOv.price, minutes: draftOv.minutes || null, complications: draftOv.complications,
-            quantityMode: draftOv.quantityMode });
-          const ok = await overridesApi("PUT", patch);
-          if (ok) onClose();
-        } }, "Сохранить"),
-        el("button", { onclick: onClose }, "Отмена")));
   }
 
   // Форма добавления своей неисправности (только у администратора) — цена,
@@ -3029,9 +2909,8 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
         const faultNodes = [];
         const faults = blockFaults(inst.b);
         faults.forEach((f, i) => {
-          if (!faultVisible(f)) return;
           const isAdmin = SESSION?.role === "admin";
-          const editKey = f.custom ? f.id : f.overrideKey;
+          const editKey = f.id;
           const editingThis = editOverrideFor.has(editKey);
           // Раньше — чекбокс внутри строки: на плотном списке из многих строк
           // подряд промах мимо мелкого квадратика по пальцу ощущался как
@@ -3074,36 +2953,34 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
             draw();
           };
           let selectButton = null;
-          if (onlyCustom && f.custom) {
-            // Счётчик показывает, сколько самостоятельных строк этой работы
-            // будет в наряде. В ремонте они не объединяются: у каждой будет
-            // собственный исполнитель, готовность, усложнения и запчасти.
-            if (checked && instanceMode) selectButton = qtyStepper(instanceCount, setInstanceCount, instanceMax, () => setInstanceCount(0));
-            else if (instanceMode) selectButton = addRemoveControl(false,
-              () => setInstanceCount(1), "Добавить работу", instanceUnavailable);
-            else if (checked && quantityMode) selectButton = qtyStepper(quantityCount, setQuantityCount, WORK_QUANTITY_LIMIT, () => setQuantityCount(0));
-            else selectButton = addRemoveControl(checked, (selected) => {
-              if (quantityMode) setQuantityCount(selected ? 1 : 0);
-              else setSingleSelected(selected);
-            }, checked ? "Убрать работу" : "Добавить работу", instanceUnavailable);
-          }
+          // Счётчик показывает, сколько самостоятельных строк этой работы
+          // будет в наряде. В ремонте они не объединяются: у каждой будет
+          // собственный исполнитель, готовность, усложнения и запчасти.
+          if (checked && instanceMode) selectButton = qtyStepper(instanceCount, setInstanceCount, instanceMax, () => setInstanceCount(0));
+          else if (instanceMode) selectButton = addRemoveControl(false,
+            () => setInstanceCount(1), "Добавить работу", instanceUnavailable);
+          else if (checked && quantityMode) selectButton = qtyStepper(quantityCount, setQuantityCount, WORK_QUANTITY_LIMIT, () => setQuantityCount(0));
+          else selectButton = addRemoveControl(checked, (selected) => {
+            if (quantityMode) setQuantityCount(selected ? 1 : 0);
+            else setSingleSelected(selected);
+          }, checked ? "Убрать работу" : "Добавить работу", instanceUnavailable);
           // Цена — рядом со счётчиком/кнопкой добавления справа, а не сразу
           // после названия: так видно одним взглядом, что именно сейчас
           // считается в сумму. Серая, пока работа не выбрана, и становится
           // синей (тем же акцентом, что и раньше был у рамки) ровно тогда,
           // когда работа реально выбрана и её цена входит в счёт — рамку
           // вокруг всей строки убрали, этого достаточно как индикатора.
-          // Пока работа не выбрана — показываем вилку по каталогу/шаблону
-          // (codeRange/customFaultRange, «от…»). Как только выбрана — вилка
-          // больше не годится: реальная сумма зависит от того, что мастер
-          // отметил в усложнениях (будет/не будет/неизвестно) для КОНКРЕТНОЙ
-          // добавленной позиции, а не от общего диапазона по шаблону. getItemRange
-          // считает сумму по факту отмеченного (несколько экземпляров — сразу
-          // все вместе), если работа выбрана — иначе fallback на вилку шаблона.
-          const definitionRange = f.code && !f.custom ? codeRange(f.code) : f.custom ? customFaultRange(f) : null;
+          // Пока работа не выбрана — показываем вилку по шаблону
+          // (customFaultRange, «от…»). Как только выбрана — вилка больше не
+          // годится: реальная сумма зависит от того, что мастер отметил в
+          // усложнениях (будет/не будет/неизвестно) для КОНКРЕТНОЙ добавленной
+          // позиции, а не от общего диапазона по шаблону. getItemRange считает
+          // сумму по факту отмеченного (несколько экземпляров — сразу все
+          // вместе), если работа выбрана — иначе fallback на вилку шаблона.
+          const definitionRange = customFaultRange(f);
           const liveRange = checked && getItemRange ? getItemRange(f) : null;
           const priceRange = liveRange || definitionRange;
-          const hasPossibleExtras = ((f.custom ? f.complications : priceOf(f.code).difficulties) || []).length > 0;
+          const hasPossibleExtras = (f.complications || []).length > 0;
           const priceNode = priceRange
             ? controlPriceTag(!checked && hasPossibleExtras
               ? `${Number(priceRange.min || 0).toLocaleString("ru-RU")}+ ₽`
@@ -3131,26 +3008,16 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
           // тут стоял просто onclick в el(), он сработал бы раньше свайпа
           // и отмечал бы галочку даже во время жеста «смахнуть для правки».
           const toggle = () => {
-            // В новом наряде тап по названию открывает карточку работы. Если
-            // работа ещё не выбрана — сначала добавляем её. Отдельная кнопка
-            // справа отвечает только за добавление/снятие, поэтому повторный
-            // тап по строке уже не удаляет выбранную позицию случайно.
-            if (onlyCustom && f.custom) {
-              if (!checked) {
-                if (instanceUnavailable) return;
-                if (instanceMode) setInstanceCount(1);
-                else { s.faults.add(i); if (f.code) onCheck(f); draw(); }
-              }
-              if (f.code && onOpen) onOpen(f, draw);
-              return;
+            // Тап по названию открывает карточку работы. Если работа ещё не
+            // выбрана — сначала добавляем её. Отдельная кнопка справа отвечает
+            // только за добавление/снятие, поэтому повторный тап по строке уже
+            // не удаляет выбранную позицию случайно.
+            if (!checked) {
+              if (instanceUnavailable) return;
+              if (instanceMode) setInstanceCount(1);
+              else { s.faults.add(i); if (f.code) onCheck(f); draw(); }
             }
-            // Без code — неисправность без привязанной операции (определяется
-            // на разборке), в наряд не превращается, только в заметку.
-            // Один и тот же код может быть отмечен и спереди, и сзади —
-            // убираем работу из наряда, только когда код больше нигде не отмечен.
-            if (checked) { s.faults.delete(i); if (f.code && !codeCheckedElsewhere(f.code, inst.id)) onUncheck(f); }
-            else { s.faults.add(i); if (f.code) onCheck(f); }
-            draw();
+            if (f.code && onOpen) onOpen(f, draw);
           };
           // Раньше ✎/✕ жили прямо в строке — с плотным списком смотрелись
           // мелко и тесно. Теперь открываются свайпом влево, как удаление
@@ -3162,31 +3029,18 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
                   { label: ICON_CLOSE, ariaLabel: "Удалить работу", className: "warn", onClick: async () => {
                       if (!confirm(`Убрать «${f.label}» из списка совсем?`)) return;
                       const wasChecked = s.faults.has(i);
-                      if (f.custom) {
-                        // Реальный уникальный код (CF-id) — может повторяться на обеих
-                        // сторонах, снимаем везде, пока он ещё виден в blockFaults().
-                        uncheckByCode(f.code);
-                        await fetch("/api/repairs", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: f.id }) });
-                        if (wasChecked) onUncheck(f);
-                        await reloadRepairs();
-                      } else if (f.code) {
-                        uncheckByCode(f.code);
-                        const ok = await overridesApi("PUT", { code: f.code, hidden: true });
-                        if (!ok) return;
-                        if (wasChecked) onUncheck(f);
-                      } else {
-                        // Без кода: overrideKey свой у каждого пункта, а не общий код
-                        // операции — снимаем только эту галочку, не трогая остальные.
-                        s.faults.delete(i);
-                        const ok = await overridesApi("PUT", { code: f.overrideKey, hidden: true });
-                        if (!ok) return;
-                      }
+                      // Реальный уникальный код (CF-id) — может повторяться на обеих
+                      // сторонах, снимаем везде, пока он ещё виден в blockFaults().
+                      uncheckByCode(f.code);
+                      await fetch("/api/repairs", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: f.id }) });
+                      if (wasChecked) onUncheck(f);
+                      await reloadRepairs();
                       draw();
                     } },
                 ])
               : rowContent,
             editingThis
-              ? (f.custom ? customFaultEditForm(f, () => { editOverrideFor.delete(editKey); draw(); }) : overrideForm(f, () => { editOverrideFor.delete(editKey); draw(); }))
+              ? customFaultEditForm(f, () => { editOverrideFor.delete(editKey); draw(); })
               : null));
           rowContent.addEventListener("click", toggle);
         });
@@ -3242,19 +3096,12 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
         el("button", { class: "btn-primary", onclick: finish }, "Далее"))));
   }
 
-  // Работы с кодом уже добавлены живьём по каждому чекбоксу — тут собираем
-  // текстовые заметки: неисправности без кода (определяются на разборке).
+  // Работы уже добавлены живьём по каждому чекбоксу (см. onCheck) — у
+  // всех заведённых через админку работ всегда есть и код, и цена сразу,
+  // отдельных текстовых заметок «без кода, определить на разборке» (как у
+  // старого каталога процедур) тут больше не бывает.
   function finish() {
-    const notes = [];
-    for (const inst of instances()) {
-      const s = st(inst.id);
-      if (!s.faults.size) continue;
-      const faults = blockFaults(inst.b);
-      const noCode = [...s.faults].map((i) => faults[i]).filter(Boolean).filter(faultVisible).filter((f) => !f.code)
-        .map((f) => [f.label, f.note].filter(Boolean).join(" — "));
-      if (noCode.length) notes.push(`${inst.label}: ${noCode.join("; ")}`);
-    }
-    onDone(notes);
+    onDone([]);
   }
 
   host.replaceChildren(el(inline ? "div" : "main", { class: inline ? null : "wrap" }, skeletonRows()));
@@ -3300,7 +3147,6 @@ function viewLogin() {
     async (form) => {
       await authAction({ action: "login", login: form.login.value.trim(), password: form.password.value });
       await loadSession();
-      await loadOverrides();
       location.hash = "/";
       router();
     }, "Войти");
@@ -3315,7 +3161,6 @@ function viewSetup() {
       if (form.password.value !== form.password2.value) throw new Error("Пароли не совпадают");
       await authAction({ action: "bootstrap", name: form.name.value.trim(), login: form.login.value.trim(), password: form.password.value });
       await loadSession();
-      await loadOverrides();
       location.hash = "/";
       router();
     }, "Создать");
@@ -3740,59 +3585,6 @@ function viewAdmin() {
         tile("Мастера", "Сотрудники и ставки", "/admin/masters", ICONS.masters),
         tile("Клиенты", "Контакты и велосипеды", "/admin/clients", ICONS.clients),
         tile("Запчасти", "Остатки и цены", "/admin/stock", ICONS.stock))),
-  ];
-}
-
-// ---------------------------- переопределения работ каталога -----------------
-// Правки названия/цены/усложнений и скрытие встроенных работ делаются прямо
-// на экране диагностики (✎ / ✕ у неисправности). Здесь — только список того,
-// что уже переопределено или скрыто, и кнопка вернуть как было.
-
-async function loadOverridesScreen() {
-  try {
-    const r = await fetch("/api/overrides", { cache: "no-store" });
-    const j = await r.json();
-    if (location.hash !== "#/admin/overrides") return;
-    render(overridesScreen(r.ok ? j.byCode || {} : {}, r.ok ? "" : j.error || "ошибка"));
-  } catch {
-    if (location.hash === "#/admin/overrides") render(overridesScreen({}, "нет соединения"));
-  }
-}
-function viewOverrides() {
-  loadOverridesScreen();
-  return [bar("Переопределения работ", "/admin"), el("main", { class: "wrap" }, skeletonRows())];
-}
-
-function overridesScreen(byCode, error) {
-  const codes = Object.keys(byCode);
-  const rows = codes.map((code) => {
-    const ov = byCode[code];
-    const proc = cat.byCode.get(code);
-    const bits = [];
-    if (ov.hidden) bits.push("скрыта");
-    if (ov.name) bits.push(`название: «${ov.name}»`);
-    if (ov.price != null) bits.push(`цена: ${money(ov.price)}`);
-    if (ov.minutes != null) bits.push(`время: ${ov.minutes} мин`);
-    if (ov.complications?.length) bits.push(`усложнений: ${ov.complications.length}`);
-    if (ov.quantityMode === "instances") bits.push(`отдельные экземпляры${ov.maxInstances ? `, максимум ${ov.maxInstances}` : ""}`);
-    if (ov.quantityMode === "quantity" || ov.multiple) bits.push("числовое количество");
-    return el("div", { class: "card" },
-      el("div", {}, el("b", {}, ov.name || proc?.name || code), " ", el("span", { class: "small muted" }, code)),
-      el("p", { class: "small muted" }, bits.join(" · ") || "—"),
-      el("button", { onclick: async () => {
-        const r = await fetch("/api/overrides", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ code }) });
-        const j = await r.json().catch(() => ({}));
-        if (!r.ok) { alert(j.error || "ошибка"); return; }
-        OVERRIDES = j.byCode || {};
-        render(overridesScreen(OVERRIDES, ""));
-      } }, "Вернуть как было"));
-  });
-  return [
-    bar("Переопределения работ", "/admin"),
-    el("main", { class: "wrap" },
-      error ? el("p", { class: "small", style: "color:var(--warn)" }, error) : null,
-      el("p", { class: "small muted" }, "Название/цену/усложнения работы или её скрытие правят прямо на экране диагностики (✎ / ✕ у неисправности). Здесь — только то, что уже изменено, с возможностью вернуть как было."),
-      codes.length === 0 ? el("p", { class: "muted small" }, "Пока ничего не переопределено.") : el("div", { class: "list", style: "gap:12px" }, rows)),
   ];
 }
 
