@@ -886,7 +886,7 @@ function viewNewOrder() {
         if (!items.length) return null;
         return itemsRangeWithParts(items);
       },
-      totalText: () => ({ range: orderRangeAll(draft), count: draft.items.length }),
+      totalText: () => ({ range: orderRangeAll(draft), count: draft.items.length, items: draft.items }),
       onDone: stepClient,
     });
   }
@@ -1916,11 +1916,13 @@ const itemsRangeWithParts = (items) => items.reduce((a, it) => {
 const priceRow = (it, style = "") => el("div", { class: "price-row", style }, itemPriceTags(it));
 // «Итого» тем же пузырём, что и цены работ, только крупнее. Для наряда из
 // одной работы не показывается — её цена и так видна прямо над ним.
-function totalRow(range, count, label = "Итого", extra = null) {
+// onTap — необязательный: цена становится нажимаемой (например, открыть
+// список выбранных работ).
+function totalRow(range, count, label = "Итого", extra = null, onTap = null) {
   if (count < 2) return null;
   return el("div", { class: "total-row" },
     el("div", {}, el("span", { class: "muted" }, label), extra),
-    el("span", { class: "control-price control-price-lg" }, rangeText(range)));
+    el("span", { class: "control-price control-price-lg" + (onTap ? " tap" : ""), onclick: onTap }, rangeText(range)));
 }
 function difficultyPriceTag(d) {
   return controlPriceTag(`+${money(difficultyAmount(d))}`, d.state === "yes");
@@ -2733,7 +2735,31 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
         }, "+ добавить разовую услугу"));
 
     const total = totalText?.();
-    const totalNode = total && totalRow(total.range, total.count);
+    // Нажатие на «Итого» — шторка со списком того, что уже выбрано, в том
+    // же виде, что карточка «Ремонт» в обращении: название, из чего
+    // складывается цена, ценники и счётчик. Сами работы разбросаны по
+    // раскрытым блокам, а тут видно всё сразу; счётчик меняет и список позади.
+    const showChosen = () => {
+      const body = el("div", {});
+      const setQty = (it, n) => {
+        const fa = { code: it.sourceCode || it.code };
+        if (repeatsWholeItem(it)) onInstanceCount?.(fa, n); else onQuantity?.(fa, n);
+        fill();
+        draw();
+      };
+      const chosenRow = (it) => el("div", { class: "assess" },
+        el("b", {}, it.name),
+        costBreakdown(it),
+        el("div", { class: "price-row", style: "margin-top:12px" }, itemPriceTags(it),
+          usesQuantity(it) ? qtyStepper(it.qty || 1, (n) => setQty(it, n), workQuantityLimitOf(it)) : null));
+      const fill = () => {
+        const now = totalText();
+        body.replaceChildren(...now.items.map(chosenRow), totalRow(now.range, now.count) || el("span"));
+      };
+      fill();
+      openSheet("Выбранные работы", body);
+    };
+    const totalNode = total && totalRow(total.range, total.count, "Итого", null, total.items ? showChosen : null);
     if (totalNode) wrap.append(el("div", { class: "card" }, totalNode));
 
     host.replaceChildren(wrap,
