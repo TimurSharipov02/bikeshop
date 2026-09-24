@@ -1973,7 +1973,7 @@ const partLabel = (p) => p.name + ((p.qty || 1) > 1 ? ` × ${p.qty}` : "");
 // («в работе»), «Ждёт согласования» и оценки при создании обращения —
 // мутирует parts на месте, onChange зовёт сохранение и перерисовку у
 // вызывающего.
-function partsEditor(parts, stock, onChange, blockId) {
+function partsEditor(parts, stock, onChange, blockId, sideAction = null) {
   // Раньше уже добавленные запчасти шли просто списком сразу под результатами
   // поиска — без подписи и без рамок между строками всё сливалось в один
   // нечитаемый блок, особенно с длинными названиями в 3-4 строки. Теперь у
@@ -2039,9 +2039,9 @@ function partsEditor(parts, stock, onChange, blockId) {
         el("button", { onclick: () => { manualOpen = false; drawManual(); } }, "Отмена"))));
   };
   const manualToggle = el("button", {
-    class: "small", style: "margin-top:8px;border:0;background:none;color:var(--muted);text-decoration:underline;padding:0",
+    class: "small", style: "border:0;background:none;color:var(--muted);text-decoration:underline;padding:0",
     onclick: () => { manualOpen = !manualOpen; drawManual(); },
-  }, "+ своя запчасть (не из остатков)");
+  }, "+ запчасть не из остатков");
 
   // maxQty — необязательный потолок у складской позиции (спицы можно взять
   // 64, а цепь — только одну); переносим на саму запчасть в наряде, чтобы
@@ -2101,7 +2101,9 @@ function partsEditor(parts, stock, onChange, blockId) {
   q.addEventListener("input", () => { clearBtn.style.display = q.value ? "" : "none"; drawResults(); });
   drawResults();
 
-  return el("div", {}, el("div", { class: "search-wrap" }, q, clearBtn), results, manualToggle, manualBox, listLabel, list);
+  return el("div", {}, el("div", { class: "search-wrap" }, q, clearBtn), results,
+    el("div", { class: sideAction ? "parts-action-row" : "parts-action-row parts-action-single" }, manualToggle, sideAction),
+    manualBox, listLabel, list);
 }
 
 function itemRow(it, showFacts) {
@@ -2805,7 +2807,7 @@ function openRepairSheet(it, stock, onSave, siblings = [it], { onAdd: onAddInsta
     // детали; занимает эту пометку тот, кто её поставил, снять/продолжить
     // может он же или админ — остальные видят только факт и чьё имя.
     const canManageWait = instance.waitingForPart && (instance.waitingForPart.masterId === myId || isAdmin);
-    const waitBlock = instance.done ? null : el("div", { style: "margin-top:16px" },
+    const waitBlock = instance.done ? null : el("div", { class: "part-wait-control" },
       instance.waitingForPart
         ? el("div", {},
             el("p", { class: "small", style: "color:var(--yellow-ink)" }, `Ждёт запчасть — ${instance.waitingForPart.masterName || "—"}`),
@@ -2831,8 +2833,9 @@ function openRepairSheet(it, stock, onSave, siblings = [it], { onAdd: onAddInsta
       ? diffBox
       : el("div", {},
           el("label", { style: "margin-top:0" }, "Запчасти"),
-          partsEditor(s.parts, stock, () => save(instance, { parts: s.parts }), partBlockIdOf(instance)),
-          waitBlock);
+          partsEditor(s.parts, stock, () => save(instance, { parts: s.parts }), partBlockIdOf(instance),
+            instance.waitingForPart ? null : waitBlock),
+          instance.waitingForPart ? waitBlock : null);
     const inner = el("div", {},
       tabs,
       tabContent,
