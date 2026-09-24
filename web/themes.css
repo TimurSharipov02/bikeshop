@@ -228,7 +228,9 @@
 /* ---------- Служебные кнопки во всех стилях ---------- */
 /* Правила «button» у стилей выше (рамка, тень, размер) — для настоящих
    кнопок; иконки, строки-кнопки, счётчики и текстовые ссылки-кнопки
-   остаются без них, как и в Аэро. */
+   остаются без них, как и в Аэро. Строки-кнопки (button.row) сюда не
+   входят: в списке отдельными карточками они оформлены как карточки
+   (Профиль → «Оформление», «Сменить пароль»), рядом со строками-ссылками. */
 [data-style]:not([data-style="aero"]) :is(.qty-stepper button, .segmented button, .search-clear, header.bar button,
-  button[style*="background:none"], button.row, .carousel-dot, .parts-text-action, .compact-add-btn,
+  button[style*="background:none"], .carousel-dot, .parts-text-action, .compact-add-btn,
   .complication-remove, .admin-settings-btn) { border:0; box-shadow:none; }
