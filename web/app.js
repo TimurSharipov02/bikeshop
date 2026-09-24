@@ -3674,7 +3674,7 @@ function buildReportTab(masterId, percentOf, tab) {
     historyItemsEl);
 
   const colWidthPct = 100 / tab.count;
-  const scroller = el("div", { style: "display:flex;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;margin-top:14px;height:120px" });
+  const scroller = el("div", { class: "report-scroller", style: "display:flex;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;margin-top:14px;height:120px" });
   const colNodes = new Map(); // n -> {col, bar, label} — для точечной перекраски выбора без пересборки DOM
 
   const makeCol = (n) => {
@@ -4004,14 +4004,8 @@ function mastersScreen(list, error) {
     el("input", { name: "commissionPercent", type: "number", min: 0, max: 100, value: 0 }),
     el("div", { class: "btn-row", style: "margin-top:12px" }, el("button", { class: "btn-primary", type: "submit" }, "Добавить")));
 
-  const rows = list.map((u) => {
-    const card = el("div", { class: "admin-person-card" },
-      el("div", { class: "admin-person-head" }, el("b", {}, u.name),
-        u.role === "admin" ? el("span", { class: "pill" }, "админ") : null,
-        !u.active ? el("span", { class: "pill" }, "отключён") : null),
-      el("div", { class: "small muted" }, u.login, " · ", u.commissionPercent || 0, "% от работ"),
-      el("a", { class: "admin-report-link", href: `#/admin/reports/${u.id}` }, "Выполненные работы ›"));
-
+  const openMasterSettings = (u) => {
+    let sheet;
     const controls = el("div", { class: "admin-person-controls" });
 
     controls.append(el("form", {
@@ -4019,7 +4013,7 @@ function mastersScreen(list, error) {
         ev.preventDefault();
         const password = ev.target.password.value;
         if (!password) return;
-        if (await usersApi("PUT", { id: u.id, password })) { ev.target.reset(); alert("Пароль обновлён"); }
+        if (await usersApi("PUT", { id: u.id, password })) { sheet.close(); toast("Пароль обновлён"); }
       },
     },
       el("input", { name: "password", type: "password", placeholder: "новый пароль", style: "flex:1", autocomplete: "new-password" }),
@@ -4028,7 +4022,7 @@ function mastersScreen(list, error) {
     controls.append(el("form", {
       style: "display:flex;gap:8px;align-items:center;margin-top:10px", onsubmit: async (ev) => {
         ev.preventDefault();
-        if (await usersApi("PUT", { id: u.id, commissionPercent: ev.target.commissionPercent.value })) { loadMasters(); toast("Процент обновлён"); }
+        if (await usersApi("PUT", { id: u.id, commissionPercent: ev.target.commissionPercent.value })) { sheet.close(); loadMasters(); toast("Процент обновлён"); }
       },
     },
       el("label", { class: "small muted", style: "flex:0 0 auto" }, "Процент от работы"),
@@ -4036,17 +4030,24 @@ function mastersScreen(list, error) {
       el("button", { type: "submit" }, "Сохранить")));
 
     controls.append(el("div", { class: "btn-row", style: "margin-top:10px" },
-      el("button", { onclick: async () => { if (await usersApi("PUT", { id: u.id, active: !u.active })) loadMasters(); } },
+      el("button", { onclick: async () => { if (await usersApi("PUT", { id: u.id, active: !u.active })) { sheet.close(); loadMasters(); } } },
         u.active ? "Отключить" : "Включить"),
       el("button", {
         class: "btn-warn", onclick: async () => {
           if (!confirm(`Удалить мастера «${u.name}»?`)) return;
-          if (await usersApi("DELETE", { id: u.id })) loadMasters();
+          if (await usersApi("DELETE", { id: u.id })) { sheet.close(); loadMasters(); }
         },
       }, "Удалить")));
-    card.append(el("details", { class: "admin-details" }, el("summary", {}, "Настройки мастера"), controls));
-    return card;
-  });
+    sheet = openSheet(u.name, controls);
+  };
+
+  const rows = list.map((u) => el("div", { class: "admin-person-card" },
+    el("div", { class: "admin-person-head" }, el("b", {}, u.name),
+      u.role === "admin" ? el("span", { class: "pill" }, "админ") : null,
+      !u.active ? el("span", { class: "pill" }, "отключён") : null),
+    el("div", { class: "small muted" }, u.login),
+    el("a", { class: "admin-report-link", href: `#/admin/reports/${u.id}` }, "Выполненные работы ›"),
+    el("button", { class: "admin-settings-btn", onclick: () => openMasterSettings(u) }, "Настройки мастера")));
 
   return [
     bar("Мастера", "/admin"),
