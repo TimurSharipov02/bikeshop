@@ -42,6 +42,7 @@ const bundle = [
   strip(readFileSync(p("web/report-entries.js"), "utf8")),
   strip(readFileSync(p("web/order-calc.js"), "utf8")),
   strip(readFileSync(p("web/search.js"), "utf8")),
+  strip(readFileSync(p("web/undo.js"), "utf8")),
   strip(readFileSync(p("web/dom.js"), "utf8")),
   strip(readFileSync(p("web/store.js"), "utf8")),
   strip(readFileSync(p("web/app.js"), "utf8")),

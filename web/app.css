@@ -622,3 +622,25 @@ label { display:block; font-size:13px; color:var(--muted); margin:var(--sp-4) 0 
 .look-swatch { flex:0 0 auto; display:flex; padding-left:6px; }
 .look-swatch span { width:22px; height:22px; border-radius:50%; margin-left:-6px;
   border:2px solid var(--card); box-shadow:0 0 0 .5px rgba(0,0,0,.2); }
+
+/* Отмена действия: маленькая кнопка «↶» в углу — не перекрывает кнопки
+   снизу, появляется на 4 секунды после действия. */
+.undo-chip { position:fixed; left:16px; z-index:45; width:44px; height:44px; min-height:0; padding:0;
+  bottom:calc(92px + env(safe-area-inset-bottom) + var(--kb-offset, 0px));
+  display:flex; align-items:center; justify-content:center; border-radius:50%; border:0;
+  background:var(--card); color:var(--accent); box-shadow:var(--shadow-md);
+  opacity:0; transform:scale(.8); pointer-events:none; transition:opacity .2s ease, transform .2s ease; }
+.undo-chip.show { opacity:1; transform:none; pointer-events:auto; }
+.undo-chip svg { width:22px; height:22px; }
+/* Вопрос посреди экрана — как системный на iPhone: текст и две кнопки. */
+.dialog-backdrop { position:fixed; inset:0; z-index:100; background:rgba(0,0,0,.35); display:flex;
+  align-items:center; justify-content:center; padding:24px; }
+.dialog { width:100%; max-width:290px; border-radius:16px; overflow:hidden; background:var(--card); box-shadow:var(--shadow-lg); }
+.dialog-text { padding:20px 18px 16px; text-align:center; }
+.dialog-text b { display:block; font-size:17px; }
+.dialog-text p { margin:6px 0 0; font-size:14px; color:var(--muted); }
+.dialog-buttons { display:flex; border-top:.5px solid var(--line); }
+.dialog-buttons button { flex:1; border:0; border-radius:0; background:none; box-shadow:none; min-height:48px;
+  color:var(--accent); font-weight:400; }
+.dialog-buttons button + button { border-left:.5px solid var(--line); }
+.dialog-buttons .dialog-yes { font-weight:700; }

@@ -45,6 +45,7 @@ import {
   stockCache, clearStockCache, ensureStock,
   loadDB, syncFromServer,
   editDB, editOrder, deleteOrderApi, deleteClientApi, deleteBikeApi, pushDbNow, flushPending,
+  onUndoRecorded, peekUndo, undoLast,
 } from "./store.js";
 
 const RAW = window.CATALOG;
@@ -425,6 +426,130 @@ window.addEventListener("popstate", () => {
   update();
 })();
 
+// ---------------------------------------------------------------------------
+// Отмена последнего действия — на случай случайного нажатия. Два способа:
+// маленькая кнопка «↶» в углу на несколько секунд после каждого действия и
+// встряхивание телефона (как «Встряхнуть, чтобы отменить» на iPhone) — тогда
+// сначала вопрос «Да/Нет». Что именно откатывается — web/undo.js.
+// ---------------------------------------------------------------------------
+const capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
+// Вопрос посреди экрана с двумя кнопками, как системный на iPhone.
+// onYes вызывается прямо в обработчике нажатия — это важно для запроса
+// доступа к датчику движения: iOS разрешает его только в ответ на нажатие.
+let dialogOpen = false;
+function askDialog({ title, message, yes = "Да", no = "Нет", onYes, onNo }) {
+  if (dialogOpen) return;
+  dialogOpen = true;
+  const close = () => { dialogOpen = false; backdrop.remove(); };
+  const backdrop = el("div", { class: "dialog-backdrop" },
+    el("div", { class: "dialog", role: "alertdialog" },
+      el("div", { class: "dialog-text" }, el("b", {}, title), message ? el("p", {}, message) : null),
+      el("div", { class: "dialog-buttons" },
+        el("button", { type: "button", onclick: () => { close(); onNo?.(); } }, no),
+        el("button", { type: "button", class: "dialog-yes", onclick: () => { close(); onYes?.(); } }, yes))));
+  document.body.append(backdrop);
+}
+
+function performUndo() {
+  const entry = undoLast();
+  hideUndoChip();
+  if (!entry) return toast("Нечего отменять");
+  toast("Отменено: " + entry.label);
+  // Перерисовать текущий экран с уже откатанными данными. Под-экран
+  // (диагностика, оплата) закрываем — его «назад» и так перерисует
+  // обращение; на новом наряде черновик не в базе, его не трогаем.
+  closeAllSheets();
+  if (subScreenExit) return leaveSubScreen();
+  if (location.hash.startsWith("#/orders/new")) return;
+  const y = window.scrollY;
+  router();
+  window.scrollTo(0, y);
+}
+
+// Кнопка «↶»: маленькая, в углу, сама исчезает через 4 секунды.
+let undoChip = null, undoChipTimer = null;
+function hideUndoChip() { clearTimeout(undoChipTimer); undoChip?.classList.remove("show"); }
+onUndoRecorded(() => {
+  if (!undoChip) {
+    undoChip = el("button", { type: "button", class: "undo-chip", "aria-label": "Отменить последнее действие",
+      html: ICON_SVG('<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>'), onclick: performUndo });
+    document.body.append(undoChip);
+  }
+  undoChip.classList.add("show");
+  clearTimeout(undoChipTimer);
+  undoChipTimer = setTimeout(hideUndoChip, 4000);
+});
+
+// Встряхивание. На iPhone сайту нужен разрешённый доступ к датчику движения
+// (спрашивается один раз, и только по нажатию), на Android — нет.
+const SHAKE_KEY = "veloterra-shake"; // "on" | "off", нет — ещё не спрашивали
+const shakeNeedsPermission = typeof window.DeviceMotionEvent?.requestPermission === "function";
+const shakeSetting = () => { try { return localStorage.getItem(SHAKE_KEY); } catch { return null; } };
+const setShakeSetting = (v) => { try { localStorage.setItem(SHAKE_KEY, v); } catch {} };
+function onShake() {
+  if (!SESSION || dialogOpen) return;
+  const entry = peekUndo();
+  if (!entry) return toast("Нечего отменять");
+  askDialog({ title: "Отменить действие?", message: capitalize(entry.label), onYes: performUndo });
+}
+let shakeListening = false;
+function listenShake() {
+  if (shakeListening) return;
+  shakeListening = true;
+  let last = null, hits = [], quietUntil = 0;
+  window.addEventListener("devicemotion", (e) => {
+    const a = e.accelerationIncludingGravity;
+    if (!a || a.x == null) return;
+    if (last) {
+      // Резкая смена ускорения три раза за 0.8 с — встряхнули. Ходьба и
+      // телефон в кармане до такого порога не доходят, а если и дойдут —
+      // без «Да» ничего не отменится.
+      const jolt = Math.abs(a.x - last.x) + Math.abs(a.y - last.y) + Math.abs(a.z - last.z);
+      const now = Date.now();
+      if (jolt > 25 && now > quietUntil) {
+        hits = hits.filter((t) => now - t < 800);
+        hits.push(now);
+        if (hits.length >= 3) { hits = []; quietUntil = now + 2000; onShake(); }
+      }
+    }
+    last = { x: a.x, y: a.y, z: a.z };
+  });
+}
+// Запросить доступ (iOS) — только из обработчика нажатия.
+function enableShake() {
+  if (!shakeNeedsPermission) { setShakeSetting("on"); listenShake(); return Promise.resolve(true); }
+  return window.DeviceMotionEvent.requestPermission().then((res) => {
+    const ok = res === "granted";
+    setShakeSetting(ok ? "on" : "off");
+    if (ok) listenShake();
+    else toast("Доступ к датчику движения не дан — включить можно в профиле");
+    return ok;
+  }).catch(() => false);
+}
+(function setupShake() {
+  if (!window.DeviceMotionEvent) return;
+  const state = shakeSetting();
+  if (!shakeNeedsPermission) { if (state !== "off") listenShake(); return; }
+  // Уже разрешали — iOS может снова требовать запрос после перезагрузки
+  // страницы: делаем его тихо на первом же касании (повторного вопроса,
+  // если доступ уже дан, система не показывает).
+  if (state === "on") {
+    document.addEventListener("touchend", () => enableShake(), { once: true });
+  }
+})();
+// Один раз после входа — предложить включить (только iPhone: там нужен доступ).
+function offerShakeOnce() {
+  if (!shakeNeedsPermission || shakeSetting() !== null || !SESSION) return;
+  setTimeout(() => askDialog({
+    title: "Отмена встряхиванием",
+    message: "Случайно нажали не то — встряхните телефон, и приложение предложит отменить последнее действие. Для этого нужен доступ к датчику движения.",
+    yes: "Разрешить", no: "Не сейчас",
+    onYes: () => enableShake(),
+    onNo: () => setShakeSetting("off"),
+  }), 800);
+}
+
 // Потянуть вниз от самого верха экрана — принудительно подтянуть свежие
 // данные с сервера (заявку мог тем временем поменять другой мастер).
 // Работает где угодно в приложении, отдельного подключения на экран не надо.
@@ -504,6 +629,7 @@ const applySessionLook = () => { if (SESSION) applyLook(SESSION.look || {}); };
   await loadSession();
   applySessionLook();
   router();
+  offerShakeOnce();
   if (SESSION) { if (dirty) await flushPending(); else syncFromServer(); }
 })();
 window.addEventListener("online", () => { if (SESSION && dirty) flushPending(); });
@@ -2875,6 +3001,20 @@ function openLookSheet() {
   openSheet("Оформление", body);
 }
 
+// Профиль → «Отмена встряхиванием»: вкл/выкл на этом телефоне.
+function shakeToggleRow() {
+  if (!window.DeviceMotionEvent) return null;
+  const on = shakeSetting() === "on" || (!shakeNeedsPermission && shakeSetting() !== "off");
+  return el("button", { class: "row profile-menu-action", type: "button", onclick: async () => {
+    if (on) { setShakeSetting("off"); toast("Отмена встряхиванием выключена — работает после перезагрузки"); }
+    else if (await enableShake()) toast("Готово: встряхните телефон, чтобы отменить последнее действие");
+    router();
+  } },
+    el("span", { class: "row-icon", html: ICON_SVG('<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>') }),
+    el("span", { style: "flex:1" }, "Отмена встряхиванием"),
+    el("span", { class: "small muted" }, on ? "Вкл" : "Выкл"));
+}
+
 function viewProfile() {
   const changePassword = () => {
     const error = el("p", { class: "small", style: "color:var(--warn);display:none" });
@@ -2906,6 +3046,7 @@ function viewProfile() {
         el("button", { class: "row profile-menu-action", type: "button", onclick: openLookSheet },
           el("span", { class: "row-icon", html: ICON_SVG('<circle cx="12" cy="12" r="9"/><circle cx="7.8" cy="10.5" r="1.2"/><circle cx="12" cy="7.5" r="1.2"/><circle cx="16.2" cy="10.5" r="1.2"/><path d="M12 21a2.2 2.2 0 0 1 0-4.4h1.6a3.4 3.4 0 0 0 3.4-3.4"/>') }),
           el("span", { style: "flex:1" }, "Оформление"), el("span", { class: "chev" }, "›")),
+        shakeToggleRow(),
         el("button", { class: "row profile-menu-action", type: "button", onclick: changePassword },
           el("span", { class: "row-icon", html: ICON_SVG('<rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>') }),
           el("span", { style: "flex:1" }, "Сменить пароль"), el("span", { class: "chev" }, "›"))),

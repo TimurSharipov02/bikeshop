@@ -10,6 +10,8 @@
 // И кэш серверных справочников (остатки, работы, мастера), которые
 // подтягиваются один раз и обновляются по мере правок.
 
+import { diffDB, applyUndo, undoable, describeUndo } from "./undo.js";
+
 export const DB_KEY = "vella.db.v1";
 export const DB_BASE_KEY = "vella.db.server.v1";
 export const DB_DIRTY_KEY = "vella.db.dirty.v1";
@@ -263,7 +265,36 @@ export async function sendSnapshot(myGen) {
 }
 
 export function saveDB(d) { DB = normalizeDB(d); writeLocal(); pushToServer(); }
-export function editDB(fn) { fn(DB); writeLocal(); pushToServer(); }
+// Каждое действие через editDB запоминается для отмены (web/undo.js):
+// только что изменилось — «до» и «после» по затронутым записям.
+const UNDO_LIMIT = 30;
+const undoStack = [];
+let undoListener = null;
+export const onUndoRecorded = (fn) => { undoListener = fn; };
+export const peekUndo = () => undoStack[undoStack.length - 1] || null;
+export function editDB(fn) {
+  const before = structuredClone(DB);
+  fn(DB);
+  const changes = diffDB(before, DB);
+  if (undoable(changes)) {
+    undoStack.push({ changes, label: describeUndo(changes), at: Date.now() });
+    if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+    undoListener?.(peekUndo());
+  } else if (changes.length) {
+    // Действие, которое нельзя отменить (выдача клиенту), — более ранние
+    // отмены через него уже не проходят, сбрасываем историю.
+    undoStack.length = 0;
+  }
+  writeLocal(); pushToServer();
+}
+// Отменить последнее действие: вернуть только то, что оно поменяло.
+export function undoLast() {
+  const entry = undoStack.pop();
+  if (!entry) return null;
+  applyUndo(DB, entry.changes);
+  writeLocal(); pushToServer();
+  return entry;
+}
 export function editOrder(number, fn) {
   editDB((d) => { const o = d.orders.find((x) => x.number === number); if (o) fn(o); });
 }

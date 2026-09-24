@@ -61,7 +61,7 @@
   --shadow-card:none;
 }
 [data-style="calm"] header.bar { box-shadow:none; }
-[data-style="calm"] button:not(:is(.qty-stepper button, .segmented button, .search-clear, header.bar button, [style*="background:none"], .row, .carousel-dot, .parts-text-action, .compact-add-btn, .complication-remove, .admin-settings-btn, .work-select-btn, .swipe-action-btn, .btn-primary, .btn-ok, .btn-warn)) { border:1px solid var(--line); box-shadow:none; }
+[data-style="calm"] button:not(:is(.qty-stepper button, .segmented button, .search-clear, header.bar button, [style*="background:none"], .row, .carousel-dot, .parts-text-action, .compact-add-btn, .complication-remove, .admin-settings-btn, .work-select-btn, .swipe-action-btn, .btn-primary, .btn-ok, .btn-warn, .dialog-buttons button, .undo-chip)) { border:1px solid var(--line); box-shadow:none; }
 [data-style="calm"] .btn-primary, [data-style="calm"] .btn-ok, [data-style="calm"] .btn-warn { border:0; box-shadow:none; font-weight:600; }
 [data-style="calm"] .control-price { box-shadow:none; border:0; background:var(--accent-weak); }
 [data-style="calm"] .control-price.parts { background:var(--purple-weak); }
@@ -91,7 +91,7 @@
   --nd:#1d2128; --nl:#373d48;
 }
 [data-style="soft"] header.bar { box-shadow:0 6px 14px -8px var(--nd); backdrop-filter:none; -webkit-backdrop-filter:none; border-bottom:0; }
-[data-style="soft"] button:not(:is(.qty-stepper button, .segmented button, .search-clear, header.bar button, [style*="background:none"], .row, .carousel-dot, .parts-text-action, .compact-add-btn, .complication-remove, .admin-settings-btn, .work-select-btn, .swipe-action-btn, .btn-primary, .btn-ok, .btn-warn)) { box-shadow:var(--shadow-raise); border:0; }
+[data-style="soft"] button:not(:is(.qty-stepper button, .segmented button, .search-clear, header.bar button, [style*="background:none"], .row, .carousel-dot, .parts-text-action, .compact-add-btn, .complication-remove, .admin-settings-btn, .work-select-btn, .swipe-action-btn, .btn-primary, .btn-ok, .btn-warn, .dialog-buttons button, .undo-chip)) { box-shadow:var(--shadow-raise); border:0; }
 [data-style="soft"] .btn-primary, [data-style="soft"] .btn-ok, [data-style="soft"] .btn-warn { box-shadow:6px 6px 12px var(--nd), -6px -6px 12px var(--nl); }
 [data-style="soft"] .control-price { border:0; background:var(--bg); box-shadow:var(--shadow-raise); }
 [data-style="soft"] .control-price.excluded { box-shadow:var(--shadow-inset); }
@@ -131,7 +131,7 @@
 [data-style="workshop"] .card h2 { text-transform:uppercase; letter-spacing:.03em; }
 [data-style="workshop"] .row { font-size:18px; }
 [data-style="workshop"] .rows-separate .row { min-height:84px; }
-[data-style="workshop"] button:not(:is(.qty-stepper button, .segmented button, .search-clear, header.bar button, [style*="background:none"], .row, .carousel-dot, .parts-text-action, .compact-add-btn, .complication-remove, .admin-settings-btn, .work-select-btn, .swipe-action-btn, .btn-primary, .btn-ok, .btn-warn)) { border:2px solid var(--ws-edge); border-radius:10px; min-height:54px; font-size:18px; box-shadow:3px 3px 0 var(--ws-shadow); }
+[data-style="workshop"] button:not(:is(.qty-stepper button, .segmented button, .search-clear, header.bar button, [style*="background:none"], .row, .carousel-dot, .parts-text-action, .compact-add-btn, .complication-remove, .admin-settings-btn, .work-select-btn, .swipe-action-btn, .btn-primary, .btn-ok, .btn-warn, .dialog-buttons button, .undo-chip)) { border:2px solid var(--ws-edge); border-radius:10px; min-height:54px; font-size:18px; box-shadow:3px 3px 0 var(--ws-shadow); }
 [data-style="workshop"] .btn-primary { --btn-c:var(--ws-hi); color:#111; }
 [data-style="workshop"] .btn-primary, [data-style="workshop"] .btn-ok, [data-style="workshop"] .btn-warn {
   border:2px solid var(--ws-edge); border-radius:10px; min-height:54px; font-size:18px; box-shadow:4px 4px 0 var(--ws-shadow); font-weight:800; text-transform:uppercase; letter-spacing:.04em; }
@@ -213,7 +213,7 @@
 [data-style="paper"] .card h2 { font-size:22px; }
 [data-style="paper"] .section-title { letter-spacing:.08em; }
 [data-style="paper"] header.bar { box-shadow:none; }
-[data-style="paper"] button:not(:is(.qty-stepper button, .segmented button, .search-clear, header.bar button, [style*="background:none"], .row, .carousel-dot, .parts-text-action, .compact-add-btn, .complication-remove, .admin-settings-btn, .work-select-btn, .swipe-action-btn, .btn-primary, .btn-ok, .btn-warn)) { border:1px solid var(--edge); }
+[data-style="paper"] button:not(:is(.qty-stepper button, .segmented button, .search-clear, header.bar button, [style*="background:none"], .row, .carousel-dot, .parts-text-action, .compact-add-btn, .complication-remove, .admin-settings-btn, .work-select-btn, .swipe-action-btn, .btn-primary, .btn-ok, .btn-warn, .dialog-buttons button, .undo-chip)) { border:1px solid var(--edge); }
 [data-style="paper"] :is(.btn-primary, .btn-ok, .btn-warn):not(:disabled) { border:0;
   color:var(--on-accent); box-shadow:0 2px 0 color-mix(in srgb, var(--btn-c), black 35%); }
 [data-style="paper"] .control-price { border:1px solid color-mix(in srgb, var(--accent) 25%, transparent); background:var(--accent-weak);
@@ -233,4 +233,4 @@
    (Профиль → «Оформление», «Сменить пароль»), рядом со строками-ссылками. */
 [data-style]:not([data-style="aero"]) :is(.qty-stepper button, .segmented button, .search-clear, header.bar button,
   button[style*="background:none"], .carousel-dot, .parts-text-action, .compact-add-btn,
-  .complication-remove, .admin-settings-btn) { border:0; box-shadow:none; }
+  .complication-remove, .admin-settings-btn, .dialog-buttons button) { border:0; box-shadow:none; }
