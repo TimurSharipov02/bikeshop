@@ -9,11 +9,16 @@
 //  Как всё устроено:
 //    1. Роутер смотрит на #адрес и вызывает нужный экран (view*).
 //    2. Экран строит DOM и кладёт его в #app.
-//    3. Раннер (runner.js) ведёт мастера по шагам процедуры;
-//       весь ввод-вывод — через объект io, который рисует кнопки.
+//
+//  cat (buildCatalog(RAW.procedures), см. runner.js) — старый каталог
+//  ремонтных процедур ранней версии приложения. Сам пошаговый раннер по нему
+//  удалён (нигде не открывался), но cat.byCode/codeRange/priceOf всё ещё
+//  используются экраном «Пройти диагностику» на приёме — это единственное
+//  оставшееся место, где ещё показываются работы из старого каталога, а не
+//  из нового (catalog/repairs, админка).
 // ============================================================================
 
-import { buildCatalog, runProcedure } from "./runner.js";
+import { buildCatalog } from "./runner.js";
 import { itemWorkValue } from "./pricing.js";
 import { reportEntries } from "./report-entries.js";
 
@@ -1643,12 +1648,6 @@ function viewOrder(number) {
       },
     });
   }
-  function openRunner(code) {
-    const host = el("div", {});
-    render([subBar(cat.byCode.get(code)?.name || code), host]);
-    enterSubScreen(refresh);
-    mountRunner(host, cat.byCode.get(code), { onDone: leaveSubScreen });
-  }
   // onPick — оборачиваем, а не передаём как есть: выбор работы должен так же
   // вернуть на экран обращения, как и явная «‹» — иначе после подбора работы
   // в истории остаётся неизрасходованная запись под этот под-экран, и один
@@ -1844,7 +1843,6 @@ function viewOrder(number) {
                 refresh();
               }
             },
-            onRun: () => openRunner(it.code),
             onSave: (patch) => {
               editOrder(number, (o) => {
                 const x = o.items.find((i) => i.code === it.code);
@@ -2530,7 +2528,7 @@ function pendingAgreementCard(order, handlers, stock) {
 // Правки в форме (было/не было, запчасти) сохраняются сами, без
 // подтверждения, но на статус «готово» не влияют — им управляет одна кнопка
 // внизу формы: «Готово» либо «Отменить», в обе стороны без ограничений.
-function repairItem(it, stock, { onRun, onSave, onQty, onRemove, onAdd, onClaim }) {
+function repairItem(it, stock, { onSave, onQty, onRemove, onAdd, onClaim }) {
   const box = el("div", { class: "assess" });
   const nameRow = el("div", { style: "display:flex;align-items:center;gap:8px" },
     el("b", { style: "flex:1;min-width:0" }, it.name),
@@ -2562,51 +2560,7 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove, onAdd, onClaim 
   return onRemove ? swipeToDelete(box, () => { onRemove(it.code); return true; }) : box;
 }
 
-// Карточка-сводка для группы из нескольких экземпляров одной и той же
-// повторяющейся работы (quantityMode:"instances") — вместо N одинаковых
-// карточек подряд. Открывает ту же шторку, что и repairItem, только сразу
-// с каруселью по всем экземплярам (см. openRepairSheet).
-function repairGroupItem(items, stock, { onSave, onAdd, onRemove }) {
-  const box = el("div", { class: "assess" });
-  const r = items.reduce((a, it) => { const x = itemRange(it); return { min: a.min + x.min, max: a.max + x.max }; }, { min: 0, max: 0 });
-  const myId = SESSION?.id || null;
-  const nameRow = el("div", { style: "display:flex;align-items:center;gap:8px" },
-    el("b", { style: "flex:1;min-width:0" }, items[0].name, el("span", { class: "small muted" }, ` × ${items.length}`)),
-    el("span", { style: "flex:0 0 auto;color:var(--line);font-size:19px" }, "›"));
-  // Открываем сразу на «своём» экземпляре, если такой уже есть; иначе — на
-  // первом ещё ничьём; иначе (всё занято другими) — просто на первом, для
-  // просмотра.
-  const startIndex = (() => {
-    let i = items.findIndex((x) => x.claimedBy?.masterId === myId);
-    if (i === -1) i = items.findIndex((x) => !x.claimedBy);
-    return i === -1 ? 0 : i;
-  })();
-  // Вместо «Готово: X из Y» — ярлык на каждый экземпляр, тот же приём, что
-  // и у обычных (не повторяющихся) работ: имя мастера, если сделано или
-  // занято; «ждёт запчасть» — тот же жёлтый ярлык, что и у самой работы
-  // (repairItem/pendingCard); ничей — «Свободен» серым, чтобы по ряду
-  // пилюль сразу было видно и сколько всего экземпляров, и статус каждого.
-  const instanceTags = el("div", { style: "display:flex;flex-wrap:wrap;gap:6px;margin-top:6px" },
-    ...items.map((i) => {
-      // Исполнитель готового экземпляра выглядит так же, как у единичной
-      // работы: синяя пилюля. Цвет статуса не должен зависеть от того,
-      // сгруппирована работа или нет.
-      if (i.done) return el("span", { class: "pill" }, i.doneBy?.masterName || "готово");
-      if (i.waitingForPart) return el("span", { class: "pill", style: "background:var(--yellow-weak);color:var(--yellow-ink)" }, "ждёт запчасть");
-      if (i.claimedBy) return el("span", { class: "pill pill-muted" }, i.claimedBy.masterName || "Занята");
-      return el("span", { class: "pill pill-muted" }, "Свободно");
-    }));
-  box.append(el("div", {
-    style: "cursor:pointer",
-    onclick: () => openRepairSheet(items[startIndex], stock, onSave, items, { onAdd, onRemove }),
-  },
-    nameRow,
-    el("div", { class: "price-tag", style: "margin-top:2px" }, rangeText(r)),
-    instanceTags));
-  return box;
-}
-
-// Содержимое bottom sheet для repairItem/repairGroupItem — усложнения/
+// Содержимое bottom sheet для repairItem — усложнения/
 // запчасти на вкладках (одна, если нечего показывать на другой), плюс
 // «Жду запчасть»/«Отметить готово». Правки сохраняются сами по себе сразу.
 // siblings.length > 1 — несколько экземпляров одной и той же повторяющейся
@@ -2848,117 +2802,6 @@ function openRepairSheet(it, stock, onSave, siblings = [it], { onAdd: onAddInsta
   // track.clientWidth равен 0, из-за чего scrollLeft всегда сводился к 0
   // независимо от activeIndex (открывался не тот экземпляр, что задуман).
   if (items.length > 1) scrollToIndex(activeIndex, false);
-}
-
-// ============================================================================
-//  РАННЕР ПРОЦЕДУРЫ (пошаговый мастер)
-// ============================================================================
-
-const MODE_LABEL = { master: "Мастер", standard: "Стандарт", training: "Обучение" };
-
-function mountRunner(host, proc, { onDone }) {
-  let mode = "standard";
-  const draw = () => {
-    host.replaceChildren(
-      el("main", { class: "wrap" },
-        el("div", { class: "card" },
-          el("h2", {}, proc.name),
-          proc.entry ? el("p", { class: "small muted" }, "Вход: " + proc.entry) : null,
-          proc.tools ? el("p", { class: "small muted" }, "Инструмент: " + proc.tools) : null,
-          proc.consumables ? el("p", { class: "small muted" }, "Расходники: " + proc.consumables) : null),
-        el("div", { class: "card" },
-          el("label", {}, "Режим показа"),
-          el("div", { class: "segmented" },
-            ["master", "standard", "training"].map((m) =>
-              el("button", { class: mode === m ? "active" : "", onclick: () => { mode = m; draw(); } }, MODE_LABEL[m]))),
-          el("p", { class: "small muted", style: "margin-top:8px" },
-            "Мастер — только главы и проверки. Стандарт — с шагами. Обучение — с пояснениями."))),
-      el("div", { class: "actions" }, el("div", { class: "actions-inner" },
-        el("button", { class: "btn-primary", onclick: () => runActive(host, proc, mode, {}, onDone) }, "Начать"))),
-    );
-  };
-  draw();
-}
-
-function runActive(host, proc, mode, opts, onDone) {
-  const crumbs = el("div", { class: "crumbs" });
-  const chapterEl = el("div", { class: "chapter-title" });
-  const body = el("main", { class: "wrap" }, crumbs, chapterEl, el("div", { id: "run-body" }));
-  const actions = el("div", { class: "actions" }, el("div", { class: "actions-inner" }));
-  host.replaceChildren(body, actions);
-  const bodyEl = () => document.getElementById("run-body");
-  const setActions = (...btns) => actions.firstChild.replaceChildren(...btns.filter(Boolean));
-
-  const log = [];
-  let chapterText = "";
-  const setChapter = (t) => { chapterText = t; chapterEl.textContent = t; };
-
-  const io = {
-    chapter(ch, path) { crumbs.textContent = path.join(" › "); setChapter(`${ch.id}. ${ch.title}`); log.push({ k: "ch", t: `${ch.id}. ${ch.title}` }); },
-    foreachItem(v, item) { setChapter(`${chapterText}  ·  ▸ ${item} ${v}`); log.push({ k: "ch", t: `▸ ${item} ${v}` }); },
-    step(node, showNotes) {
-      return new Promise((res) => {
-        const b = bodyEl();
-        b.replaceChildren(el("div", { class: "step-text" }, node.text),
-          ...(showNotes ? node.notes.map((n) => el("div", { class: "note" }, n)) : []));
-        setActions(el("button", { class: "btn-primary", onclick: () => { log.push({ k: "step", t: node.text }); res(); } }, "Далее"));
-      });
-    },
-    check(text) {
-      return new Promise((res) => {
-        bodyEl().replaceChildren(el("div", { class: "check-box" }, text));
-        setActions(
-          el("button", { class: "btn-ok", onclick: () => { log.push({ k: "ok", t: text }); res(true); } }, "Норма"),
-          el("button", { class: "btn-warn", onclick: () => { log.push({ k: "fail", t: text }); res(false); } }, "Не норма"));
-      });
-    },
-    branch(q, options) {
-      return new Promise((res) => {
-        bodyEl().replaceChildren(el("div", { class: "check-box" }, q));
-        setActions(...options.map((o) => el("button", { class: "btn-primary", onclick: () => res(o) }, o)));
-      });
-    },
-    loopAgain(cond) {
-      return new Promise((res) => {
-        bodyEl().replaceChildren(el("div", { class: "check-box" }, cond + "?"));
-        setActions(el("button", { class: "btn-primary", onclick: () => res(true) }, "Да"), el("button", { onclick: () => res(false) }, "Нет"));
-      });
-    },
-    foreachNext(v, c, first) {
-      return new Promise((res) => {
-        bodyEl().replaceChildren(el("div", { class: "check-box" }, `${first ? "начать" : "ещё"}: ${v} (${c})?`));
-        setActions(el("button", { class: "btn-primary", onclick: () => res(true) }, "Да"), el("button", { onclick: () => res(false) }, "Нет"));
-      });
-    },
-    approve(text) {
-      return new Promise((res) => {
-        bodyEl().replaceChildren(el("div", { class: "check-box" }, "Согласовать с клиентом: " + text));
-        setActions(el("button", { class: "btn-primary", onclick: () => { log.push({ k: "appr", t: text }); res(); } }, "Согласовано"));
-      });
-    },
-    stop(reason) { log.push({ k: "stop", t: reason }); bodyEl().append(el("p", { class: "note" }, "СТОП: " + reason)); },
-    enterCall(t, note) { log.push({ k: "call", t: `${t.name}${note ? " — " + note : ""}` }); },
-    exitCall() {},
-    missingCall(code) { log.push({ k: "stop", t: `[${code}] — не написана, пропуск` }); },
-    skipRecursion(code) { log.push({ k: "call", t: `повторный [${code}] — пропуск` }); },
-  };
-
-  runProcedure(cat, proc, io, { mode, params: opts.params }).finally(() => {
-    setChapter("Готово");
-    crumbs.textContent = "";
-    const b = bodyEl();
-    b.replaceChildren();
-    if (proc.quality.length) b.append(el("div", { class: "card" }, el("p", { class: "small muted" }, "ПРОВЕРКА КАЧЕСТВА"),
-      el("ul", { class: "small" }, proc.quality.map((q) => el("li", {}, q)))));
-    if (proc.record.length) b.append(el("div", { class: "card" }, el("p", { class: "small muted" }, "ФИКСИРОВАТЬ В НАРЯДЕ"),
-      el("ul", { class: "small" }, proc.record.map((r) => el("li", {}, r)))));
-    const det = el("details", { class: "card done-log" }, el("summary", {}, `Пройдено (${log.length})`),
-      ...log.map((x) => el("div", { class: "item" + (x.k === "fail" ? " fail" : "") }, x.k === "ch" ? el("b", {}, x.t) : x.t)));
-    b.append(det);
-    if (proc.sources.length) b.append(el("div", { class: "card" }, el("p", { class: "small muted" }, "Источники"),
-      proc.sources.map((s) => el("p", { class: "small" }, s.url ? el("a", { href: s.url, target: "_blank" }, s.title) : s.title))));
-    setActions(el("button", { class: "btn-primary", onclick: onDone }, "Дальше"));
-  });
 }
 
 // ============================================================================
