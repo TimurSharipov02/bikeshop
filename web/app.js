@@ -15,6 +15,7 @@
 
 import { buildCatalog, runProcedure } from "./runner.js";
 import { itemWorkValue } from "./pricing.js";
+import { reportEntries } from "./report-entries.js";
 
 const RAW = window.CATALOG;
 const cat = buildCatalog(RAW.procedures);
@@ -3627,19 +3628,7 @@ function viewProfile() {
 // без дележа — см. историю про отказ от completions/qty-дележа). masterId
 // === null — записи всех мастеров сразу (сводный отчёт).
 function workLog(masterId) {
-  const d = loadDB();
-  const out = [];
-  for (const o of d.orders) {
-    // Пока обращение не выдано (не оплачено) — работа в отчёт не попадает,
-    // хоть бы она уже и была отмечена готовой: деньги ещё не пришли.
-    if (!o.handedOverAt) continue;
-    for (const it of o.items) {
-      const c = it.doneBy;
-      if (!c || !c.at || (masterId != null && c.masterId !== masterId)) continue;
-      out.push({ order: o, item: it, at: new Date(c.at) });
-    }
-  }
-  return out;
+  return reportEntries(loadDB().orders, masterId);
 }
 // Заработок с одной такой записи — стоимость работы (без запчастей) целиком,
 // умноженная на процент мастера, который её выполнил (percentOf — функция
@@ -3690,27 +3679,19 @@ function bucketAt(unit, n) {
 function hapticTick() { try { navigator.vibrate && navigator.vibrate(10); } catch {} }
 // masterId === null — история по всем мастерам сразу: в одном обращении
 // могли поучаствовать несколько, поэтому каждая строка подписана именем.
-function historyList(masterId, percentOf) {
+function historyList(masterId, percentOf, from, to) {
   const d = loadDB();
   const byOrder = new Map();
-  for (const o of d.orders) {
-    // Пока обращение не выдано (не оплачено) — в историю не попадает.
-    if (!o.handedOverAt) continue;
+  for (const { order: o, item: it } of reportEntries(d.orders, masterId, from, to)) {
     const bike = d.bikes.find((b) => b.number === o.bikeNumber);
     const client = d.clients.find((c) => c.phone === o.clientPhone);
-    for (const it of o.items) {
-      const c = it.doneBy;
-      if (!c || !c.at || (masterId != null && c.masterId !== masterId)) continue;
-      // latest (когда фактически сделана работа) — для фильтра по
-      // выбранному периоду в графике выше; handedAt — для сортировки
-      // списка (как в бывшем архиве, «по дате выдачи»).
-      if (!byOrder.has(o.number)) byOrder.set(o.number, { order: o, bike, client, lines: [], earned: 0, latest: c.at, handedAt: o.handedOverAt });
-      const rec = byOrder.get(o.number);
-      const earned = entryEarned({ item: it }, percentOf);
-      rec.lines.push({ name: it.name, earned, masterName: c.masterName });
-      rec.earned += earned;
-      if (c.at > rec.latest) rec.latest = c.at;
-    }
+    const c = it.doneBy;
+    // Дата выдачи определяет и период оплаты, и порядок в истории.
+    if (!byOrder.has(o.number)) byOrder.set(o.number, { order: o, bike, client, lines: [], earned: 0, handedAt: o.handedOverAt });
+    const rec = byOrder.get(o.number);
+    const earned = entryEarned({ item: it }, percentOf);
+    rec.lines.push({ name: it.name, earned, masterName: c.masterName });
+    rec.earned += earned;
   }
   return [...byOrder.values()].sort((a, b) => b.handedAt.localeCompare(a.handedAt));
 }
@@ -3852,8 +3833,7 @@ function buildReportTab(masterId, percentOf, tab) {
   const redrawHistory = () => {
     if (!rangeFrom) return;
     const qDigits = maskedDigits(searchPhone);
-    let history = historyList(masterId, percentOf)
-      .filter((rec) => rec.latest && new Date(rec.latest) >= rangeFrom && new Date(rec.latest) < rangeTo);
+    let history = historyList(masterId, percentOf, rangeFrom, rangeTo);
     if (qDigits) history = history.filter((rec) => phoneDigits(rec.order.clientPhone).includes(qDigits));
     historyItemsEl.replaceChildren(
       history.length === 0
@@ -3863,7 +3843,7 @@ function buildReportTab(masterId, percentOf, tab) {
         // тут ещё сразу видно, что в нём сделал этот мастер и за сколько.
         : el("div", { class: "list", style: "gap:10px" }, history.map((rec) => el("a", { class: "card card-link report-history-card", href: `#/orders/${rec.order.number}` },
             el("b", { class: "report-history-title" }, rec.bike ? bikeLabel(rec.bike) : rec.client?.name || "Обращение"),
-            rec.latest ? el("div", { class: "small muted report-history-date" }, formatDateShort(rec.latest)) : null,
+            rec.handedAt ? el("div", { class: "small muted report-history-date" }, formatDateShort(rec.handedAt)) : null,
             el("div", { class: "small muted report-history-lines" },
               rec.lines.map((l) => el("div", {}, "– ", l.name, " ", money(l.earned)))),
             el("div", { class: "report-history-footer" },

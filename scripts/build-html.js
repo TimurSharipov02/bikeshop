@@ -54,6 +54,7 @@ const strip = (src) =>
 const bundle = [
   strip(readFileSync(p("web/runner.js"), "utf8")),
   strip(readFileSync(p("web/pricing.js"), "utf8")),
+  strip(readFileSync(p("web/report-entries.js"), "utf8")),
   strip(readFileSync(p("web/app.js"), "utf8")),
 ].join("\n\n");
 
