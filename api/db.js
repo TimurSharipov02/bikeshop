@@ -34,7 +34,13 @@ export default async function handler(req, res) {
       if (!number && !clientPhone && !bikeNumber) return res.status(400).json({ error: "не указано, что удалить" });
       const next = await updateDB(r, (current) => {
         const data = structuredClone(current);
-        if (number) data.orders = data.orders.filter((o) => o.number !== number);
+        if (number) {
+          const order = data.orders.find((o) => o.number === number);
+          if (order && (order.status === "выдан" || order.handedOverAt)) {
+            throw new MergeConflict(`оплаченное обращение ${number} нельзя удалять`);
+          }
+          data.orders = data.orders.filter((o) => o.number !== number);
+        }
         else if (clientPhone) {
           data.clients = data.clients.filter((c) => c.phone !== clientPhone);
           data.bikes = data.bikes.filter((b) => b.ownerPhone !== clientPhone);

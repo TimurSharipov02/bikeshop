@@ -5,6 +5,13 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 // Check the proposed merged state on each CAS attempt, so a stale client
 // cannot edit a work item claimed by a different master.
 export function assertWorkAccess(current, merged, user) {
+  // Paid orders are an accounting record. This applies to administrators too,
+  // and also catches deletion through the ordinary snapshot merge.
+  for (const previous of current.orders || []) {
+    if (previous.status !== "выдан" && !previous.handedOverAt) continue;
+    const next = (merged.orders || []).find((order) => order.number === previous.number);
+    if (!same(previous, next)) throw new MergeConflict(`оплаченное обращение ${previous.number} нельзя изменять`);
+  }
   for (const order of merged.orders || []) {
     const previous = (current.orders || []).find((o) => o.number === order.number);
     if (!previous) continue;

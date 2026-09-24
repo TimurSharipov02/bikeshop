@@ -90,6 +90,26 @@ test('opening a free work item claims it; only its performer can release complet
   assert.throws(() => assertWorkAccess(claimed, stolen, one), MergeConflict);
 });
 
+test('paid orders cannot be edited or removed, including by an administrator', () => {
+  const current = db();
+  current.orders[0].status = 'выдан';
+  current.orders[0].handedOverAt = '2026-09-24T12:00:00Z';
+  const admin = { uid: 'admin', role: 'admin' };
+  const changed = copy(current);
+  changed.orders[0].items[0].workPrice = 999;
+  assert.throws(() => assertWorkAccess(current, changed, admin), MergeConflict);
+  const reopened = copy(current);
+  reopened.orders[0].status = 'взята в работу';
+  reopened.orders[0].handedOverAt = null;
+  assert.throws(() => assertWorkAccess(current, reopened, admin), MergeConflict);
+  const removed = copy(current);
+  removed.orders = [];
+  assert.throws(() => assertWorkAccess(current, removed, admin), MergeConflict);
+  const changedOtherOrder = copy(current);
+  changedOtherOrder.orders.push({ number: 'V2', items: [] });
+  assert.doesNotThrow(() => assertWorkAccess(current, changedOtherOrder, admin));
+});
+
 test('changes to different fields of one work item both survive', () => {
   const base = db(), first = copy(base), second = copy(base);
   first.orders[0].items[0].done = true;

@@ -1746,17 +1746,17 @@ function viewOrder(number) {
           el("span", { style: "flex:1" }, [client?.name || order.clientName, order.clientPhone].filter(Boolean).join(" · ")),
           el("span", { style: "font-size:22px;flex:0 0 auto" }, "📞"))
       : (client?.name || order.clientName ? el("p", { class: "small muted" }, client?.name || order.clientName) : null),
-    // То же поле, что и на диагностике (order.request) — тут его тоже можно
-    // менять, без захода в диагностику.
-    el("div", { style: "margin-top:8px" },
-      el("textarea", { class: "request-field", rows: 2, value: order.request || "", placeholder: "Уточнения",
-        onchange: (e) => { editOrder(number, (o) => (o.request = e.target.value.trim())); refresh(); } })));
+    order.status === "выдан"
+      ? (order.request ? el("p", { class: "small muted", style: "margin-top:8px" }, order.request) : null)
+      : el("div", { style: "margin-top:8px" },
+          el("textarea", { class: "request-field", rows: 2, value: order.request || "", placeholder: "Уточнения",
+            onchange: (e) => { editOrder(number, (o) => (o.request = e.target.value.trim())); refresh(); } })));
 
   if ((order.diagnosticNotes || []).length) {
     const ul = el("ul", { style: "margin:4px 0 0;padding-left:18px" });
     order.diagnosticNotes.forEach((n, i) =>
       ul.append(el("li", { class: "small" }, n, " ",
-        el("button", { class: "small", style: "border:0;background:none;color:var(--muted)", onclick: () => { editOrder(number, (o) => o.diagnosticNotes.splice(i, 1)); refresh(); } }, "✕"))));
+        order.status !== "выдан" ? el("button", { class: "small", style: "border:0;background:none;color:var(--muted)", onclick: () => { editOrder(number, (o) => o.diagnosticNotes.splice(i, 1)); refresh(); } }, "✕") : null)));
     head.append(el("div", { class: "small", style: "margin-top:8px" }, el("span", { class: "muted" }, "Замечания с диагностики:"), ul));
   }
 
@@ -1768,17 +1768,6 @@ function viewOrder(number) {
   let actions = null;
   // Переход на новую стадию — это новый экран, тут скролл наверх уместен.
   const setStatus = (s, extra) => { editOrder(number, (o) => { o.status = s; if (extra) extra(o); }); render(viewOrder(number)); };
-  // Возврат на пройденную стадию — по ошибке выдали раньше времени или
-  // нашлась недоделка. Сбрасываем поля, которые эта и более поздние стадии
-  // проставляют, чтобы состояние не противоречило статусу, на который
-  // вернулись.
-  const jumpToStage = (target) => {
-    editOrder(number, (o) => {
-      o.status = target;
-      if (target === "взята в работу") { o.occupiedBy = null; o.occupiedByName = ""; o.handedOverAt = null; }
-    });
-    render(viewOrder(number));
-  };
 
   if (order.status === "приём") {
     const onDiffSet = (code, di, st) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === code); if (x?.difficulties?.[di]) x.difficulties[di].state = st; }); refresh(); };
@@ -1908,28 +1897,12 @@ function viewOrder(number) {
   }
 
   if (order.status === "выдан") {
-    main.append(pendingCardHost());
     const agreedItems = order.items.filter((i) => i.agreed);
-    // Админ может задним числом поправить пункт наряда (название/цену/кто
-    // выполнил) прямо тут, без «Вернуть в работу» — тапом открывается форма
-    // (см. openHandedItemEdit). У остальных список остаётся тем же
-    // read-only itemList, что и на «другой мастер ведёт».
-    const itemsBlock = SESSION?.role === "admin"
-      ? el("div", { class: "rows", style: "margin-top:8px" }, agreedItems.map((it) => {
-          const row = detailedItemRow(it);
-          row.style.cursor = "pointer";
-          row.onclick = () => openHandedItemEdit(number, it, refresh);
-          return row;
-        }))
-      : itemList({ items: agreedItems }, true, null, true, false);
+    const itemsBlock = el("div", { class: "rows", style: "margin-top:8px" }, agreedItems.map(detailedItemRow));
     main.append(stage("Выдан", itemsBlock,
       el("div", { class: "card card-flush" },
         el("span", { class: "muted small" }, "Итого"),
-        el("div", { class: "total" }, rangeText(range))),
-      // Выдали по ошибке раньше времени или нашлась недоделка — можно
-      // вернуть в работу; без прогресс-бара это был единственный способ.
-      el("button", { class: "small", style: "border:0;background:none;color:var(--muted);margin-top:10px",
-        onclick: () => jumpToStage("взята в работу") }, "Вернуть в работу")));
+        el("div", { class: "total" }, rangeText(range)))));
   }
 
   // Список работ длинный — «Итого» внизу карточки может уйти за экран, пока
@@ -2340,62 +2313,6 @@ function detailedItemRow(it) {
     it.notes ? el("p", { class: "small muted", style: "margin-top:4px" }, it.notes) : null,
     el("div", { class: "report-history-footer" },
       el("span", { class: "report-history-total" }, rangeText(r))));
-}
-
-// Правка пункта уже выданного (оплаченного) обращения — только для админа:
-// исправить название/цену работы задним числом и то, кто её по факту
-// выполнил (перевесить на другого мастера, если отметил не тот). Открывается
-// прямо со стадии «Выдан» самого обращения
-// (тапом по пункту), без «Вернуть в работу» — статус заявки не трогаем.
-// Сохранение — через editOrder(orderNumber, ...), как и everywhere else в
-// приложении: sheet живёт своим элементом на body (см. openSheet) и может
-// пережить фоновый syncFromServer() (он летит на каждый hashchange), который
-// подменяет саму DB на свежий объект с сервера — держать прямую ссылку на
-// «it», захваченную при открытии формы, и мутировать её при сохранении
-// небезопасно, эта ссылка к тому моменту может уже не быть частью живой DB
-// (правка молча потеряется). Поэтому тут только черновик (draft), а на
-// «Сохранить» — переоткрытие свежего item по коду в ТЕКУЩЕЙ DB.
-function openHandedItemEdit(orderNumber, it, onSaved) {
-  const itemCode = it.code;
-  const draft = { name: it.name, price: it.workPrice || 0,
-    masterId: it.doneBy?.masterId || null, masterName: it.doneBy?.masterName || "" };
-  let masters = [];
-  const content = el("div", {});
-  let sheet;
-  const draw = () => {
-    content.replaceChildren(
-      el("label", {}, "Название работы"),
-      el("input", { value: draft.name, oninput: (e) => (draft.name = e.target.value) }),
-      el("label", { style: "margin-top:8px" }, "Цена работы, ₽"),
-      el("input", { type: "number", value: draft.price, oninput: (e) => (draft.price = +e.target.value || 0) }),
-      el("label", { style: "margin-top:8px" }, "Кто выполнил"),
-      masters.length
-        ? el("select", {
-            onchange: (e) => {
-              draft.masterId = e.target.value;
-              draft.masterName = masters.find((m) => m.id === e.target.value)?.name || draft.masterName;
-            },
-          }, masters.map((m) => el("option", { value: m.id, selected: m.id === draft.masterId }, m.name)))
-        : el("p", { class: "small muted" }, "Загрузка мастеров…"),
-      el("div", { class: "btn-row", style: "margin-top:12px" },
-        el("button", {
-          class: "btn-primary", onclick: () => {
-            editOrder(orderNumber, (o) => {
-              const freshIt = o.items.find((i) => i.code === itemCode);
-              if (!freshIt) return;
-              freshIt.name = draft.name.trim() || freshIt.name;
-              freshIt.workPrice = draft.price;
-              if (freshIt.doneBy) freshIt.doneBy = { ...freshIt.doneBy, masterId: draft.masterId, masterName: draft.masterName };
-            });
-            sheet.close();
-            onSaved();
-          },
-        }, "Сохранить"),
-        el("button", { onclick: () => sheet.close() }, "Отмена")));
-  };
-  draw();
-  sheet = openSheet(it.name, content);
-  ensureUsers().then((u) => { masters = u.filter((x) => x.active !== false); draw(); });
 }
 
 // Список усложнений — на «Оценке» (прикидка для клиента, ещё не известно
