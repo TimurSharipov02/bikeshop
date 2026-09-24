@@ -819,7 +819,7 @@ function viewNewOrder() {
       getItemRange: (fa) => {
         const items = draft.items.filter((it) => (it.sourceCode || it.code) === fa.code);
         if (!items.length) return null;
-        return items.reduce((a, it) => { const r = itemRange(it); return { min: a.min + r.min, max: a.max + r.max }; }, { min: 0, max: 0 });
+        return itemsRangeWithParts(items);
       },
       totalText: () => ({ range: orderRangeAll(draft), count: draft.items.length }),
       onDone: stepClient,
@@ -1136,7 +1136,7 @@ function viewOrder(number) {
         const liveItems = (loadDB().orders.find((o) => o.number === number)?.items) || order.items;
         const items = liveItems.filter((it) => (it.sourceCode || it.code) === fa.code);
         if (!items.length) return null;
-        return items.reduce((a, it) => { const r = itemRange(it); return { min: a.min + r.min, max: a.max + r.max }; }, { min: 0, max: 0 });
+        return itemsRangeWithParts(items);
       },
     });
   }
@@ -1225,7 +1225,7 @@ function viewOrder(number) {
       getItemRange: (fa) => {
         const items = added.filter((it) => (it.sourceCode || it.code) === fa.code);
         if (!items.length) return null;
-        return items.reduce((a, it) => { const r = itemRange(it); return { min: a.min + r.min, max: a.max + r.max }; }, { min: 0, max: 0 });
+        return itemsRangeWithParts(items);
       },
       onDone: () => {
         if (added.length) editOrder(number, (o) => {
@@ -1841,6 +1841,12 @@ function itemPriceTags(it, included = true) {
     controlPriceTag(rangeText({ min: r.min - parts, max: r.max - parts }), included),
   ];
 }
+// Сумма по нескольким позициям одной работы (экземпляры) + сколько из неё
+// приходится на запчасти — для раздельных ценников в списке выбора работ.
+const itemsRangeWithParts = (items) => items.reduce((a, it) => {
+  const r = itemRange(it);
+  return { min: a.min + r.min, max: a.max + r.max, parts: a.parts + itemPartsCost(it) };
+}, { min: 0, max: 0, parts: 0 });
 const priceRow = (it, style = "") => el("div", { class: "price-row", style }, itemPriceTags(it));
 // «Итого» тем же пузырём, что и цены работ, только крупнее. Для наряда из
 // одной работы не показывается — её цена и так видна прямо над ним.
@@ -2580,10 +2586,17 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
           const liveRange = checked && getItemRange ? getItemRange(f) : null;
           const priceRange = liveRange || definitionRange;
           const hasPossibleExtras = (f.complications || []).length > 0;
+          const partsSum = liveRange?.parts || 0;
           const priceNode = priceRange
             ? controlPriceTag(!checked && hasPossibleExtras
               ? `${Number(priceRange.min || 0).toLocaleString("ru-RU")}+ ₽`
-              : rangePlusText(priceRange), checked)
+              : rangePlusText({ min: priceRange.min - partsSum, max: priceRange.max - partsSum }), checked)
+            : null;
+          // Запчасти — отдельным ценником слева, как в карточке работы в
+          // ремонте (itemPriceTags): труд и детали не смешиваются в одну сумму.
+          const partsNode = partsSum > 0
+            ? el("span", { class: "control-price parts tap", title: "Запчасти" },
+              el("span", { class: "price-icon", html: ICONS.stock }), money(partsSum))
             : null;
           // align-items:flex-start (не center из .opt) — иначе у длинных
           // названий, переносящихся на 2-3 строки, цена/счётчик съезжали
@@ -2598,7 +2611,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
             // своего мин-контента, и цена/счётчик справа вылезали за край
             // строки вместо того, чтобы остаться у правого края.
             el("span", { style: "min-width:0;overflow-wrap:break-word" }, f.label),
-            pricedControlGroup(priceNode,
+            pricedControlGroup([partsNode, priceNode],
               selectButton || (checked ? el("span", { class: "row-check", html: ICON_CHECK }) : null)));
           // Слушатель добавлен ПОСЛЕ swipeActions(rowContent, ...) ниже (не
           // через onclick в el() при создании) — важен порядок регистрации:
