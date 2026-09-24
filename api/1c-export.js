@@ -8,30 +8,26 @@
 //      артикулу sku — тому же, что и в остатках) и отдельно сумма за
 //      работу (одним числом, без разбивки по видам работ — разбивка тут
 //      не нужна, оплата труда мастеров идёт через кассу отдельно, см.
-//      переписку/CLAUDE.md про интеграцию).
+//      переписку/CLAUDE.md про интеграцию). С ?all=1 — вообще все выданные
+//      обращения, включая уже выгруженные (для сверки, ничего не меняет).
 // POST {key, numbers:[...]} — пометить обращения выгруженными, чтобы не
 //      прислать их снова при следующем запросе.
 
 import { readBody } from "./_lib.js";
 import { dbRedis, loadDB, updateDB } from "./_atomic-db.js";
 import { itemWorkValue } from "../web/pricing.js";
+import { checkKey, keyConfigured } from "./_1c-auth.js";
 
-
-function checkKey(provided) {
-  const expected = process.env.INTEGRATION_1C_KEY;
-  return !!expected && provided === expected;
-}
-
-export default async function handler(req, res) {
-  const r = dbRedis();
+export default async function handler(req, res, r = dbRedis()) {
   if (!r) return res.status(503).json({ error: "storage not configured" });
-  if (!process.env.INTEGRATION_1C_KEY) return res.status(503).json({ error: "интеграция с 1С не настроена (нет INTEGRATION_1C_KEY)" });
+  if (!keyConfigured()) return res.status(503).json({ error: "интеграция с 1С не настроена (нет INTEGRATION_1C_KEY)" });
 
   if (req.method === "GET") {
     if (!checkKey(req.query?.key)) return res.status(401).json({ error: "неверный ключ" });
     const { data: db } = await loadDB(r);
+    const all = req.query?.all === "1";
     const orders = (db.orders || [])
-      .filter((o) => o.handedOverAt && !o.exportedTo1C)
+      .filter((o) => o.handedOverAt && (all || !o.exportedTo1C))
       .map((o) => {
         const client = (db.clients || []).find((c) => c.phone === o.clientPhone);
         const bike = (db.bikes || []).find((b) => b.number === o.bikeNumber);
@@ -49,6 +45,7 @@ export default async function handler(req, res) {
           bikeName: bike?.name || "",
           parts,
           laborSum,
+          exportedTo1C: !!o.exportedTo1C,
         };
       });
     return res.status(200).json({ orders });
@@ -59,16 +56,20 @@ export default async function handler(req, res) {
     if (!checkKey(body.key)) return res.status(401).json({ error: "неверный ключ" });
     const numbers = Array.isArray(body.numbers) ? body.numbers.map(String) : [];
     if (!numbers.length) return res.status(400).json({ error: "не указаны номера обращений" });
-    let marked = 0;
-    await updateDB(r, (current) => {
-      const db = structuredClone(current);
-      marked = 0;
-      for (const o of db.orders || []) {
-        if (numbers.includes(o.number) && !o.exportedTo1C) { o.exportedTo1C = true; marked++; }
-      }
-      return db;
-    });
-    return res.status(200).json({ ok: true, marked });
+    try {
+      let marked = 0;
+      await updateDB(r, (current) => {
+        const db = structuredClone(current);
+        marked = 0;
+        for (const o of db.orders || []) {
+          if (numbers.includes(o.number) && !o.exportedTo1C) { o.exportedTo1C = true; marked++; }
+        }
+        return db;
+      });
+      return res.status(200).json({ ok: true, marked });
+    } catch (e) {
+      return res.status(500).json({ error: String(e?.message || e) });
+    }
   }
 
   return res.status(405).json({ error: "method not allowed" });

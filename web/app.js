@@ -3445,6 +3445,7 @@ const stockLevel = (qty) => (qty <= 0 ? "zero" : qty <= LOW_STOCK_THRESHOLD ? "l
 function stockScreen(data, error) {
   const items = (data.items || []).map((it) => ({ ...it }));
   const updated = data.updatedAt ? new Date(data.updatedAt).toLocaleString("ru-RU") : null;
+  const sourceLabel = data.source === "1c" ? " · из 1С" : data.source === "manual" ? " · вручную" : "";
   let q = "";
   let groupFilter = ""; // "" — все узлы
   let onlyProblem = false; // только «нет»/«мало»
@@ -3558,7 +3559,7 @@ function stockScreen(data, error) {
     bar("Запчасти", "/admin"),
     el("main", { class: "wrap" },
       error ? el("p", { class: "small", style: "color:var(--warn)" }, error) : null,
-      updated ? el("p", { class: "small muted" }, "Обновлено: " + updated) : null,
+      updated ? el("p", { class: "small muted" }, "Обновлено: " + updated + sourceLabel) : null,
       el("div", { class: "admin-search" },
         el("div", { class: "search-wrap" }, searchInput, clearBtn),
         chipsBox),
