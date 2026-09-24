@@ -2425,8 +2425,6 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
   const states = {}; // instId -> { open, faults:Set<number> }
   const st = (id) => (states[id] ||= { open: false, faults: new Set() });
   let repairs = []; // неисправности, заведённые админом вручную (общие для всех)
-  const addFormOpenFor = new Set(); // id блоков, где сейчас открыта форма «+ своя неисправность»
-  const editOverrideFor = new Set(); // коды работ каталога, у которых сейчас открыта форма правки
   // Разовая услуга — форма «+ добавить разовую услугу» под списком узлов,
   // не привязана ни к одному блоку и не сохраняется в общий каталог.
   let miscOpen = false;
@@ -2472,68 +2470,43 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
     repairs = await ensureRepairs();
   }
 
-  // Форма добавления своей неисправности (только у администратора) — цена,
-  // время и усложнения задаются сразу тут же, без .proc-процедуры.
-  function customFaultForm(blockId) {
-    const draftFa = { label: "", description: "", price: 0, minutes: 0, complications: [], quantityMode: "single", maxInstances: 0 };
-    const compsBox = complicationsEditor(draftFa.complications);
-    return el("div", { class: "card card-flush", style: "margin-top:8px" },
-      el("label", {}, "Название неисправности"),
-      el("input", { placeholder: "напр. Восьмёрка", oninput: (e) => (draftFa.label = e.target.value) }),
+  // Добавление и правка своей работы (только у администратора) — в шторке
+  // снизу, как усложнения: форма длинная (описание, цена, режим количества,
+  // усложнения), и встроенная прямо в список раздвигала его и терялась
+  // среди строк. f — работа для правки (PUT), без неё — новая в блоке blockId.
+  function openWorkFormSheet(f, blockId) {
+    const draftFa = f
+      ? { label: f.label, description: f.description || "", price: f.price || 0, minutes: f.minutes || 0,
+          complications: JSON.parse(JSON.stringify(f.complications || [])), quantityMode: quantityModeOf(f), maxInstances: instanceLimitOf(f) }
+      : { label: "", description: "", price: 0, minutes: 0, complications: [], quantityMode: "single", maxInstances: 0 };
+    const numField = (label, key) => el("div", { style: "flex:1;min-width:120px" }, el("label", {}, label),
+      el("input", { type: "number", value: f ? draftFa[key] : "", oninput: (e) => (draftFa[key] = +e.target.value || 0) }));
+    let sheet;
+    const save = async (e) => {
+      if (!draftFa.label.trim()) return alert("Укажите название");
+      const fields = { label: draftFa.label.trim(), description: draftFa.description, price: draftFa.price, minutes: draftFa.minutes,
+        complications: draftFa.complications, quantityMode: draftFa.quantityMode };
+      e.currentTarget.disabled = true;
+      const r = await fetch("/api/repairs", {
+        method: f ? "PUT" : "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify(f ? { id: f.id, ...fields } : { group: blockId, ...fields }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { e.target.disabled = false; return alert(j.error || "ошибка"); }
+      sheet.close();
+      await reloadRepairs();
+      draw();
+    };
+    const body = el("div", {},
+      el("label", { style: "margin-top:0" }, "Название работы"),
+      el("input", { value: draftFa.label, placeholder: f ? "" : "напр. Восьмёрка", oninput: (e) => (draftFa.label = e.target.value) }),
       descriptionField(draftFa),
-      el("div", { style: "display:flex;flex-wrap:wrap;gap:8px;margin-top:8px" },
-        el("div", { style: "flex:1;min-width:120px" }, el("label", {}, "Цена, ₽"), el("input", { type: "number", oninput: (e) => (draftFa.price = +e.target.value || 0) })),
-        el("div", { style: "flex:1;min-width:120px" }, el("label", {}, "Минуты"), el("input", { type: "number", oninput: (e) => (draftFa.minutes = +e.target.value || 0) }))),
+      el("div", { style: "display:flex;flex-wrap:wrap;gap:8px;margin-top:8px" }, numField("Цена, ₽", "price"), numField("Минуты", "minutes")),
       quantityModeEditor(draftFa),
       el("label", { style: "margin-top:8px" }, "Усложнения"),
-      compsBox,
-      el("div", { class: "btn-row", style: "margin-top:10px" },
-        el("button", { class: "btn-primary", onclick: async () => {
-          if (!draftFa.label.trim()) return alert("Укажите название");
-          const r = await fetch("/api/repairs", {
-            method: "POST", headers: { "content-type": "application/json" },
-            body: JSON.stringify({ group: blockId, label: draftFa.label.trim(), description: draftFa.description, price: draftFa.price, minutes: draftFa.minutes,
-              complications: draftFa.complications, quantityMode: draftFa.quantityMode }),
-          });
-          const j = await r.json().catch(() => ({}));
-          if (!r.ok) return alert(j.error || "ошибка");
-          addFormOpenFor.delete(blockId);
-          await reloadRepairs();
-          draw();
-        } }, "Добавить"),
-        el("button", { onclick: () => { addFormOpenFor.delete(blockId); draw(); } }, "Отмена")));
-  }
-
-  // Правка своей неисправности (заведённой через «+ своя неисправность»,
-  // хранится в catalog/repairs) — то же самое, что и при создании, но PUT.
-  function customFaultEditForm(f, onClose) {
-    const draftFa = { label: f.label, description: f.description || "", price: f.price || 0, minutes: f.minutes || 0,
-      complications: JSON.parse(JSON.stringify(f.complications || [])), quantityMode: quantityModeOf(f), maxInstances: instanceLimitOf(f) };
-    const compsBox = complicationsEditor(draftFa.complications);
-    return el("div", { class: "card card-flush", style: "margin-top:8px" },
-      el("label", {}, "Название неисправности"),
-      el("input", { value: draftFa.label, oninput: (e) => (draftFa.label = e.target.value) }),
-      descriptionField(draftFa),
-      el("div", { style: "display:flex;flex-wrap:wrap;gap:8px;margin-top:8px" },
-        el("div", { style: "flex:1;min-width:120px" }, el("label", {}, "Цена, ₽"), el("input", { type: "number", value: draftFa.price, oninput: (e) => (draftFa.price = +e.target.value || 0) })),
-        el("div", { style: "flex:1;min-width:120px" }, el("label", {}, "Минуты"), el("input", { type: "number", value: draftFa.minutes, oninput: (e) => (draftFa.minutes = +e.target.value || 0) }))),
-      quantityModeEditor(draftFa),
-      el("label", { style: "margin-top:8px" }, "Усложнения"),
-      compsBox,
-      el("div", { class: "btn-row", style: "margin-top:10px" },
-        el("button", { class: "btn-primary", onclick: async () => {
-          if (!draftFa.label.trim()) return alert("Укажите название");
-          const r = await fetch("/api/repairs", {
-            method: "PUT", headers: { "content-type": "application/json" },
-            body: JSON.stringify({ id: f.id, label: draftFa.label.trim(), description: draftFa.description, price: draftFa.price, minutes: draftFa.minutes,
-              complications: draftFa.complications, quantityMode: draftFa.quantityMode }),
-          });
-          const j = await r.json().catch(() => ({}));
-          if (!r.ok) return alert(j.error || "ошибка");
-          await reloadRepairs();
-          onClose();
-        } }, "Сохранить"),
-        el("button", { onclick: onClose }, "Отмена")));
+      complicationsEditor(draftFa.complications),
+      el("button", { class: "btn-primary", style: "width:100%;margin-top:18px", onclick: save }, f ? "Сохранить" : "Добавить"));
+    sheet = openSheet(f ? "Изменить работу" : "Новая работа", body);
   }
 
   function draw() {
@@ -2581,8 +2554,6 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
         const faults = blockFaults(inst.b);
         faults.forEach((f, i) => {
           const isAdmin = SESSION?.role === "admin";
-          const editKey = f.id;
-          const editingThis = editOverrideFor.has(editKey);
           // Раньше — чекбокс внутри строки: на плотном списке из многих строк
           // подряд промах мимо мелкого квадратика по пальцу ощущался как
           // «всё съезжает» (задевали соседнюю строку/скролл). Теперь тап в
@@ -2704,7 +2675,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
           faultNodes.push(el("div", {},
             isAdmin
               ? swipeActions(rowContent, [
-                  { label: ICON_EDIT, ariaLabel: "Изменить работу", onClick: () => { editingThis ? editOverrideFor.delete(editKey) : editOverrideFor.add(editKey); draw(); } },
+                  { label: ICON_EDIT, ariaLabel: "Изменить работу", onClick: () => openWorkFormSheet(f) },
                   { label: ICON_CLOSE, ariaLabel: "Удалить работу", className: "warn", onClick: async () => {
                       if (!confirm(`Убрать «${f.label}» из списка совсем?`)) return;
                       const wasChecked = s.faults.has(i);
@@ -2717,20 +2688,15 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
                       draw();
                     } },
                 ])
-              : rowContent,
-            editingThis
-              ? customFaultEditForm(f, () => { editOverrideFor.delete(editKey); draw(); })
-              : null));
+              : rowContent));
           rowContent.addEventListener("click", (e) => { if (e.target.closest(".control-price")) toggle(); });
         });
         if (faultNodes.length) fb.append(rowsList(faultNodes, true));
         if (SESSION?.role === "admin") {
-          fb.append(addFormOpenFor.has(inst.b.id)
-            ? customFaultForm(inst.b.id)
-            : el("button", {
-                class: "small", style: "margin-top:8px;border:0;background:none;color:var(--muted);text-decoration:underline;padding:0",
-                onclick: () => { addFormOpenFor.add(inst.b.id); draw(); },
-              }, "+ своя неисправность"));
+          fb.append(el("button", {
+            class: "small", style: "margin-top:8px;border:0;background:none;color:var(--muted);text-decoration:underline;padding:0",
+            onclick: () => openWorkFormSheet(null, inst.b.id),
+          }, "+ своя неисправность"));
         }
         card.append(fb);
       }
