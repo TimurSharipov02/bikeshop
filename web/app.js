@@ -362,6 +362,7 @@ window.addEventListener("hashchange", () => { router(); if (SESSION) syncFromSer
 // history.back(). Явную кнопку «‹» тоже переводим на history.back(), чтобы
 // оба пути шли одной и той же дорогой и не расходились между собой.
 let subScreenExit = null;
+let editingItemCode = null; // код работы в наряде, у которой сейчас открыта форма редактирования
 function enterSubScreen(onExit) {
   setInSubScreen(true);
   subScreenExit = onExit;
