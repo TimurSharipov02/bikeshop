@@ -1671,7 +1671,7 @@ function editableItemRow(it, { onRemove, onSave, refresh, onDiffSet, onDiffQty }
     el("span", { style: "width:100%" }, it.name, it.notes ? el("span", { class: "small muted" }, el("br"), it.notes) : null),
     el("div", { style: "display:flex;align-items:center;gap:10px;width:100%" },
       usesQuantity(it) ? qtyStepper(it.qty, (qty) => onSave(it.code, { qty }), workQuantityLimitOf(it), () => onRemove(it.code)) : null,
-      el("span", { class: "price-tag", style: "flex:1" }, rangeText(r))));
+      el("span", { class: "price-tag", style: "margin-left:auto" }, rangeText(r))));
   const header = swipeActions(rowContent, [
     { label: ICON_EDIT, text: "Изменить", ariaLabel: "Изменить работу", onClick: () => { editingItemCode = isEditing ? null : it.code; refresh(); } },
     { label: ICON_CLOSE, text: "Убрать", ariaLabel: "Убрать работу", className: "warn", onClick: () => { if (confirm(`Убрать «${it.name}» из наряда?`)) onRemove(it.code); } },
