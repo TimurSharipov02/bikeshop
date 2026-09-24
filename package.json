@@ -9,6 +9,7 @@
     "check": "node src/validate.ts && node src/dryrun.ts && node src/audit.ts",
     "validate": "node src/validate.ts",
     "build": "node scripts/build-html.js",
+    "test": "node --test tests/*.test.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

@@ -87,13 +87,20 @@ export function clearSessionCookie(res) {
 
 // ---------------------------- доступ ----------------------------------------
 
-export function requireUser(req, res) {
+export async function requireUser(req, res, storeRedis = redis()) {
   const s = getSession(req);
   if (!s) { res.status(401).json({ error: "нужно войти" }); return null; }
-  return s;
+  if (!storeRedis) { res.status(503).json({ error: "storage not configured" }); return null; }
+  const store = (await storeRedis.get("vella:users")) || { users: [] };
+  const user = store.users.find((u) => u.id === s.uid && u.active);
+  if (!user) { res.status(401).json({ error: "учётная запись отключена" }); return null; }
+  if ((s.authVersion || 0) !== (user.authVersion || 0)) {
+    res.status(401).json({ error: "войдите повторно" }); return null;
+  }
+  return { uid: user.id, role: user.role };
 }
-export function requireAdmin(req, res) {
-  const s = requireUser(req, res);
+export async function requireAdmin(req, res, storeRedis) {
+  const s = await requireUser(req, res, storeRedis);
   if (!s) return null;
   if (s.role !== "admin") { res.status(403).json({ error: "только для администратора" }); return null; }
   return s;

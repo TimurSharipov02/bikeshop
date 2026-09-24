@@ -24,13 +24,13 @@ export default async function handler(req, res) {
   if (!r) return res.status(503).json({ error: "storage not configured" });
 
   if (req.method === "GET") {
-    if (!requireUser(req, res)) return;
+    if (!(await requireUser(req, res))) return;
     const store = await loadStore(r);
     return res.status(200).json(store);
   }
 
   if (req.method === "POST") {
-    if (!requireAdmin(req, res)) return;
+    if (!(await requireAdmin(req, res))) return;
     const body = readBody(req);
     const label = String(body.label || "").trim();
     if (!label) return res.status(400).json({ error: "укажите название" });
@@ -51,7 +51,7 @@ export default async function handler(req, res) {
   }
 
   if (req.method === "PUT") {
-    if (!requireAdmin(req, res)) return;
+    if (!(await requireAdmin(req, res))) return;
     const body = readBody(req);
     const store = await loadStore(r);
     const it = store.items.find((x) => x.id === body.id);
@@ -70,7 +70,7 @@ export default async function handler(req, res) {
   }
 
   if (req.method === "DELETE") {
-    if (!requireAdmin(req, res)) return;
+    if (!(await requireAdmin(req, res))) return;
     const body = readBody(req);
     const store = await loadStore(r);
     store.items = store.items.filter((x) => x.id !== body.id);

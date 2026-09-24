@@ -11,13 +11,13 @@ export default async function handler(req, res) {
   if (!r) return res.status(503).json({ error: "storage not configured" });
 
   if (req.method === "GET") {
-    if (!requireUser(req, res)) return;
+    if (!(await requireUser(req, res))) return;
     const store = (await r.get(KEY)) || { items: [], updatedAt: null };
     return res.status(200).json(store);
   }
 
   if (req.method === "PUT") {
-    if (!requireAdmin(req, res)) return;
+    if (!(await requireAdmin(req, res))) return;
     const body = readBody(req);
     const items = Array.isArray(body.items)
       ? body.items

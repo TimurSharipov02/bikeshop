@@ -14,6 +14,7 @@
 // ============================================================================
 
 import { buildCatalog, runProcedure } from "./runner.js";
+import { itemWorkValue } from "./pricing.js";
 
 const RAW = window.CATALOG;
 const cat = buildCatalog(RAW.procedures);
@@ -161,6 +162,8 @@ const bar = (title, backHash, rightNode) =>
 //  только локально.
 
 const DB_KEY = "vella.db.v1";
+const DB_BASE_KEY = "vella.db.server.v1";
+const DB_DIRTY_KEY = "vella.db.dirty.v1";
 
 // Переименования статусов («в работе» → «принята»/«взята в работу», «проверка»
 // → «готово к выдаче»). Старые записи приводим к новым статусам при каждой
@@ -247,9 +250,12 @@ const normalizeDB = (d) => ({
 });
 
 let DB = normalizeDB(safeParse(localStorage.getItem(DB_KEY)));
+let BASE = normalizeDB(safeParse(localStorage.getItem(DB_BASE_KEY) || localStorage.getItem(DB_KEY)));
 let serverOK = false;
 let pushTimer = null;
-let dirty = false; // есть локальные правки, ещё не подтверждённые сервером
+let dirty = localStorage.getItem(DB_DIRTY_KEY) === "1";
+let conflictShown = false;
+let sending = Promise.resolve();
 // Счётчик «поколений» пуша — см. pushToServer(): нужен, чтобы устаревший
 // ответ (пока он летел, случилась ещё одна правка) не затёр более свежие
 // локальные изменения и не сбросил dirty раньше времени.
@@ -338,6 +344,8 @@ function writeLocal() { localStorage.setItem(DB_KEY, JSON.stringify(DB)); }
 function adopt(next) {
   const before = JSON.stringify(DB);
   DB = normalizeDB(next);
+  BASE = structuredClone(DB);
+  localStorage.setItem(DB_BASE_KEY, JSON.stringify(BASE));
   writeLocal();
   if (JSON.stringify(DB) !== before && !inSubScreen && !location.hash.startsWith("#/orders/new")) router();
 }
@@ -359,25 +367,49 @@ async function syncFromServer() {
 function pushToServer() {
   if (typeof fetch !== "function") return;
   dirty = true;
+  localStorage.setItem(DB_DIRTY_KEY, "1");
   clearTimeout(pushTimer);
   const myGen = ++pushGen;
   pushTimer = setTimeout(async () => {
-    try {
-      const r = await fetch("/api/db", {
-        method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(DB),
-      });
-      if (r.ok) {
-        serverOK = true;
-        const json = await r.json();
-        // Пока этот пуш летал, могла прилететь ещё одна правка (новый вызов
-        // pushToServer сдвинул pushGen дальше) — тогда наш ответ уже устарел:
-        // не затираем им более свежие локальные изменения и не сбрасываем
-        // dirty раньше времени (та новая правка ещё не отправлена и сама
-        // выставит dirty=false, когда дойдёт своя очередь).
-        if (myGen === pushGen) { dirty = false; adopt(json); }
-      }
-    } catch { /* оффлайн — данные сохранены локально, отправятся позже */ }
+    await sendSnapshot(myGen);
   }, 250);
+}
+
+async function sendSnapshot(myGen) {
+  const previous = sending;
+  let release;
+  sending = new Promise((resolve) => { release = resolve; });
+  await previous;
+  try {
+    const base = structuredClone(BASE);
+    const next = structuredClone(DB);
+    const r = await fetch("/api/db", { method: "PUT", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ base, next }) });
+    if (r.status === 409 && !conflictShown) {
+      conflictShown = true;
+      const { current } = await r.json();
+      if (myGen === pushGen && current && confirm("Эти же данные изменили на другом устройстве. Загрузить их версию? Ваши несохранённые правки на этом устройстве будут отменены.")) {
+        dirty = false;
+        localStorage.removeItem(DB_DIRTY_KEY);
+        conflictShown = false;
+        adopt(current);
+      }
+    }
+    if (!r.ok) return false;
+    serverOK = true;
+    const json = await r.json();
+    if (myGen === pushGen) {
+      dirty = false;
+      localStorage.removeItem(DB_DIRTY_KEY);
+      conflictShown = false;
+      adopt(json);
+    } else {
+      BASE = normalizeDB(json);
+      localStorage.setItem(DB_BASE_KEY, JSON.stringify(BASE));
+    }
+    return true;
+  } catch { return false; }
+  finally { release(); }
 }
 
 function saveDB(d) { DB = normalizeDB(d); writeLocal(); pushToServer(); }
@@ -392,6 +424,7 @@ function editOrder(number, fn) {
 // запись не «ожила» после следующей синхронизации.
 async function deleteOrderApi(number) {
   try {
+    if (dirty && !(await flushPending())) return false;
     const r = await fetch("/api/db", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ number }) });
     if (!r.ok) return false;
     serverOK = true;
@@ -404,6 +437,7 @@ async function deleteOrderApi(number) {
 // удалённую запись обратно на следующем же слиянии.
 async function deleteClientApi(phone) {
   try {
+    if (dirty && !(await flushPending())) return false;
     const r = await fetch("/api/db", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ clientPhone: phone }) });
     if (!r.ok) return false;
     serverOK = true;
@@ -413,6 +447,7 @@ async function deleteClientApi(phone) {
 }
 async function deleteBikeApi(number) {
   try {
+    if (dirty && !(await flushPending())) return false;
     const r = await fetch("/api/db", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ bikeNumber: number }) });
     if (!r.ok) return false;
     serverOK = true;
@@ -427,13 +462,14 @@ async function deleteBikeApi(number) {
 async function pushDbNow(fn) {
   fn(DB);
   writeLocal();
-  try {
-    const r = await fetch("/api/db", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(DB) });
-    if (!r.ok) return false;
-    serverOK = true; dirty = false;
-    adopt(await r.json());
-    return true;
-  } catch { return false; }
+  dirty = true;
+  localStorage.setItem(DB_DIRTY_KEY, "1");
+  return flushPending();
+}
+
+async function flushPending() {
+  clearTimeout(pushTimer);
+  return sendSnapshot(++pushGen);
 }
 
 // Переопределения работ каталога — правит администратор (общие для всех,
@@ -487,10 +523,13 @@ const instanceLimitOf = (x) => quantityModeOf(x) === "instances" ? WORK_INSTANCE
 const workQuantityLimitOf = (x) => repeatsWholeItem(x) ? (x.maxInstances || WORK_INSTANCE_LIMIT) : WORK_QUANTITY_LIMIT;
 
 const yy = () => String(new Date().getFullYear()).slice(2);
-const nextOrderNumber = (d) => (d.counters.order++, `V${yy()}-${String(d.counters.order).padStart(6, "0")}`);
+// Локальный счётчик одинаков на двух устройствах, поэтому для новых записей
+// используем случайный ключ. Старые номера и ссылки на них сохраняются.
+const uniqueSuffix = () => globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+const nextOrderNumber = () => `V${yy()}-${uniqueSuffix()}`;
 // Велосипед привязан к телефону владельца (уникальный ключ клиента); у телефона
 // может быть несколько велосипедов. Номер не показываем — только бренд/модель.
-const nextBikeKey = (d, phone) => `${phone}#${d.bikes.filter((b) => b.ownerPhone === phone).length + 1}`;
+const nextBikeKey = (_d, phone) => `${phone}#${uniqueSuffix()}`;
 
 // ---------------------------- расчёт цен ------------------------------------
 
@@ -556,13 +595,6 @@ const orderWaitingLast = (a, b) => (orderWaitingForPart(a) ? 1 : 0) - (orderWait
 // Стоимость самой работы (без запчастей) — то, на что начисляется процент
 // мастера: цена работы за все качественные единицы плюс подтвердившиеся
 // усложнения. Запчасти — расходники, в доход мастера не идут.
-const itemWorkValue = (it) => {
-  const qty = it.qty || 1;
-  const wholeItemQty = repeatsWholeItem(it) ? qty : 1;
-  let v = (it.workPrice || 0) * qty;
-  for (const d of it.difficulties || []) if (d.state === "yes") v += (d.add || 0) * (d.qty || 1) * wholeItemQty;
-  return v;
-};
 const completionsSummary = (it) => it.doneBy?.masterName || "";
 // «Код» позиции наряда, добавляемой не из каталога напрямую, а как копия
 // уже существующей работы (кнопка «+ ещё раз» — когда реально нужен второй
@@ -942,8 +974,9 @@ window.addEventListener("popstate", () => {
   await loadSession();
   if (SESSION) await loadOverrides();
   router();
-  if (SESSION) syncFromServer();
+  if (SESSION) { if (dirty) await flushPending(); else syncFromServer(); }
 })();
+window.addEventListener("online", () => { if (SESSION && dirty) flushPending(); });
 
 // ============================================================================
 //  ЭКРАНЫ

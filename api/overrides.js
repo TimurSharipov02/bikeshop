@@ -28,13 +28,13 @@ export default async function handler(req, res) {
   if (!r) return res.status(503).json({ error: "storage not configured" });
 
   if (req.method === "GET") {
-    if (!requireUser(req, res)) return;
+    if (!(await requireUser(req, res))) return;
     const store = await loadStore(r);
     return res.status(200).json(store);
   }
 
   if (req.method === "PUT") {
-    if (!requireAdmin(req, res)) return;
+    if (!(await requireAdmin(req, res))) return;
     const body = readBody(req);
     const code = String(body.code || "").trim();
     if (!code) return res.status(400).json({ error: "не указан код работы" });
@@ -61,7 +61,7 @@ export default async function handler(req, res) {
   }
 
   if (req.method === "DELETE") {
-    if (!requireAdmin(req, res)) return;
+    if (!(await requireAdmin(req, res))) return;
     const body = readBody(req);
     const code = String(body.code || "").trim();
     const store = await loadStore(r);

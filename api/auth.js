@@ -39,7 +39,7 @@ export default async function handler(req, res) {
       };
       store.users.push(user);
       await r.set(KEY, store);
-      setSessionCookie(res, { uid: user.id, role: user.role });
+      setSessionCookie(res, { uid: user.id, role: user.role, authVersion: 0 });
       return res.status(200).json({ user: publicUser(user) });
     }
 
@@ -48,7 +48,7 @@ export default async function handler(req, res) {
       const u = store.users.find((x) => x.login === login && x.active);
       if (!u || !verifyPassword(body.password || "", u.pwd))
         return res.status(401).json({ error: "неверный логин или пароль" });
-      setSessionCookie(res, { uid: u.id, role: u.role });
+      setSessionCookie(res, { uid: u.id, role: u.role, authVersion: u.authVersion || 0 });
       return res.status(200).json({ user: publicUser(u) });
     }
 
@@ -66,7 +66,9 @@ export default async function handler(req, res) {
       if (String(body.newPassword || "").length < 4)
         return res.status(400).json({ error: "новый пароль слишком короткий" });
       u.pwd = hashPassword(body.newPassword);
+      u.authVersion = (u.authVersion || 0) + 1;
       await r.set(KEY, store);
+      setSessionCookie(res, { uid: u.id, role: u.role, authVersion: u.authVersion });
       return res.status(200).json({ ok: true });
     }
 

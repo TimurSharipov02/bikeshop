@@ -15,13 +15,13 @@ export default async function handler(req, res) {
   if (!r) return res.status(503).json({ error: "storage not configured" });
 
   if (req.method === "GET") {
-    if (!requireUser(req, res)) return;
+    if (!(await requireUser(req, res))) return;
     const { users } = await loadUsers(r);
     return res.status(200).json({ users: users.map(publicUser) });
   }
 
   if (req.method === "POST") {
-    if (!requireAdmin(req, res)) return;
+    if (!(await requireAdmin(req, res))) return;
     const body = readBody(req);
     const login = String(body.login || "").trim().toLowerCase();
     const name = String(body.name || "").trim();
@@ -43,7 +43,7 @@ export default async function handler(req, res) {
   }
 
   if (req.method === "PUT") {
-    if (!requireAdmin(req, res)) return;
+    if (!(await requireAdmin(req, res))) return;
     const body = readBody(req);
     const store = await loadUsers(r);
     const u = store.users.find((x) => x.id === body.id);
@@ -65,13 +65,14 @@ export default async function handler(req, res) {
     if (body.password) {
       if (String(body.password).length < 4) return res.status(400).json({ error: "пароль слишком короткий" });
       u.pwd = hashPassword(body.password);
+      u.authVersion = (u.authVersion || 0) + 1;
     }
     await r.set(KEY, store);
     return res.status(200).json({ user: publicUser(u) });
   }
 
   if (req.method === "DELETE") {
-    if (!requireAdmin(req, res)) return;
+    if (!(await requireAdmin(req, res))) return;
     const body = readBody(req);
     const store = await loadUsers(r);
     const u = store.users.find((x) => x.id === body.id);

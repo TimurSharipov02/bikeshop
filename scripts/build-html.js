@@ -53,6 +53,7 @@ const strip = (src) =>
 // parse.js — только для сборки, в браузер не идёт
 const bundle = [
   strip(readFileSync(p("web/runner.js"), "utf8")),
+  strip(readFileSync(p("web/pricing.js"), "utf8")),
   strip(readFileSync(p("web/app.js"), "utf8")),
 ].join("\n\n");
 
