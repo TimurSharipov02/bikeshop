@@ -479,8 +479,10 @@ const STYLE_PRESETS = [
 ];
 const THEME_OPTIONS = [["auto", "Как на телефоне"], ["light", "Светлая"], ["dark", "Тёмная"]];
 const DARK_MQ = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+// Стиль по умолчанию — для тех, кто ещё ничего не выбирал в профиле.
+const DEFAULT_STYLE = "calm";
 const normalizeLook = (l) => ({
-  style: STYLE_PRESETS.some((p) => p.id === l?.style) ? l.style : "aero",
+  style: STYLE_PRESETS.some((p) => p.id === l?.style) ? l.style : DEFAULT_STYLE,
   theme: THEME_OPTIONS.some(([v]) => v === l?.theme) ? l.theme : "auto",
 });
 let currentLook = normalizeLook((() => { try { return JSON.parse(localStorage.getItem("veloterra-look")); } catch { return null; } })());
@@ -493,7 +495,10 @@ function applyLook(look) {
 }
 DARK_MQ?.addEventListener?.("change", () => applyLook(currentLook));
 applyLook(currentLook);
-const applySessionLook = () => { if (SESSION?.look) applyLook(SESSION.look); };
+// Вход выполнен — решает то, что сохранено в аккаунте; ничего не выбрано —
+// стиль по умолчанию (копия на телефоне могла остаться от прежнего
+// умолчания, её не считаем выбором).
+const applySessionLook = () => { if (SESSION) applyLook(SESSION.look || {}); };
 
 (async () => {
   await loadSession();

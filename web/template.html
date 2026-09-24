@@ -18,7 +18,7 @@
   var d = document.documentElement, l = {};
   try { l = JSON.parse(localStorage.getItem("veloterra-look")) || {}; } catch (e) {}
   var dark = window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches;
-  d.setAttribute("data-style", l.style || "aero");
+  d.setAttribute("data-style", l.style || "calm"); // по умолчанию — Спокойный (DEFAULT_STYLE в app.js)
   d.setAttribute("data-theme", l.theme === "light" || l.theme === "dark" ? l.theme : (dark ? "dark" : "light"));
 })();
 </script>
