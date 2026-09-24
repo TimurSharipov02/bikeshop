@@ -157,11 +157,13 @@ header.bar .bar-title-lg { font-size:19px; font-weight:700; }
 .rows .row:last-child { border-bottom:0; }
 .row:active { background:var(--fill); }
 .row .chev { margin-left:auto; color:var(--line); font-size:19px; flex:0 0 auto; }
-/* Статус — выпуклая пилюля с мягким свечением своего же цвета (currentColor),
-   одинаковая и в строке списка, и вне её. */
-.tag { display:inline-block; font-size:12px; font-weight:700; padding:4px 10px; border-radius:999px;
-  background:var(--fill); color:var(--muted); border:0; white-space:nowrap;
-  box-shadow:inset 0 1px 0 var(--hl), 0 4px 10px -5px currentColor; }
+/* Статус — выпуклая пилюля: блик сверху и тонкая кайма своего же цвета
+   (currentColor), без свечения наружу. Одинаковая и в строке списка, и вне её.
+   Цвет у .tag-* — только background-color, чтобы не затирать градиент-блик. */
+.tag { display:inline-block; font-size:13px; font-weight:700; padding:6px 12px; border-radius:999px;
+  background-color:var(--fill); background-image:linear-gradient(180deg, rgba(255,255,255,.14), rgba(255,255,255,0));
+  color:var(--muted); border:0; white-space:nowrap;
+  box-shadow:inset 0 1px 0 var(--hl), inset 0 0 0 .5px color-mix(in srgb, currentColor 25%, transparent); }
 .row .tag { margin-left:auto; }
 .row-icon { flex:0 0 auto; width:30px; height:30px; border-radius:8px; background:var(--accent);
   color:var(--on-accent); display:flex; align-items:center; justify-content:center; }
@@ -251,12 +253,12 @@ header.bar .bar-title-lg { font-size:19px; font-weight:700; }
 .swipe-action-label { font-size:11px; color:var(--muted); white-space:nowrap; }
 
 /* статус обращения — цвет для быстрого сканирования списка */
-.tag.tag-new     { background:var(--fill); color:var(--muted); }
-.tag.tag-approve { background:var(--purple-weak); color:var(--purple); }
-.tag.tag-progress{ background:var(--ok-weak); color:var(--ok); }
-.tag.tag-check   { background:var(--accent-weak); color:var(--accent); }
-.tag.tag-done    { background:var(--ok-weak); color:var(--ok); }
-.tag.tag-block   { background:var(--yellow-weak); color:var(--yellow-ink); }
+.tag.tag-new     { background-color:var(--fill); color:var(--muted); }
+.tag.tag-approve { background-color:var(--purple-weak); color:var(--purple); }
+.tag.tag-progress{ background-color:var(--ok-weak); color:var(--ok); }
+.tag.tag-check   { background-color:var(--accent-weak); color:var(--accent); }
+.tag.tag-done    { background-color:var(--ok-weak); color:var(--ok); }
+.tag.tag-block   { background-color:var(--yellow-weak); color:var(--yellow-ink); }
 
 /* Без этого быстрые повторные тапы (счётчик количества и т.п.) иногда
    распознаются как двойной тап — браузер ждёт, не жест ли это масштабирования,
