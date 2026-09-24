@@ -22,3 +22,13 @@ test('any of the given fields can match (name or sku), empty query matches all',
   assert.equal(matchesQuery('ут000010014', 'Покрышка', 'УТ000010014'), true);
   assert.equal(matchesQuery('   ', 'что угодно'), true);
 });
+
+test('a number in the query matches only a whole number, not digits inside another number or an SKU', () => {
+  const ikon = 'Велопокрышка 29" MAXXIS Ikon 29*2.2 Fold 60TPI EXO/TR';
+  assert.equal(matchesQuery('maxxis 40', ikon, 'УТ000040123'), false);
+  assert.equal(matchesQuery('maxxis 60', ikon), true, '60 inside 60TPI is still a whole number');
+  assert.equal(matchesQuery('maxxis 29', ikon), true);
+  assert.equal(matchesQuery('40', 'Камера 700x40'), true);
+  assert.equal(matchesQuery('40', 'Трос 140 см'), false);
+  assert.equal(matchesQuery('ут000040123', 'Покрышка', 'УТ000040123'), true, 'full SKU still found');
+});
