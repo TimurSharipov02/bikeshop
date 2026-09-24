@@ -460,6 +460,14 @@ function performUndo() {
   // (диагностика, оплата) закрываем — его «назад» и так перерисует
   // обращение; на новом наряде черновик не в базе, его не трогаем.
   closeAllSheets();
+  // Отменили создание обращения (или оно пропало иначе), а мы как раз на
+  // его экране — показывать нечего, возвращаемся на главный.
+  const openOrder = location.hash.match(/^#\/orders\/([^/]+)$/)?.[1];
+  if (openOrder && openOrder !== "new" && !loadDB().orders.some((o) => o.number === decodeURIComponent(openOrder))) {
+    subScreenExit = null;
+    setInSubScreen(false);
+    return go("/");
+  }
   if (subScreenExit) return leaveSubScreen();
   if (location.hash.startsWith("#/orders/new")) return;
   const y = window.scrollY;
@@ -2873,10 +2881,17 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
         fill();
         draw();
       };
+      // Тап по цене — меню усложнений и запчастей этой работы (шторка поверх
+      // этой), как по цене в самом списке; после правок обе обновляются.
+      const priceTags = (it) => itemPriceTags(it).filter(Boolean).map((tag) => {
+        tag.classList.add("tap");
+        tag.addEventListener("click", () => onOpen?.({ code: it.sourceCode || it.code }, () => { fill(); draw(); }));
+        return tag;
+      });
       const chosenRow = (it) => el("div", { class: "assess" },
         el("b", {}, it.name),
         costBreakdown(it),
-        el("div", { class: "price-row", style: "margin-top:12px" }, itemPriceTags(it),
+        el("div", { class: "price-row", style: "margin-top:12px" }, priceTags(it),
           usesQuantity(it) ? qtyStepper(it.qty || 1, (n) => setQty(it, n), workQuantityLimitOf(it)) : null));
       const fill = () => {
         const now = totalText();
