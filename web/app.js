@@ -843,6 +843,8 @@ const routes = [
   [/^\/admin$/, adminOnly(viewAdmin)],
   [/^\/admin\/masters$/, adminOnly(viewMasters)],
   [/^\/admin\/clients$/, adminOnly(viewClients)],
+  [/^\/admin\/clients\/([^/]+)\/bikes\/([^/]+)$/, adminOnly((m) => viewClientBike(decodeURIComponent(m[1]), decodeURIComponent(m[2])))],
+  [/^\/admin\/clients\/([^/]+)$/, adminOnly((m) => viewClientDetails(decodeURIComponent(m[1])))],
   [/^\/admin\/reports$/, adminOnly(viewAllMastersReport)],
   [/^\/admin\/reports\/([^/]+)$/, adminOnly((m) => masterReportScreen(m[1], "/admin/reports"))],
   [/^\/admin\/stock$/, adminOnly(viewStock)],
@@ -4075,7 +4077,7 @@ function viewClients() {
     box.replaceChildren(
       list.length === 0
         ? emptyState(q ? "Ничего не найдено." : "Клиентов пока нет.", q ? EMPTY_ICON_SEARCH : undefined)
-        : el("div", { class: "list", style: "gap:10px" }, list.map((c) => clientCard(c, redraw))));
+        : el("div", { class: "list", style: "gap:10px" }, list.map(clientCard)));
   };
   const searchInput = el("input", { type: "text", placeholder: "Поиск по имени или телефону" });
   searchInput.addEventListener("input", (e) => { q = e.target.value; redraw(); });
@@ -4088,15 +4090,71 @@ function viewClients() {
   ];
 }
 
-function clientCard(c, onChange) {
+const clientHref = (phone) => `/admin/clients/${encodeURIComponent(phone)}`;
+const bikeHref = (phone, number) => `${clientHref(phone)}/bikes/${encodeURIComponent(number)}`;
+
+function clientCard(c) {
   const db = loadDB();
   const bikes = db.bikes.filter((b) => b.ownerPhone === c.phone);
   const visits = db.orders.filter((o) => o.clientPhone === c.phone).length;
-  return el("div", { class: "admin-person-card card-link", style: "cursor:pointer", onclick: () => openClientEditor(c, onChange) },
+  return el("a", { class: "admin-person-card card-link", href: `#${clientHref(c.phone)}` },
     el("div", { class: "admin-person-head" }, el("b", {}, c.name || "Без имени"), el("span", { class: "chev" }, "›")),
     el("div", { class: "small muted" }, applyPhoneMask(c.phone), visits ? ` · ${visits} обращ.` : ""),
     el("div", { class: "small muted", style: "margin-top:6px" },
       bikes.length ? bikes.map((b) => el("div", {}, bikeLabel(b) || "велосипед (без названия)")) : "Велосипедов нет"));
+}
+
+function clientOrderRows(orders, db) {
+  if (!orders.length) return el("p", { class: "small muted", style: "margin:8px 0 0" }, "Обращений пока нет.");
+  return el("div", { class: "list", style: "gap:10px" },
+    [...orders].sort((a, b) => String(b.handedOverAt || b.createdAt || "").localeCompare(String(a.handedOverAt || a.createdAt || "")))
+      .map((o) => {
+        const bike = db.bikes.find((b) => b.number === o.bikeNumber);
+        return el("a", { class: "admin-person-card card-link client-order-row", href: `#/orders/${encodeURIComponent(o.number)}` },
+          el("div", { class: "admin-person-head" },
+            el("b", {}, bike ? bikeLabel(bike) || "Велосипед" : o.clientName || "Без велосипеда"),
+            el("span", { class: "chev" }, "›")),
+          el("div", { class: "small muted" }, formatDateShort(o.handedOverAt || o.createdAt) || "Без даты"),
+          el("div", { class: "client-order-footer" }, orderStatusTag(o),
+            el("span", { class: "report-history-total" }, rangeText(orderRangeAll(o)))));
+      }));
+}
+
+function viewClientDetails(phone) {
+  const db = loadDB();
+  const client = db.clients.find((c) => c.phone === phone);
+  if (!client) return [bar("Клиент", "/admin/clients"), el("main", { class: "wrap" }, emptyState("Клиент не найден."))];
+  const bikes = db.bikes.filter((b) => b.ownerPhone === phone);
+  const orders = db.orders.filter((o) => o.clientPhone === phone);
+  const onEdit = (newPhone) => {
+    if (!newPhone) return go("/admin/clients");
+    const target = clientHref(newPhone);
+    if (location.hash === `#${target}`) router(); else go(target);
+  };
+  return [bar(client.name || "Клиент", "/admin/clients"),
+    el("main", { class: "wrap" },
+      el("div", { class: "admin-person-card" },
+        el("div", { class: "admin-person-head" }, el("b", {}, client.name || "Без имени")),
+        el("div", { class: "small muted" }, applyPhoneMask(phone)),
+        el("button", { class: "small", style: "margin-top:12px", onclick: () => openClientEditor(client, onEdit) }, "Редактировать клиента")),
+      el("h2", { class: "client-detail-heading" }, "Велосипеды"),
+      bikes.length ? el("div", { class: "list", style: "gap:10px" }, bikes.map((bike) =>
+        el("a", { class: "admin-person-card card-link", href: `#${bikeHref(phone, bike.number)}` },
+          el("div", { class: "admin-person-head" }, el("b", {}, bikeLabel(bike) || "Велосипед (без названия)"), el("span", { class: "chev" }, "›")),
+          el("div", { class: "small muted" }, `${orders.filter((o) => o.bikeNumber === bike.number).length} обращ.`))))
+        : el("p", { class: "small muted" }, "Велосипедов пока нет."),
+      el("h2", { class: "client-detail-heading" }, "Все обращения"),
+      clientOrderRows(orders, db))];
+}
+
+function viewClientBike(phone, number) {
+  const db = loadDB();
+  const bike = db.bikes.find((b) => b.number === number && b.ownerPhone === phone);
+  if (!bike) return [bar("Велосипед", clientHref(phone)), el("main", { class: "wrap" }, emptyState("Велосипед не найден."))];
+  return [bar(bikeLabel(bike) || "Велосипед", clientHref(phone)),
+    el("main", { class: "wrap" },
+      el("h2", { class: "client-detail-heading" }, "Обращения по велосипеду"),
+      clientOrderRows(db.orders.filter((o) => o.clientPhone === phone && o.bikeNumber === number), db))];
 }
 
 // Форма правки клиента — телефон тоже редактируемый (используется как ключ
@@ -4166,7 +4224,7 @@ function openClientEditor(c, onChange) {
     if (phoneChanged) await deleteClientApi(oldPhone);
     toast("Сохранено");
     sheet.close();
-    onChange();
+    onChange(newPhone);
   };
 
   const deleteClient = async () => {
@@ -4179,7 +4237,7 @@ function openClientEditor(c, onChange) {
     if (!ok) return alert("Не удалось удалить — нет соединения");
     toast("Клиент удалён");
     sheet.close();
-    onChange();
+    onChange(null);
   };
 
   sheet = openSheet(c.name || "Клиент", el("div", {},

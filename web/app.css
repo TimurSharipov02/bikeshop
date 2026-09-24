@@ -75,6 +75,8 @@ header.bar .bar-title-lg { font-size:19px; font-weight:700; }
 .admin-tile .chev, .admin-person-head .chev { color:var(--muted); font-size:22px; }
 .admin-person-head { display:flex; align-items:center; gap:8px; margin-bottom:3px; }
 .admin-person-head .chev { margin-left:auto; }
+.client-detail-heading { font-size:17px; margin:20px 0 10px; }
+.client-order-footer { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:12px; }
 .admin-report-link { display:inline-block; margin-top:10px; font-size:14px; }
 .admin-details { border-top:.5px solid var(--line); margin-top:14px; padding-top:10px; }
 .admin-details summary { color:var(--accent); cursor:pointer; list-style:none; font-size:15px; font-weight:600; }
