@@ -232,7 +232,7 @@ header.bar .bar-title-lg { font-size:19px; font-weight:700; }
 .tag.tag-new     { background:var(--fill); color:var(--muted); }
 .tag.tag-quote   { background:var(--orange-weak); color:var(--orange); }
 .tag.tag-approve { background:var(--purple-weak); color:var(--purple); }
-.tag.tag-progress{ background:var(--accent-weak); color:var(--accent); }
+.tag.tag-progress{ background:var(--ok-weak); color:var(--ok); }
 .tag.tag-check   { background:var(--accent-weak); color:var(--accent); }
 .tag.tag-done    { background:var(--ok-weak); color:var(--ok); }
 .tag.tag-block   { background:var(--yellow-weak); color:var(--yellow-ink); }
