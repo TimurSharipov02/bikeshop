@@ -1,0 +1,234 @@
+/* Стили оформления на выбор (Профиль → Оформление). Базовый вид — «Аэро»,
+   он целиком в app.css. Остальные пять — поверх него: app.js ставит на
+   <html> data-style (какой стиль) и data-theme (светлая/тёмная), а тут у
+   каждого стиля свои цвета для обеих тем и свои правки формы.
+
+   Порядок важен: сначала общая «плоская» основа для всех стилей, кроме
+   Аэро (без неба, глянца и тиснения), потом каждый стиль. Цвета — через те
+   же переменные, что и в app.css, поэтому новые экраны подхватывают стиль
+   сами; прямые правила ниже — только там, где у стиля другая форма. */
+
+/* ---------- Общая основа для всех стилей, кроме Аэро ---------- */
+/* :where — вес обычного :root, чтобы наборы конкретных стилей ниже
+   перекрывали эту основу. */
+:root:where([data-style]:not([data-style="aero"])) {
+  --gloss:none; --gloss-tint:none; --emboss:none; --emboss-f:none; --hl:transparent;
+  --ok:#34c759; --ok-weak:#e7f8ec; --warn:#ff3b30; --warn-weak:#ffece9;
+  --yellow:#ffcc00; --yellow-weak:#fff6cc; --yellow-ink:#8a6d00; --on-accent:#fff; --accent-ink:#fff;
+  --shadow-sm:0 1px 3px rgba(0,0,0,.08), 0 4px 10px rgba(0,0,0,.05);
+  --shadow-md:0 8px 24px rgba(0,0,0,.12); --shadow-lg:0 20px 48px rgba(0,0,0,.18);
+  color-scheme:light;
+}
+:root:where([data-style]:not([data-style="aero"])[data-theme="dark"]) {
+  --ok:#30d158; --ok-weak:#0f2a17; --warn:#ff453a; --warn-weak:#3a1210;
+  --yellow:#ffd60a; --yellow-weak:#3a3008; --yellow-ink:#ffd60a;
+  --shadow-sm:0 1px 3px rgba(0,0,0,.6), 0 4px 10px rgba(0,0,0,.4);
+  --shadow-md:0 8px 24px rgba(0,0,0,.55); --shadow-lg:0 20px 48px rgba(0,0,0,.7);
+  color-scheme:dark;
+}
+:where([data-style]:not([data-style="aero"])) body::before { background:var(--bg); }
+:where([data-style]:not([data-style="aero"])) header.bar h1,
+:where([data-style]:not([data-style="aero"])) .card h2,
+:where([data-style]:not([data-style="aero"])) .section-title {
+  background:none; color:var(--title-ink, var(--ink)); filter:none; -webkit-text-fill-color:currentColor; }
+:where([data-style]:not([data-style="aero"])) .section-title { color:var(--muted); }
+:where([data-style]:not([data-style="aero"])) .row,
+:where([data-style]:not([data-style="aero"])) .card,
+:where([data-style]:not([data-style="aero"])) .swipe-content { text-shadow:none; }
+:where([data-style]:not([data-style="aero"])) .tag { background-image:none; }
+:where([data-style]:not([data-style="aero"])) .btn-primary,
+:where([data-style]:not([data-style="aero"])) .btn-ok,
+:where([data-style]:not([data-style="aero"])) .btn-warn { background:var(--btn-c); border:0; text-shadow:none; }
+:where([data-style]:not([data-style="aero"])) .call-btn svg,
+:where([data-style]:not([data-style="aero"])) .swipe-action-btn svg { filter:none; }
+:where([data-style]:not([data-style="aero"])) .swipe-action-btn { border:0; background:var(--btn-top); box-shadow:var(--shadow-raise); }
+:where([data-style]:not([data-style="aero"])) .swipe-action-btn.warn { background:var(--warn); }
+
+/* ---------- 2. Спокойный: плоский, как настройки айфона ---------- */
+:root[data-style="calm"] {
+  --bg:#f2f2f7; --card:#ffffff; --ink:#1c1c1e; --muted:#6e6e73; --line:#e5e5ea; --fill:#e9e9ee;
+  --accent:#007aff; --accent-weak:#e8f0fe; --purple:#af52de; --purple-weak:#f6ecfc;
+  --edge:transparent; --btn-top:#ffffff; --btn-bottom:#ffffff; --well-top:var(--fill); --well-bottom:var(--fill);
+  --shadow-card:0 1px 2px rgba(0,0,0,.05); --shadow-raise:none; --shadow-inset:none;
+  --glass-top:rgba(248,248,250,.92); --glass-bottom:rgba(248,248,250,.92); --glass-edge:var(--line); --glass-line:transparent;
+  --radius:14px; --radius-lg:16px;
+}
+:root[data-style="calm"][data-theme="dark"] {
+  --bg:#000000; --card:#1c1c1e; --ink:#ffffff; --muted:#98989f; --line:#38383a; --fill:#2c2c2e;
+  --accent:#0a84ff; --accent-weak:#10263f; --purple:#bf5af2; --purple-weak:#2c1c38;
+  --btn-top:#2c2c2e; --btn-bottom:#2c2c2e;
+  --glass-top:rgba(22,22,24,.92); --glass-bottom:rgba(22,22,24,.92);
+  --shadow-card:none;
+}
+[data-style="calm"] header.bar { box-shadow:none; }
+[data-style="calm"] button:not(:is(.qty-stepper button, .segmented button, .search-clear, header.bar button, [style*="background:none"], .row, .carousel-dot, .parts-text-action, .compact-add-btn, .complication-remove, .admin-settings-btn, .work-select-btn, .swipe-action-btn, .btn-primary, .btn-ok, .btn-warn)) { border:1px solid var(--line); box-shadow:none; }
+[data-style="calm"] .btn-primary, [data-style="calm"] .btn-ok, [data-style="calm"] .btn-warn { border:0; box-shadow:none; font-weight:600; }
+[data-style="calm"] .control-price { box-shadow:none; border:0; background:var(--accent-weak); }
+[data-style="calm"] .control-price.parts { background:var(--purple-weak); }
+[data-style="calm"] .control-price.excluded { background:transparent; box-shadow:inset 0 0 0 1px var(--line); }
+[data-style="calm"] .tag { box-shadow:none; }
+[data-style="calm"] .work-select-btn { background:var(--btn-top); box-shadow:none; border:1px solid var(--line); }
+[data-style="calm"] .work-select-btn.selected { background:var(--fill); border-color:transparent; }
+[data-style="calm"] .call-btn { background:var(--ok); border:0; box-shadow:none; }
+[data-style="calm"] .segmented button { border:0; }
+[data-style="calm"] .segmented button.active:not([class*="sel-"]) { background:var(--btn-top); box-shadow:0 1px 3px rgba(0,0,0,.12); }
+
+/* ---------- 3. Мягкий: формы выдавлены из фона ---------- */
+:root[data-style="soft"] {
+  --bg:#e4e9f0; --card:#e4e9f0; --ink:#2f3a4a; --muted:#7a8697; --line:#cfd6e0; --fill:#dde3eb;
+  --accent:#4f6bed; --accent-weak:#dfe4f8; --purple:#9a5bd6; --purple-weak:#ece3f6; --title-ink:#3a4a66;
+  --nd:#c3cad5; --nl:#ffffff; --edge:transparent;
+  --shadow-card:9px 9px 18px var(--nd), -9px -9px 18px var(--nl);
+  --shadow-raise:5px 5px 10px var(--nd), -5px -5px 10px var(--nl);
+  --shadow-inset:inset 4px 4px 8px var(--nd), inset -4px -4px 8px var(--nl);
+  --btn-top:var(--bg); --btn-bottom:var(--bg); --well-top:var(--bg); --well-bottom:var(--bg);
+  --glass-top:var(--bg); --glass-bottom:var(--bg); --glass-edge:transparent; --glass-line:transparent;
+  --radius:24px; --radius-lg:28px;
+}
+:root[data-style="soft"][data-theme="dark"] {
+  --bg:#2a2f38; --card:#2a2f38; --ink:#e3e7ee; --muted:#8e97a6; --line:#3a414d; --fill:#323845;
+  --accent:#7d93ff; --accent-weak:#343c5c; --purple:#c197f0; --purple-weak:#3b3150; --title-ink:#c9d3ff;
+  --nd:#1d2128; --nl:#373d48;
+}
+[data-style="soft"] header.bar { box-shadow:0 6px 14px -8px var(--nd); backdrop-filter:none; -webkit-backdrop-filter:none; border-bottom:0; }
+[data-style="soft"] button:not(:is(.qty-stepper button, .segmented button, .search-clear, header.bar button, [style*="background:none"], .row, .carousel-dot, .parts-text-action, .compact-add-btn, .complication-remove, .admin-settings-btn, .work-select-btn, .swipe-action-btn, .btn-primary, .btn-ok, .btn-warn)) { box-shadow:var(--shadow-raise); border:0; }
+[data-style="soft"] .btn-primary, [data-style="soft"] .btn-ok, [data-style="soft"] .btn-warn { box-shadow:6px 6px 12px var(--nd), -6px -6px 12px var(--nl); }
+[data-style="soft"] .control-price { border:0; background:var(--bg); box-shadow:var(--shadow-raise); }
+[data-style="soft"] .control-price.excluded { box-shadow:var(--shadow-inset); }
+[data-style="soft"] .tag { box-shadow:var(--shadow-inset); }
+[data-style="soft"] .work-select-btn { background:var(--bg); border:0; box-shadow:var(--shadow-raise); }
+[data-style="soft"] .work-select-btn.selected { box-shadow:var(--shadow-inset); }
+[data-style="soft"] .call-btn { background:var(--bg); color:var(--ok); border:0; box-shadow:var(--shadow-raise); }
+[data-style="soft"] .segmented button.active:not([class*="sel-"]) { background:var(--bg); box-shadow:var(--shadow-raise); }
+[data-style="soft"] .rows .row { border-bottom-color:transparent; }
+[data-style="soft"] .block-icon { background:var(--bg); box-shadow:var(--shadow-inset); }
+
+/* ---------- 4. Мастерская: крупно и контрастно ---------- */
+:root[data-style="workshop"] {
+  --bg:#f1f1ec; --card:#ffffff; --ink:#111111; --muted:#4a4a4a; --line:rgba(17,17,17,.14); --fill:#e8e8e2;
+  --accent:#0047c2; --accent-weak:#e2eaff; --ok:#0b8a3a; --ok-weak:#dcf5e5; --warn:#d11f1f;
+  --purple:#7a2fb5; --purple-weak:#f1e6fa;
+  --ws-edge:#111111; --ws-shadow:#111111; --ws-hi:#ffcc00; --ws-hi-ink:#111111;
+  --edge:var(--ws-edge); --title-ink:var(--ink);
+  --shadow-card:4px 4px 0 var(--ws-shadow); --shadow-raise:3px 3px 0 var(--ws-shadow); --shadow-inset:inset 0 0 0 2px var(--ws-edge);
+  --btn-top:var(--card); --btn-bottom:var(--card); --well-top:var(--card); --well-bottom:var(--card);
+  --glass-top:var(--ws-hi); --glass-bottom:var(--ws-hi); --glass-edge:var(--ws-edge); --glass-line:transparent;
+  --radius:10px; --radius-lg:12px; --radius-sm:8px;
+}
+:root[data-style="workshop"][data-theme="dark"] {
+  --bg:#0e0e0e; --card:#1a1a1a; --ink:#ffffff; --muted:#c4c4c4; --line:rgba(255,255,255,.18); --fill:#262626;
+  --accent:#6ea8ff; --accent-weak:#132544; --ok:#3ddc84; --ok-weak:#10301e; --purple:#d09bff; --purple-weak:#2e1d42;
+  --ws-edge:#f2f2f2; --ws-shadow:#ffcc00;
+}
+[data-style="workshop"] body { font-size:19px; }
+[data-style="workshop"] header.bar { backdrop-filter:none; -webkit-backdrop-filter:none; border-bottom:2px solid var(--ws-edge); box-shadow:none; }
+[data-style="workshop"] header.bar h1 { font-size:19px; text-transform:uppercase; letter-spacing:.04em; color:var(--ws-hi-ink); }
+[data-style="workshop"] header.bar .back, [data-style="workshop"] header.bar .sub, [data-style="workshop"] header.bar .edit-btn { color:var(--ws-hi-ink); }
+[data-style="workshop"] .card:not(.card-flush),
+[data-style="workshop"] .rows:not(.rows-separate):not(.card .rows),
+[data-style="workshop"] .rows-separate > .row,
+[data-style="workshop"] .rows-separate > .swipe-row > .swipe-content { border:2px solid var(--ws-edge); }
+[data-style="workshop"] .card h2 { text-transform:uppercase; letter-spacing:.03em; }
+[data-style="workshop"] .row { font-size:18px; }
+[data-style="workshop"] .rows-separate .row { min-height:84px; }
+[data-style="workshop"] button:not(:is(.qty-stepper button, .segmented button, .search-clear, header.bar button, [style*="background:none"], .row, .carousel-dot, .parts-text-action, .compact-add-btn, .complication-remove, .admin-settings-btn, .work-select-btn, .swipe-action-btn, .btn-primary, .btn-ok, .btn-warn)) { border:2px solid var(--ws-edge); border-radius:10px; min-height:54px; font-size:18px; box-shadow:3px 3px 0 var(--ws-shadow); }
+[data-style="workshop"] .btn-primary { --btn-c:var(--ws-hi); color:#111; }
+[data-style="workshop"] .btn-primary, [data-style="workshop"] .btn-ok, [data-style="workshop"] .btn-warn {
+  border:2px solid var(--ws-edge); border-radius:10px; min-height:54px; font-size:18px; box-shadow:4px 4px 0 var(--ws-shadow); font-weight:800; text-transform:uppercase; letter-spacing:.04em; }
+[data-style="workshop"] .control-price { border:2px solid var(--ws-edge); border-radius:8px; box-shadow:2px 2px 0 var(--ws-shadow); background:var(--card); font-size:18px; }
+[data-style="workshop"] .control-price.parts { background:var(--purple-weak); }
+[data-style="workshop"] .control-price.excluded { box-shadow:none; border-style:dashed; }
+[data-style="workshop"] .tag { border:2px solid var(--ws-edge); box-shadow:none; font-size:14px; }
+[data-style="workshop"] .tag.tag-block { background-color:#ffcc00; color:#111; }
+[data-style="workshop"] input, [data-style="workshop"] textarea, [data-style="workshop"] select { border-radius:10px; }
+[data-style="workshop"] .work-select-btn { border:2px solid var(--ws-edge); border-radius:8px; box-shadow:2px 2px 0 var(--ws-shadow); background:var(--card); min-height:40px; }
+[data-style="workshop"] .work-select-btn.selected { box-shadow:none; border-style:dashed; }
+[data-style="workshop"] .call-btn { background:var(--ok); border:2px solid var(--ws-edge); box-shadow:2px 2px 0 var(--ws-shadow); border-radius:10px; }
+[data-style="workshop"] .segmented button { min-height:44px; font-size:16px; }
+[data-style="workshop"] .segmented button.active:not([class*="sel-"]) { background:var(--ws-edge); color:var(--ws-hi); box-shadow:none; }
+[data-theme="dark"][data-style="workshop"] .segmented button.active:not([class*="sel-"]) { background:var(--ws-hi); color:#111; }
+[data-style="workshop"] .block-icon { background:var(--ws-hi); color:#111; border:2px solid var(--ws-edge); }
+
+/* ---------- 5. Графит: матовый, оранжевый акцент ---------- */
+:root[data-style="graphite"] {
+  --bg:#ececec; --card:#ffffff; --ink:#1a1a1a; --muted:#6b6b6b; --line:#dcdcdc; --fill:#e4e4e4;
+  --accent:#e8700a; --accent-weak:#fde9d6; --on-accent:#ffffff; --purple:#8a4fd6; --purple-weak:#efe6fb;
+  --edge:#e0e0e0; --title-ink:var(--ink);
+  --shadow-card:0 1px 2px rgba(0,0,0,.08), 0 8px 18px -12px rgba(0,0,0,.35);
+  --shadow-raise:0 3px 8px -4px rgba(0,0,0,.35); --shadow-inset:inset 0 1px 3px rgba(0,0,0,.12), 0 0 0 1px #d6d6d6;
+  --btn-top:#fafafa; --btn-bottom:#f0f0f0; --well-top:#f4f4f4; --well-bottom:#f8f8f8;
+  --glass-top:rgba(40,40,40,.96); --glass-bottom:rgba(40,40,40,.96); --glass-edge:#1a1a1a; --glass-line:transparent;
+  --radius:16px; --radius-lg:20px;
+}
+:root[data-style="graphite"][data-theme="dark"] {
+  --bg:#141414; --card:#1f1f1f; --ink:#f2f2f2; --muted:#9a9a9a; --line:#333333; --fill:#2a2a2a;
+  --accent:#ff8a1f; --accent-weak:#3a2410; --on-accent:#141414; --purple:#c38cff; --purple-weak:#2d2140;
+  --edge:#2c2c2c;
+  --shadow-card:0 1px 0 rgba(255,255,255,.04) inset, 0 8px 20px -10px rgba(0,0,0,.9);
+  --shadow-raise:0 4px 10px -4px rgba(0,0,0,.8); --shadow-inset:inset 0 1px 3px rgba(0,0,0,.8), 0 0 0 1px #333333;
+  --btn-top:#2b2b2b; --btn-bottom:#232323; --well-top:#121212; --well-bottom:#181818;
+  --glass-top:rgba(24,24,24,.94); --glass-bottom:rgba(24,24,24,.94); --glass-edge:#2c2c2c;
+}
+[data-style="graphite"] header.bar { box-shadow:none; }
+[data-style="graphite"] header.bar h1 { color:#ffffff; }
+[data-style="graphite"] header.bar .sub { color:#bdbdbd; }
+[data-style="graphite"] header.bar .edit-btn { color:#bdbdbd; }
+[data-style="graphite"] .card h2, [data-style="graphite"] .section-title { color:var(--accent); }
+[data-style="graphite"] :is(.btn-primary, .btn-ok, .btn-warn):not(:disabled) { color:var(--on-accent); box-shadow:0 8px 20px -10px var(--btn-c); }
+[data-style="graphite"] .control-price { border:1px solid color-mix(in srgb, var(--accent) 40%, transparent); background:var(--accent-weak); box-shadow:none; }
+[data-style="graphite"] .control-price.parts { border-color:color-mix(in srgb, var(--purple) 40%, transparent); background:var(--purple-weak); }
+[data-style="graphite"] .control-price.excluded { background:transparent; border-color:var(--line); }
+[data-style="graphite"] .tag { box-shadow:none; }
+[data-style="graphite"] .call-btn { background:var(--ok); border:0; box-shadow:none; color:var(--on-accent); }
+[data-style="graphite"] .work-select-btn { border:1px solid var(--line); }
+[data-style="graphite"] .segmented button.active:not([class*="sel-"]) { background:var(--btn-top); }
+
+/* ---------- 6. Бумага: тёплый, с засечками ---------- */
+/* Свой шрифт у стиля — на всём приложении, включая кнопки и поля (у них
+   font:inherit). Georgia есть на iPhone и Mac; где её нет — системный
+   шрифт с засечками. */
+:root[data-style="paper"] {
+  --bg:#f4ede1; --card:#fffaf1; --ink:#3b2f24; --muted:#8b7a66; --line:#e7dccb; --fill:#efe6d7;
+  --accent:#2e6b4f; --accent-weak:#e1eee6; --ok:#2e6b4f; --ok-weak:#e1eee6; --warn:#b3452c;
+  --purple:#8c4f8f; --purple-weak:#f3e6f1; --yellow-weak:#f8ebc4; --yellow-ink:#7a5a00;
+  --edge:#e7dccb; --title-ink:var(--ink); --paper-ridge:#d9ccb7;
+  --shadow-card:0 1px 0 #e7dccb, 0 6px 14px -10px rgba(80,55,30,.35);
+  --shadow-raise:0 2px 0 var(--paper-ridge); --shadow-inset:inset 0 1px 2px rgba(80,55,30,.12), 0 0 0 1px #e2d6c3;
+  --btn-top:#fffaf1; --btn-bottom:#fffaf1; --well-top:#fbf5ea; --well-bottom:#fbf5ea;
+  --glass-top:rgba(244,237,225,.94); --glass-bottom:rgba(244,237,225,.94); --glass-edge:#e7dccb; --glass-line:transparent;
+  --radius:16px; --radius-lg:18px;
+}
+:root[data-style="paper"][data-theme="dark"] {
+  --bg:#211b15; --card:#2c241c; --ink:#efe4d3; --muted:#a8977f; --line:#43382c; --fill:#362c22;
+  --accent:#7fbf98; --accent-weak:#23392c; --on-accent:#1b1510; --ok:#7fbf98; --ok-weak:#23392c; --warn:#e07a5f;
+  --purple:#cf9fd4; --purple-weak:#3a2738; --yellow-weak:#3b3016; --yellow-ink:#e8c66a;
+  --edge:#43382c; --paper-ridge:#15110d;
+  --shadow-card:0 1px 0 #15110d, 0 8px 18px -10px rgba(0,0,0,.8);
+  --shadow-inset:inset 0 1px 2px rgba(0,0,0,.5), 0 0 0 1px #4a3e31;
+  --btn-top:#352b21; --btn-bottom:#352b21; --well-top:#271f18; --well-bottom:#271f18;
+  --glass-top:rgba(33,27,21,.94); --glass-bottom:rgba(33,27,21,.94); --glass-edge:#43382c;
+}
+[data-style="paper"] body { font-family:Georgia, "Times New Roman", "Noto Serif", serif; }
+[data-style="paper"] header.bar h1, [data-style="paper"] .card h2 { font-weight:700; }
+[data-style="paper"] .card h2 { font-size:22px; }
+[data-style="paper"] .section-title { letter-spacing:.08em; }
+[data-style="paper"] header.bar { box-shadow:none; }
+[data-style="paper"] button:not(:is(.qty-stepper button, .segmented button, .search-clear, header.bar button, [style*="background:none"], .row, .carousel-dot, .parts-text-action, .compact-add-btn, .complication-remove, .admin-settings-btn, .work-select-btn, .swipe-action-btn, .btn-primary, .btn-ok, .btn-warn)) { border:1px solid var(--edge); }
+[data-style="paper"] :is(.btn-primary, .btn-ok, .btn-warn):not(:disabled) { border:0;
+  color:var(--on-accent); box-shadow:0 2px 0 color-mix(in srgb, var(--btn-c), black 35%); }
+[data-style="paper"] .control-price { border:1px solid color-mix(in srgb, var(--accent) 25%, transparent); background:var(--accent-weak);
+  box-shadow:0 2px 0 color-mix(in srgb, var(--accent) 25%, transparent); }
+[data-style="paper"] .control-price.parts { border-color:color-mix(in srgb, var(--purple) 25%, transparent); background:var(--purple-weak);
+  box-shadow:0 2px 0 color-mix(in srgb, var(--purple) 25%, transparent); }
+[data-style="paper"] .control-price.excluded { background:transparent; box-shadow:var(--shadow-inset); }
+[data-style="paper"] .tag { box-shadow:none; }
+[data-style="paper"] .call-btn { background:var(--ok); color:var(--on-accent); border:0; box-shadow:0 2px 0 color-mix(in srgb, var(--ok), black 35%); }
+[data-style="paper"] .work-select-btn { border:1px solid var(--edge); }
+
+/* ---------- Служебные кнопки во всех стилях ---------- */
+/* Правила «button» у стилей выше (рамка, тень, размер) — для настоящих
+   кнопок; иконки, строки-кнопки, счётчики и текстовые ссылки-кнопки
+   остаются без них, как и в Аэро. */
+[data-style]:not([data-style="aero"]) :is(.qty-stepper button, .segmented button, .search-clear, header.bar button,
+  button[style*="background:none"], button.row, .carousel-dot, .parts-text-action, .compact-add-btn,
+  .complication-remove, .admin-settings-btn) { border:0; box-shadow:none; }

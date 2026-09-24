@@ -11,6 +11,17 @@
 <meta name="apple-mobile-web-app-title" content="Veloterra">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
+<script>
+// Оформление — до стилей и первой отрисовки, чтобы не мигал вид по умолчанию.
+// Полная логика (и сохранение за аккаунтом) — applyLook в app.js.
+(function () {
+  var d = document.documentElement, l = {};
+  try { l = JSON.parse(localStorage.getItem("veloterra-look")) || {}; } catch (e) {}
+  var dark = window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches;
+  d.setAttribute("data-style", l.style || "aero");
+  d.setAttribute("data-theme", l.theme === "light" || l.theme === "dark" ? l.theme : (dark ? "dark" : "light"));
+})();
+</script>
 <style>/*__CSS__*/</style>
 </head>
 <body>

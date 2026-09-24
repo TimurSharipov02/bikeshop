@@ -47,7 +47,8 @@ const bundle = [
   strip(readFileSync(p("web/app.js"), "utf8")),
 ].join("\n\n");
 
-const css = readFileSync(p("web/app.css"), "utf8");
+// Стили оформления (web/themes.css) — после основных: перекрывают их.
+const css = readFileSync(p("web/app.css"), "utf8") + "\n" + readFileSync(p("web/themes.css"), "utf8");
 
 const html = readFileSync(p("web/template.html"), "utf8")
   .replace("/*__CSS__*/", () => css)

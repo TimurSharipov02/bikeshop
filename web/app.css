@@ -59,33 +59,36 @@
      (мелкие подписи, цены и т.п.) шкалу не использует намеренно —
      трогать вообще всё было бы избыточным риском для живого прода. */
   --fs-xs:12px; --fs-sm:14px; --fs-base:16px; --fs-md:17px; --fs-lg:20px; --fs-xl:24px; --fs-2xl:28px;
-  color-scheme:light dark;
+  color-scheme:light;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg:#000000; --card:#141e29; --ink:#ffffff; --muted:#98989f; --line:#38383a;
-    --accent:#0a84ff; --accent-weak:#12283f; --accent-ink:#fff;
-    --ok:#30d158; --ok-weak:#0f2a17; --warn:#ff453a; --warn-weak:#3a1210;
-    --purple:#bf5af2; --purple-weak:#2c1c38; --fill:#1d2a37;
-    --yellow:#ffd60a; --yellow-weak:#3a3008; --yellow-ink:#ffd60a;
-    --shadow-sm:0 1px 3px rgba(0,0,0,.6), 0 4px 10px rgba(0,0,0,.4);
-    --shadow-md:0 8px 24px rgba(0,0,0,.55); --shadow-lg:0 20px 48px rgba(0,0,0,.7);
-    --hl:rgba(255,255,255,.07); --edge:rgba(255,255,255,.04);
-    --btn-top:#2e3e4f; --btn-bottom:#1e2a37;
-    --well-top:#061626; --well-bottom:#0d2439;
-    --shadow-raise:0 8px 18px -6px rgba(0,0,0,.8), 0 1px 3px rgba(0,0,0,.5);
-    --shadow-card:inset 0 1px 0 var(--hl), 0 12px 24px -10px rgba(0,0,0,.9), 0 2px 4px rgba(0,0,0,.5);
-    --shadow-inset:inset 0 2px 6px rgba(0,0,0,.7), inset 0 -1px 0 rgba(150,215,255,.08), 0 0 0 1px rgba(150,215,255,.22);
-    --sky:linear-gradient(180deg, #07294a 0%, #051c33 35%, #020c17 75%, #000 100%);
-    --glass-top:rgba(90,170,235,.26); --glass-bottom:rgba(20,70,120,.14);
-    --glass-edge:rgba(170,225,255,.28); --glass-line:rgba(0,0,0,.5);
-    --emboss:0 1px 2px rgba(0,0,0,.7), 0 0 14px rgba(110,195,255,.16);
-    --emboss-f:drop-shadow(0 0 10px rgba(110,195,255,.4));
-    --title-grad:linear-gradient(180deg, #ffffff 0%, #9fd6ff 100%);
-    --gloss-tint:linear-gradient(180deg, rgba(255,255,255,.16) 0%, rgba(255,255,255,.05) 47%, rgba(255,255,255,0) 50%);
-    --price-top:color-mix(in srgb, var(--accent-weak), var(--accent) 22%);
-    --parts-top:color-mix(in srgb, var(--purple-weak), var(--purple) 22%);
-  }
+/* Тёмная тема — по data-theme на <html> (ставит app.js: «как на телефоне»,
+   светлая или тёмная из профиля), а не прямо по prefers-color-scheme.
+   :where — чтобы у селектора был вес обычного :root: наборы других стилей
+   (web/themes.css) тогда перекрывают эти цвета, а не наоборот. */
+:root:where([data-theme="dark"]) {
+  --bg:#000000; --card:#141e29; --ink:#ffffff; --muted:#98989f; --line:#38383a;
+  --accent:#0a84ff; --accent-weak:#12283f; --accent-ink:#fff;
+  --ok:#30d158; --ok-weak:#0f2a17; --warn:#ff453a; --warn-weak:#3a1210;
+  --purple:#bf5af2; --purple-weak:#2c1c38; --fill:#1d2a37;
+  --yellow:#ffd60a; --yellow-weak:#3a3008; --yellow-ink:#ffd60a;
+  --shadow-sm:0 1px 3px rgba(0,0,0,.6), 0 4px 10px rgba(0,0,0,.4);
+  --shadow-md:0 8px 24px rgba(0,0,0,.55); --shadow-lg:0 20px 48px rgba(0,0,0,.7);
+  --hl:rgba(255,255,255,.07); --edge:rgba(255,255,255,.04);
+  --btn-top:#2e3e4f; --btn-bottom:#1e2a37;
+  --well-top:#061626; --well-bottom:#0d2439;
+  --shadow-raise:0 8px 18px -6px rgba(0,0,0,.8), 0 1px 3px rgba(0,0,0,.5);
+  --shadow-card:inset 0 1px 0 var(--hl), 0 12px 24px -10px rgba(0,0,0,.9), 0 2px 4px rgba(0,0,0,.5);
+  --shadow-inset:inset 0 2px 6px rgba(0,0,0,.7), inset 0 -1px 0 rgba(150,215,255,.08), 0 0 0 1px rgba(150,215,255,.22);
+  --sky:linear-gradient(180deg, #07294a 0%, #051c33 35%, #020c17 75%, #000 100%);
+  --glass-top:rgba(90,170,235,.26); --glass-bottom:rgba(20,70,120,.14);
+  --glass-edge:rgba(170,225,255,.28); --glass-line:rgba(0,0,0,.5);
+  --emboss:0 1px 2px rgba(0,0,0,.7), 0 0 14px rgba(110,195,255,.16);
+  --emboss-f:drop-shadow(0 0 10px rgba(110,195,255,.4));
+  --title-grad:linear-gradient(180deg, #ffffff 0%, #9fd6ff 100%);
+  --gloss-tint:linear-gradient(180deg, rgba(255,255,255,.16) 0%, rgba(255,255,255,.05) 47%, rgba(255,255,255,0) 50%);
+  --price-top:color-mix(in srgb, var(--accent-weak), var(--accent) 22%);
+  --parts-top:color-mix(in srgb, var(--purple-weak), var(--purple) 22%);
+  color-scheme:dark;
 }
 * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
 /* Без системного «резинового» отскока: при оттягивании вниз он утаскивал
@@ -384,7 +387,11 @@ button:disabled:active { transform:none; }
   box-shadow:inset 0 1px 0 rgba(255,255,255,.8), 0 10px 22px -8px color-mix(in srgb, var(--btn-c) 70%, transparent), 0 2px 5px rgba(0,0,0,.2); }
 .btn-ok { --btn-c:var(--ok); }
 .btn-warn { --btn-c:var(--warn); }
-.btn-primary:disabled, .btn-ok:disabled, .btn-warn:disabled { box-shadow:inset 0 1px 0 rgba(255,255,255,.2); text-shadow:none; }
+/* Неактивная — сплошная, бледная своего цвета, а не полупрозрачная: у
+   нижних кнопок нет подложки, и сквозь прозрачную просвечивал бы список. */
+.btn-primary:disabled, .btn-ok:disabled, .btn-warn:disabled { opacity:1; text-shadow:none; box-shadow:none;
+  border-color:transparent; background:color-mix(in srgb, var(--btn-c) 30%, var(--card));
+  color:color-mix(in srgb, var(--btn-c), var(--ink) 30%); }
 /* Служебные кнопки-иконки (назад, крестики, точки карусели, текстовые
    ссылки-кнопки) — без объёма основных кнопок: у них свой фон/форма. */
 header.bar .back, .edit-btn, .search-clear, .complication-remove, .compact-add-btn, .carousel-dot,
@@ -461,10 +468,11 @@ button.row { font-weight:400; }
    16px+safe-area — чтобы в установленном как приложение виде (standalone,
    без строки браузера) панель не липла к самому краю экрана. */
 .actions { position:fixed; left:0; right:0; bottom:var(--kb-offset, 0px); z-index:40;
-  background:linear-gradient(180deg, var(--glass-top), var(--glass-bottom));
-  -webkit-backdrop-filter:blur(22px) saturate(190%); backdrop-filter:blur(22px) saturate(190%);
-  box-shadow:0 -12px 28px -20px rgba(0,40,90,.45);
+  background:none; pointer-events:none;
   padding:12px 16px calc(16px + env(safe-area-inset-bottom)); }
+/* Подложки нет — кнопки висят прямо над содержимым; сама панель клики
+   пропускает насквозь, ловят их только кнопки внутри. */
+.actions-inner > * { pointer-events:auto; }
 /* При открытой клавиатуре запас под «полоску» айфона не нужен — панель и
    так стоит над клавиатурой, иначе между полем и клавиатурой пустая полоса. */
 .kb-open .actions { padding-bottom:10px; }
@@ -481,13 +489,23 @@ input, select { line-height:1.25; }
 input:focus,textarea:focus,select:focus { outline:none;
   box-shadow:var(--shadow-inset), 0 0 0 1px var(--accent), 0 0 0 4px color-mix(in srgb, var(--accent) 25%, transparent),
     0 0 18px color-mix(in srgb, var(--accent) 35%, transparent); }
-.request-field { height:92px; min-height:92px; max-height:92px; resize:none; padding:14px 18px; font-size:18px; line-height:1.35; }
+/* «Уточнения»: иконка слева, одна строка по центру, дальше поле растёт по
+   тексту (см. requestField в app.js). */
+.request-box { position:relative; display:block; margin:0; }
+.request-icon { position:absolute; left:16px; top:17px; display:flex; color:var(--muted); pointer-events:none; }
+.request-icon svg { width:22px; height:22px; }
+.request-field { display:block; min-height:56px; resize:none; overflow:hidden; padding:15px 18px 15px 50px;
+  font-size:17px; line-height:1.5; }
+.request-box-new { margin:0 0 12px; }
+/* Пиктограмма узла в заголовке блока на экране добавления работ. */
+.block-icon { flex:0 0 auto; width:40px; height:40px; border-radius:12px; display:flex; align-items:center;
+  justify-content:center; color:var(--accent); background:var(--accent-weak); }
+.block-icon svg { width:24px; height:24px; }
 /* Клиент в карточке заявки: имя и номер обычным размером, по строке на
    каждое — не мелкой серой подписью. */
 .client-line { display:flex; align-items:center; gap:12px; color:var(--ink); font-size:17px; line-height:1.35; }
 .client-line b { display:block; font-weight:600; }
 .client-line .muted { display:block; }
-.request-field-new { display:block; margin:0 0 12px; }
 /* Родные стрелки +/- у number-полей на узком экране только крадут место у
    значения и мешают читать (особенно когда таких полей несколько подряд —
    см. экран «Запчасти») — цифры и так вводятся числовой клавиатурой и без
@@ -589,3 +607,11 @@ label { display:block; font-size:13px; color:var(--muted); margin:var(--sp-4) 0 
 .assess:last-child { border-bottom:0; }
 .price-range { font-size:24px; font-weight:700; letter-spacing:-.01em; }
 .total { font-size:22px; font-weight:700; letter-spacing:-.01em; }
+
+/* Выбор оформления (Профиль → Оформление): кружки-образцы цветов стиля. */
+.look-row { min-height:64px; }
+.look-row b { display:block; font-weight:600; }
+.look-note { display:block; }
+.look-swatch { flex:0 0 auto; display:flex; padding-left:6px; }
+.look-swatch span { width:22px; height:22px; border-radius:50%; margin-left:-6px;
+  border:2px solid var(--card); box-shadow:0 0 0 .5px rgba(0,0,0,.2); }

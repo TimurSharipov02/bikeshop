@@ -465,8 +465,39 @@ window.addEventListener("popstate", () => {
   }, { passive: true });
 })();
 
+// Оформление: стиль (Аэро и ещё пять, см. web/themes.css) и тема —
+// светлая, тёмная или как на телефоне. Хранится в учётной записи
+// (api/auth.js, setLook) и копией на телефоне — чтобы при следующем
+// открытии нужный вид был сразу, ещё до ответа сервера (см. template.html).
+const STYLE_PRESETS = [
+  { id: "aero", name: "Аэро", note: "Объём, глянец, небо", sw: ["#bfe3fb", "#ffffff", "#007aff"] },
+  { id: "calm", name: "Спокойный", note: "Плоский, как настройки айфона", sw: ["#f2f2f7", "#ffffff", "#007aff"] },
+  { id: "soft", name: "Мягкий", note: "Формы выдавлены из фона", sw: ["#e4e9f0", "#c3cad5", "#4f6bed"] },
+  { id: "workshop", name: "Мастерская", note: "Крупно и контрастно", sw: ["#ffcc00", "#ffffff", "#111111"] },
+  { id: "graphite", name: "Графит", note: "Матовый, оранжевый акцент", sw: ["#282828", "#ececec", "#ff8a1f"] },
+  { id: "paper", name: "Бумага", note: "Тёплый, с засечками", sw: ["#f4ede1", "#fffaf1", "#2e6b4f"] },
+];
+const THEME_OPTIONS = [["auto", "Как на телефоне"], ["light", "Светлая"], ["dark", "Тёмная"]];
+const DARK_MQ = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+const normalizeLook = (l) => ({
+  style: STYLE_PRESETS.some((p) => p.id === l?.style) ? l.style : "aero",
+  theme: THEME_OPTIONS.some(([v]) => v === l?.theme) ? l.theme : "auto",
+});
+let currentLook = normalizeLook((() => { try { return JSON.parse(localStorage.getItem("veloterra-look")); } catch { return null; } })());
+function applyLook(look) {
+  currentLook = normalizeLook(look);
+  const d = document.documentElement;
+  d.dataset.style = currentLook.style;
+  d.dataset.theme = currentLook.theme === "auto" ? (DARK_MQ?.matches ? "dark" : "light") : currentLook.theme;
+  try { localStorage.setItem("veloterra-look", JSON.stringify(currentLook)); } catch {}
+}
+DARK_MQ?.addEventListener?.("change", () => applyLook(currentLook));
+applyLook(currentLook);
+const applySessionLook = () => { if (SESSION?.look) applyLook(SESSION.look); };
+
 (async () => {
   await loadSession();
+  applySessionLook();
   router();
   if (SESSION) { if (dirty) await flushPending(); else syncFromServer(); }
 })();
@@ -483,6 +514,31 @@ window.addEventListener("online", () => { if (SESSION && dirty) flushPending(); 
 // правило просто перебивает этот атрибут по специфичности — не мешает.
 const ICON_SVG = (inner) =>
   `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+// Пиктограммы узлов на экране добавления работ (id блока из
+// catalog/diagnostics.json) — узел находится глазами быстрее, чем по слову.
+const BLOCK_ICONS = {
+  WHL: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="1.8"/><path d="M12 3v7.2M12 13.8V21M3 12h7.2M13.8 12H21M5.6 5.6l5.1 5.1M13.3 13.3l5.1 5.1M18.4 5.6l-5.1 5.1M10.7 13.3l-5.1 5.1"/>',
+  BRK: '<circle cx="11" cy="13" r="8"/><circle cx="11" cy="13" r="2.5"/><path d="M11 7.4v.1M16.6 13h-.1M11 18.6v-.1M5.4 13h.1"/><path d="M15 3.5h4.5A1.5 1.5 0 0 1 21 5v5.5"/>',
+  BB: '<circle cx="9" cy="9.5" r="5.5"/><circle cx="9" cy="9.5" r="1.6"/><path d="M10.4 11 16.5 18"/><path d="M14.5 20.5h5"/>',
+  STR: '<path d="M2.5 8.5c2 0 3 .8 4.5 1.5h10c1.5-.7 2.5-1.5 4.5-1.5"/><path d="M12 10v4"/><rect x="10" y="14" width="4" height="7" rx="1"/>',
+  FRM: '<path d="M4.5 17 10 8h9l-4.5 9h-10z"/><path d="M10 8 9 5H7"/><path d="M19 8l.7-3"/>',
+  DRV: '<circle cx="12" cy="12" r="7.5" stroke-width="3" stroke-dasharray="2.4 1.6"/><circle cx="12" cy="12" r="2.5"/>',
+  TCH: '<path d="M3 8.5c0-1.3 1.6-2 4.5-2 3 0 4.6 1.6 8.5 2.2 3 .4 5 1 5 2.3s-2 1.8-5 1.8c-2.6 0-4 1.2-6.5 1.5C5.5 14.8 3 12.5 3 8.5z"/><path d="M11 14.5V21"/>',
+  WSH: '<path d="M12 3s6 6.6 6 11a6 6 0 0 1-12 0c0-4.4 6-11 6-11z"/>',
+};
+const BLOCK_ICON_DEFAULT = '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-7.9 7.9l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 7.9-7.9l-3.8 3.8z"/>';
+// Поле «Уточнения»: иконка слева, подсказка по центру строки, а не в углу
+// высокой пустой рамки; поле само растёт по мере текста.
+function requestField(value, onChange, extraClass = "") {
+  const ta = el("textarea", { class: "request-field", rows: 1, value, placeholder: "Уточнения клиента",
+    onchange: (e) => onChange(e.target.value.trim()) });
+  const fit = () => { ta.style.height = "auto"; ta.style.height = ta.scrollHeight + "px"; };
+  ta.addEventListener("input", fit);
+  requestAnimationFrame(fit);
+  return el("label", { class: ("request-box " + extraClass).trim() },
+    el("span", { class: "request-icon", html: ICON_SVG('<path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12.5h5"/>') }), ta);
+}
+const blockIcon = (id) => el("span", { class: "block-icon", html: ICON_SVG(BLOCK_ICONS[id] || BLOCK_ICON_DEFAULT) });
 // Иконки для кнопок правки/удаления в свайпе (см. swipeActions) — вместо
 // символов ✎/✕ из системного шрифта, которые на разных устройствах
 // выглядят по-разному и не в стиле остальных SVG-иконок приложения.
@@ -1254,16 +1310,15 @@ function viewOrder(number) {
     // можно позвонить (не теряется мелким значком сразу после текста).
     order.clientPhone
       ? el("a", { href: `tel:${order.clientPhone.replace(/[^\d+]/g, "")}`, class: "client-line" },
+          // Номер телефона не показываем — звонок и так по кнопке-трубке.
           el("span", { style: "flex:1;min-width:0" },
-            client?.name || order.clientName ? el("b", {}, client?.name || order.clientName) : null,
-            el("span", { class: "muted" }, applyPhoneMask(order.clientPhone))),
+            client?.name || order.clientName ? el("b", {}, client?.name || order.clientName) : el("span", { class: "muted" }, "Позвонить клиенту")),
           el("span", { class: "call-btn", html: ICON_PHONE }))
       : (client?.name || order.clientName ? el("p", { class: "small muted" }, client?.name || order.clientName) : null),
     order.status === "выдан"
       ? (order.request ? el("p", { class: "small muted", style: "margin-top:8px" }, order.request) : null)
       : el("div", { style: "margin-top:8px" },
-          el("textarea", { class: "request-field", rows: 2, value: order.request || "", placeholder: "Уточнения",
-            onchange: (e) => { editOrder(number, (o) => (o.request = e.target.value.trim())); refresh(); } })));
+          requestField(order.request || "", (v) => { editOrder(number, (o) => (o.request = v)); refresh(); })));
 
   if ((order.diagnosticNotes || []).length) {
     const ul = el("ul", { style: "margin:4px 0 0;padding-left:18px" });
@@ -2485,8 +2540,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
     if (!inline && onRequest) {
       // Поле самостоятельное: дополнительная карточка вокруг него создавала
       // рамку в рамке и не несла никакой функции.
-      wrap.append(el("textarea", { class: "request-field request-field-new", rows: 2, value: req, placeholder: "Уточнения",
-        onchange: (e) => { req = e.target.value.trim(); onRequest(req); } }));
+      wrap.append(requestField(req, (v) => { req = v; onRequest(req); }, "request-box-new"));
     }
 
     for (const inst of list) {
@@ -2498,6 +2552,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
         // Текст-подсказку («на что смотреть при проверке узла») пока скрыли —
         // делаем версию для опытных мастеров, которым она не нужна. Данные
         // (b.prompt) не трогаем — пригодятся для отдельной версии для новичков.
+        blockIcon(inst.b?.id),
         el("div", { style: "flex:1" },
           el("h2", { style: "margin:0" }, inst.label)),
         el("span", {
@@ -2769,6 +2824,7 @@ function viewLogin() {
     async (form) => {
       await authAction({ action: "login", login: form.login.value.trim(), password: form.password.value });
       await loadSession();
+      applySessionLook();
       location.hash = "/";
       router();
     }, "Войти");
@@ -2783,9 +2839,39 @@ function viewSetup() {
       if (form.password.value !== form.password2.value) throw new Error("Пароли не совпадают");
       await authAction({ action: "bootstrap", name: form.name.value.trim(), login: form.login.value.trim(), password: form.password.value });
       await loadSession();
+      applySessionLook();
       location.hash = "/";
       router();
     }, "Создать");
+}
+
+// Шторка выбора оформления: тема сверху, ниже стили с кружками-образцами
+// цветов. Выбор сразу применяется ко всему приложению и сохраняется за
+// аккаунтом; если сервер не ответил — вид всё равно остаётся на этом телефоне.
+function openLookSheet() {
+  const body = el("div", {});
+  const choose = (patch) => {
+    applyLook({ ...currentLook, ...patch });
+    if (SESSION) SESSION.look = currentLook;
+    draw();
+    authAction({ action: "setLook", ...currentLook }).catch(() => toast("Не удалось сохранить — вид останется только на этом телефоне"));
+  };
+  const draw = () => body.replaceChildren(
+    el("div", { class: "sheet-section" },
+      el("div", { class: "sheet-section-title" }, "Тема"),
+      el("div", { class: "segmented" }, THEME_OPTIONS.map(([v, label]) => el("button", {
+        type: "button", class: currentLook.theme === v ? "active" : "", onclick: () => choose({ theme: v }),
+      }, label)))),
+    el("div", { class: "sheet-section" },
+      el("div", { class: "sheet-section-title" }, "Стиль"),
+      el("div", { class: "rows" }, STYLE_PRESETS.map((p) => el("button", {
+        type: "button", class: "row look-row", onclick: () => choose({ style: p.id }),
+      },
+        el("span", { class: "look-swatch" }, p.sw.map((c) => el("span", { style: `background:${c}` }))),
+        el("span", { style: "flex:1;min-width:0" }, el("b", {}, p.name), el("span", { class: "small muted look-note" }, p.note)),
+        currentLook.style === p.id ? el("span", { class: "row-check", html: ICON_CHECK }) : null)))));
+  draw();
+  openSheet("Оформление", body);
 }
 
 function viewProfile() {
@@ -2816,6 +2902,9 @@ function viewProfile() {
       el("div", { class: "rows rows-separate", style: "margin-bottom:12px" },
         homeLink("Выполненные работы", "/profile/report", ICONS.report),
         SESSION?.role === "admin" ? homeLink("Админка", "/admin", ICONS.admin) : null,
+        el("button", { class: "row profile-menu-action", type: "button", onclick: openLookSheet },
+          el("span", { class: "row-icon", html: ICON_SVG('<circle cx="12" cy="12" r="9"/><circle cx="7.8" cy="10.5" r="1.2"/><circle cx="12" cy="7.5" r="1.2"/><circle cx="16.2" cy="10.5" r="1.2"/><path d="M12 21a2.2 2.2 0 0 1 0-4.4h1.6a3.4 3.4 0 0 0 3.4-3.4"/>') }),
+          el("span", { style: "flex:1" }, "Оформление"), el("span", { class: "chev" }, "›")),
         el("button", { class: "row profile-menu-action", type: "button", onclick: changePassword },
           el("span", { class: "row-icon", html: ICON_SVG('<rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>') }),
           el("span", { style: "flex:1" }, "Сменить пароль"), el("span", { class: "chev" }, "›"))),

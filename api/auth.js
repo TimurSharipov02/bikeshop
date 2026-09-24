@@ -6,10 +6,14 @@ import { redis, readBody, hashPassword, verifyPassword, getSession, setSessionCo
 
 const KEY = "vella:users";
 const loadUsers = async (r) => (await r.get(KEY)) || { users: [] };
-const publicUser = (u) => ({ id: u.id, login: u.login, name: u.name, role: u.role, commissionPercent: u.commissionPercent || 0 });
+const publicUser = (u) => ({ id: u.id, login: u.login, name: u.name, role: u.role, commissionPercent: u.commissionPercent || 0, look: u.look || null });
+// Оформление (Профиль → Оформление) — за учётной записью, а не за телефоном:
+// мастер видит свой вид на любом устройстве. Список — как STYLE_PRESETS в web/app.js.
+const LOOK_STYLES = ["aero", "calm", "soft", "workshop", "graphite", "paper"];
+const LOOK_THEMES = ["auto", "light", "dark"];
 
-export default async function handler(req, res) {
-  const r = redis();
+// r — хранилище; параметром для тестов (tests/auth.test.js), как в других ручках.
+export default async function handler(req, res, r = redis()) {
   if (!r) return res.status(503).json({ error: "storage not configured" });
 
   if (req.method === "GET") {
@@ -70,6 +74,17 @@ export default async function handler(req, res) {
       await r.set(KEY, store);
       setSessionCookie(res, { uid: u.id, role: u.role, authVersion: u.authVersion });
       return res.status(200).json({ ok: true });
+    }
+
+    if (body.action === "setLook") {
+      const s = getSession(req);
+      const u = s && store.users.find((x) => x.id === s.uid && x.active);
+      if (!u) return res.status(401).json({ error: "нужно войти" });
+      if (!LOOK_STYLES.includes(body.style) || !LOOK_THEMES.includes(body.theme))
+        return res.status(400).json({ error: "неизвестное оформление" });
+      u.look = { style: body.style, theme: body.theme };
+      await r.set(KEY, store);
+      return res.status(200).json({ ok: true, look: u.look });
     }
 
     return res.status(400).json({ error: "неизвестное действие" });
