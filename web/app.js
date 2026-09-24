@@ -999,6 +999,7 @@ const ICON_SVG = (inner) =>
 // символов ✎/✕ из системного шрифта, которые на разных устройствах
 // выглядят по-разному и не в стиле остальных SVG-иконок приложения.
 const ICON_EDIT = ICON_SVG('<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>');
+const ICON_PHONE = ICON_SVG('<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.4 19.4 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7l.6 3a2 2 0 0 1-.6 1.8L7.3 10a16 16 0 0 0 6.7 6.7l1.5-1.8a2 2 0 0 1 1.8-.6l3 .6a2 2 0 0 1 1.7 2Z"/>');
 const ICON_CLOSE = ICON_SVG('<path d="M18 6 6 18"/><path d="M6 6l12 12"/>');
 const ICON_CHECK = ICON_SVG('<path d="M20 6 9 17l-5-5"/>');
 const ICON_TRASH = ICON_SVG('<path d="M4 7h16"/><path d="M9 7V4.5A1.5 1.5 0 0 1 10.5 3h3A1.5 1.5 0 0 1 15 4.5V7"/><path d="M6 7l.8 12a2 2 0 0 0 2 1.9h6.4a2 2 0 0 0 2-1.9L18 7"/><path d="M10 11v6"/><path d="M14 11v6"/>');
@@ -4135,15 +4136,15 @@ function viewClientDetails(phone, initialBike = "") {
     const target = clientHref(newPhone);
     if (location.hash === `#${target}`) router(); else go(target);
   };
-  return [bar(client.name || "Клиент", "/admin/clients"),
+  return [bar(client.name || "Клиент", "/admin/clients",
+      el("button", { class: "edit-btn", style: iconBtnStyle,
+        "aria-label": "Редактировать клиента", title: "Редактировать клиента", html: ICON_EDIT,
+        onclick: () => openClientEditor(client, onEdit) })),
     el("main", { class: "wrap" },
-      el("div", { class: "admin-person-card" },
-        el("div", { class: "admin-person-head" },
-          el("b", { style: "min-width:0;overflow-wrap:anywhere" }, client.name || "Без имени"),
-          el("button", { class: "client-edit-icon", style: iconBtnStyle,
-            "aria-label": "Редактировать клиента", title: "Редактировать клиента", html: ICON_EDIT,
-            onclick: () => openClientEditor(client, onEdit) })),
-        el("div", { class: "small muted" }, applyPhoneMask(phone))),
+      el("div", { class: "admin-person-card client-phone-card" },
+        el("span", { class: "client-phone-number" }, applyPhoneMask(phone)),
+        el("a", { class: "client-call-btn", href: `tel:${phone.replace(/[^\d+]/g, "")}`,
+          "aria-label": `Позвонить ${applyPhoneMask(phone)}`, title: "Позвонить", html: ICON_PHONE })),
       el("h2", { class: "client-detail-heading" }, "Обращения"),
       el("div", { class: "client-filter" },
         el("div", { class: "client-filter-select" },

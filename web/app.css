@@ -75,7 +75,11 @@ header.bar .bar-title-lg { font-size:19px; font-weight:700; }
 .admin-tile .chev, .admin-person-head .chev { color:var(--muted); font-size:22px; }
 .admin-person-head { display:flex; align-items:center; gap:8px; margin-bottom:3px; }
 .admin-person-head .chev { margin-left:auto; }
-.admin-person-head .client-edit-icon { margin-left:auto; flex:0 0 auto; }
+.client-phone-card { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.client-phone-number { min-width:0; font-size:24px; font-weight:600; letter-spacing:-.02em; overflow-wrap:anywhere; }
+.client-call-btn { flex:0 0 48px; width:48px; height:48px; display:flex; align-items:center; justify-content:center;
+  color:var(--accent); background:var(--accent-weak); border-radius:var(--radius-sm); }
+.client-call-btn svg { width:23px; height:23px; }
 .client-detail-heading { font-size:17px; margin:20px 0 10px; }
 .client-filter { margin-bottom:12px; }
 .client-filter-select { position:relative; }
