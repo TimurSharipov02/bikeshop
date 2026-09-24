@@ -476,7 +476,6 @@ const ICON_SVG = (inner) =>
 const ICON_EDIT = ICON_SVG('<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>');
 const ICON_CLOSE = ICON_SVG('<path d="M18 6 6 18"/><path d="M6 6l12 12"/>');
 const ICON_CHECK = ICON_SVG('<path d="M20 6 9 17l-5-5"/>');
-const ICON_TRASH = ICON_SVG('<path d="M4 7h16"/><path d="M9 7V4.5A1.5 1.5 0 0 1 10.5 3h3A1.5 1.5 0 0 1 15 4.5V7"/><path d="M6 7l.8 12a2 2 0 0 0 2 1.9h6.4a2 2 0 0 0 2-1.9L18 7"/><path d="M10 11v6"/><path d="M14 11v6"/>');
 const ICONS = {
   prices: ICON_SVG('<path d="M12.6 3H6a2 2 0 0 0-2 2v6.6a2 2 0 0 0 .6 1.4l8.4 8.4a2 2 0 0 0 2.8 0l5.6-5.6a2 2 0 0 0 0-2.8L13 3.6a2 2 0 0 0-1.4-.6Z"/><circle cx="8.5" cy="8.5" r="1.3"/>'),
   admin: ICON_SVG('<path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6l7-3Z"/>'),
@@ -508,24 +507,33 @@ function homeLink(text, hash, icon) {
     el("span", { style: "flex:1" }, text), el("span", { class: "chev" }, "›"));
 }
 
-// Свайп влево на строке списка открывает красную кнопку «Удалить» под ней —
-// как в Почте/Напоминаниях. Открыта всегда только одна строка: свайп другой
-// строки или тап вне списка закрывают предыдущую. onDelete — async, должен
-// вернуть false при неудаче (тогда строка возвращается в закрытое состояние
-// и кнопку можно нажать ещё раз).
+// Свайп влево на строке списка открывает действия под ней — кружок-кнопку с
+// подписью, как в Почте/Телефоне на iOS. Открыта всегда только одна строка:
+// свайп другой строки или тап вне списка закрывают предыдущую. onDelete —
+// async, должен вернуть false при неудаче (тогда строка возвращается в
+// закрытое состояние и кнопку можно нажать ещё раз).
 let openSwipeClose = null;
 function closeOpenSwipe() { const c = openSwipeClose; openSwipeClose = null; if (c) c(); }
 document.addEventListener("pointerdown", (e) => {
   if (openSwipeClose && !e.target.closest(".swipe-row")) closeOpenSwipe();
 }, true);
 
+// Ширина области под свайпом: боковые поля + кружки + зазоры между ними —
+// общая формула для одного действия (swipeToDelete) и нескольких подряд
+// (swipeActions), чтобы дистанция свайпа всегда точно совпадала с тем, что
+// нарисовано под строкой.
+const SWIPE_CIRCLE = 50, SWIPE_GAP = 14, SWIPE_PAD = 15;
+const swipeActionsWidth = (n) => SWIPE_PAD * 2 + SWIPE_CIRCLE * n + SWIPE_GAP * (n - 1);
+
 function swipeToDelete(rowNode, onDelete, label = "Удалить") {
-  const ACTION_W = 88;
+  const ACTION_W = swipeActionsWidth(1);
   const wrap = el("div", { class: "swipe-row" });
-  const action = el("button", { class: "swipe-action" }, label);
+  const action = el("button", { class: "swipe-action-btn warn", "aria-label": label, html: ICON_CLOSE });
+  const bar = el("div", { class: "swipe-actions" },
+    el("div", { class: "swipe-action-col" }, action, el("span", { class: "swipe-action-label" }, label)));
   rowNode.classList.add("swipe-content");
   rowNode.setAttribute("draggable", "false"); // иначе браузер начинает нативный drag ссылки вместо свайпа
-  wrap.append(action, rowNode);
+  wrap.append(bar, rowNode);
 
   let x = 0, dragging = false, locked = null, moved = false, startX = 0, startY = 0, fromX = 0, pid = null;
   const apply = (animate) => {
@@ -537,9 +545,9 @@ function swipeToDelete(rowNode, onDelete, label = "Удалить") {
 
   action.onclick = async (e) => {
     e.preventDefault(); e.stopPropagation();
-    action.disabled = true; action.textContent = "…";
+    action.disabled = true;
     const ok = await onDelete();
-    if (ok === false) { action.disabled = false; action.textContent = label; close(); if (openSwipeClose === close) openSwipeClose = null; }
+    if (ok === false) { action.disabled = false; close(); if (openSwipeClose === close) openSwipeClose = null; }
   };
 
   rowNode.addEventListener("pointerdown", (e) => {
@@ -585,21 +593,23 @@ function swipeToDelete(rowNode, onDelete, label = "Удалить") {
   return wrap;
 }
 
-// Тот же жест, что и swipeToDelete, но открывает несколько узких кнопок-иконок
-// подряд (например правка + удаление), а не одну с текстом — для плотных
-// списков (правка неисправностей в диагностике), где такие кнопки прямо в
-// строке смотрятся слишком мелко и тесно. actions — [{label, onClick, className}].
+// Тот же жест, что и swipeToDelete, но открывает несколько кружков-иконок
+// подряд (например правка + удаление), а не один — для плотных списков
+// (правка неисправностей в диагностике), где такие кнопки прямо в строке
+// смотрятся слишком мелко и тесно. actions — [{label, text, ariaLabel,
+// onClick, className}] (label — иконка кнопки, text — подпись под ней).
 function swipeActions(rowNode, actions) {
-  const ACTION_W = 56;
-  const width = ACTION_W * actions.length;
+  const width = swipeActionsWidth(actions.length);
   const wrap = el("div", { class: "swipe-row" });
   const bar = el("div", { class: "swipe-actions" },
-    actions.map((a) => el("button", {
-      class: `swipe-action-btn ${a.className || ""}`,
-      "aria-label": a.ariaLabel || "Действие",
-      html: a.label,
-      onclick: (e) => { e.preventDefault(); e.stopPropagation(); close(); if (openSwipeClose === close) openSwipeClose = null; a.onClick(); },
-    })));
+    actions.map((a) => el("div", { class: "swipe-action-col" },
+      el("button", {
+        class: `swipe-action-btn ${a.className || ""}`,
+        "aria-label": a.ariaLabel || a.text || "Действие",
+        html: a.label,
+        onclick: (e) => { e.preventDefault(); e.stopPropagation(); close(); if (openSwipeClose === close) openSwipeClose = null; a.onClick(); },
+      }),
+      a.text ? el("span", { class: "swipe-action-label" }, a.text) : null)));
   rowNode.classList.add("swipe-content");
   rowNode.setAttribute("draggable", "false");
   wrap.append(bar, rowNode);
@@ -1663,8 +1673,8 @@ function editableItemRow(it, { onRemove, onSave, refresh, onDiffSet, onDiffQty }
       usesQuantity(it) ? qtyStepper(it.qty, (qty) => onSave(it.code, { qty }), workQuantityLimitOf(it), () => onRemove(it.code)) : null,
       el("span", { class: "price-tag", style: "flex:1" }, rangeText(r))));
   const header = swipeActions(rowContent, [
-    { label: ICON_EDIT, ariaLabel: "Изменить работу", onClick: () => { editingItemCode = isEditing ? null : it.code; refresh(); } },
-    { label: ICON_CLOSE, ariaLabel: "Убрать работу", className: "warn", onClick: () => { if (confirm(`Убрать «${it.name}» из наряда?`)) onRemove(it.code); } },
+    { label: ICON_EDIT, text: "Изменить", ariaLabel: "Изменить работу", onClick: () => { editingItemCode = isEditing ? null : it.code; refresh(); } },
+    { label: ICON_CLOSE, text: "Убрать", ariaLabel: "Убрать работу", className: "warn", onClick: () => { if (confirm(`Убрать «${it.name}» из наряда?`)) onRemove(it.code); } },
   ]);
   const diffs = (it.difficulties || []).length
     ? el("div", { style: "width:100%;margin-top:2px" },
@@ -2558,8 +2568,8 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
           faultNodes.push(el("div", {},
             isAdmin
               ? swipeActions(rowContent, [
-                  { label: ICON_EDIT, ariaLabel: "Изменить работу", onClick: () => { editingThis ? editOverrideFor.delete(editKey) : editOverrideFor.add(editKey); draw(); } },
-                  { label: ICON_CLOSE, ariaLabel: "Удалить работу", className: "warn", onClick: async () => {
+                  { label: ICON_EDIT, text: "Изменить", ariaLabel: "Изменить работу", onClick: () => { editingThis ? editOverrideFor.delete(editKey) : editOverrideFor.add(editKey); draw(); } },
+                  { label: ICON_CLOSE, text: "Удалить", ariaLabel: "Удалить работу", className: "warn", onClick: async () => {
                       if (!confirm(`Убрать «${f.label}» из списка совсем?`)) return;
                       const wasChecked = s.faults.has(i);
                       // Реальный уникальный код (CF-id) — может повторяться на обеих

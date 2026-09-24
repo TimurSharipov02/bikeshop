@@ -157,7 +157,7 @@ header.bar .bar-title-lg { font-size:19px; font-weight:700; }
 /* SVG-иконки в кнопках свайпа (правка/удаление) — вместо символов из
    системного шрифта (✎/✕/🗑), которые на разных устройствах выглядят
    по-разному и грубее остальных иконок. */
-.swipe-action-btn svg, .swipe-action svg { width:19px; height:19px; }
+.swipe-action-btn svg { width:21px; height:21px; }
 
 /* Один общий счётчик для работ, усложнений и запчастей. */
 .qty-stepper { flex:0 0 auto; display:inline-grid; grid-template-columns:36px minmax(24px,auto) 36px;
@@ -213,26 +213,22 @@ header.bar .bar-title-lg { font-size:19px; font-weight:700; }
   text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .toast.show { opacity:1; transform:translate(-50%, 0); }
 
-/* Свайп-удаление строки списка (Почта/Напоминания): красная кнопка спрятана
-   под строкой, строка едет по X поверх неё. Открытый край кнопок закруглён
-   в тон остальному интерфейсу (карточки/пилюли всюду скруглены) — плоский
-   прямоугольник без скругления смотрелся инородно, не по-нативному. */
+/* Свайп влево на строке списка открывает действия под ней — не сплошным
+   цветным прямоугольником во всю высоту строки, а отдельными кружками с
+   подписью под каждым (как быстрые действия в Почте/Телефоне на iOS):
+   узнаваемее жест и не ощущается инородным блоком, прилепленным к строке. */
 .swipe-row { position:relative; overflow:hidden; }
 .swipe-content { position:relative; z-index:1; background:var(--card); touch-action:pan-y;
   -webkit-user-drag:none; user-select:none; -webkit-user-select:none; }
-.swipe-action { position:absolute; top:0; right:0; bottom:0; width:88px; border:0;
-  border-radius:0 var(--radius-sm) var(--radius-sm) 0;
-  min-height:0; padding:0; background:var(--warn); color:var(--on-accent); font-size:14px; font-weight:600; cursor:pointer; }
-
-/* То же, но несколько узких кнопок-иконок подряд (правка + удаление) вместо
-   одной с текстом — для строк, где эти кнопки раньше жили прямо в строке и
-   смотрелись мелко и тесно. */
-.swipe-actions { position:absolute; top:0; right:0; bottom:0; display:flex; }
-.swipe-action-btn { width:56px; border:0; border-radius:0; min-height:0; padding:0;
-  display:flex; align-items:center; justify-content:center; font-size:19px; cursor:pointer;
-  background:var(--fill); color:var(--ink); }
-.swipe-action-btn:last-child { border-radius:0 var(--radius-sm) var(--radius-sm) 0; }
+.swipe-actions { position:absolute; top:0; right:0; bottom:0; display:flex;
+  align-items:center; justify-content:flex-end; gap:14px; padding:0 15px; }
+.swipe-action-col { display:flex; flex-direction:column; align-items:center; gap:5px; flex:0 0 auto; }
+.swipe-action-btn { width:50px; height:50px; flex:0 0 auto; border:0; border-radius:50%; min-height:0;
+  padding:0; display:flex; align-items:center; justify-content:center; cursor:pointer;
+  background:var(--fill); color:var(--ink); box-shadow:none; transition:opacity .15s ease; }
 .swipe-action-btn.warn { background:var(--warn); color:var(--on-accent); }
+.swipe-action-btn:disabled { opacity:.5; }
+.swipe-action-label { font-size:11px; color:var(--muted); white-space:nowrap; }
 
 /* статус обращения — цвет для быстрого сканирования списка */
 .tag.tag-new     { background:var(--fill); color:var(--muted); }
