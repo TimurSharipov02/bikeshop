@@ -13,6 +13,9 @@
 //                 кэш серверных справочников (остатки, работы, мастера).
 //    pricing.js — общая формула цены работы (используется и тут, и в
 //                 выгрузке для 1С).
+//    order-calc.js — цена/время работы и статус заявки (готово/ждёт
+//                 запчасть): чистые функции, покрыты юнит-тестами напрямую
+//                 (tests/order-calc.test.js), без браузера.
 //    app.js (этот файл) — роутер и все экраны (view*): строят DOM из
 //                 данных store.js и примитивов dom.js.
 //
@@ -28,6 +31,11 @@
 import { itemWorkValue } from "./pricing.js";
 import { reportEntries } from "./report-entries.js";
 import { app, money, iconBtnStyle, toast, closeAllSheets, openSheet, el, bar } from "./dom.js";
+import {
+  quantityModeOf, usesQuantity, repeatsWholeItem, WORK_INSTANCE_LIMIT, WORK_QUANTITY_LIMIT,
+  instanceLimitOf, workQuantityLimitOf, itemRange, itemMinutes, orderRange, orderRangeAll, orderMinutes,
+  orderAllDone, orderWaitingForPart, orderPausedForPart, waitingLast, orderWaitingLast, customFaultRange,
+} from "./order-calc.js";
 import {
   dirty, setInSubScreen,
   SESSION, NEEDS_SETUP, authAction, loadSession, logout,
@@ -75,20 +83,6 @@ const partBlockIdOf = (it) => {
   return blockIdOf(it.code);
 };
 
-const quantityModeOf = (x) => {
-  if (["single", "instances", "quantity"].includes(x?.quantityMode)) return x.quantityMode;
-  return "single";
-};
-// И одинаковые экземпляры, и общее количество живут одной строкой и имеют
-// счётчик. Разница в расчёте: экземпляр повторяет всю работу целиком, а
-// общее количество умножает только саму операцию (например, несколько спиц).
-const usesQuantity = (x) => ["instances", "quantity"].includes(quantityModeOf(x));
-const repeatsWholeItem = (x) => quantityModeOf(x) === "instances";
-const WORK_INSTANCE_LIMIT = 5;
-const WORK_QUANTITY_LIMIT = 64;
-const instanceLimitOf = (x) => quantityModeOf(x) === "instances" ? WORK_INSTANCE_LIMIT : 0;
-const workQuantityLimitOf = (x) => repeatsWholeItem(x) ? (x.maxInstances || WORK_INSTANCE_LIMIT) : WORK_QUANTITY_LIMIT;
-
 const yy = () => String(new Date().getFullYear()).slice(2);
 // Локальный счётчик одинаков на двух устройствах, поэтому для новых записей
 // используем случайный ключ. Старые номера и ссылки на них сохраняются.
@@ -99,63 +93,11 @@ const nextOrderNumber = () => `V${yy()}-${uniqueSuffix()}`;
 const nextBikeKey = (_d, phone) => `${phone}#${uniqueSuffix()}`;
 
 // ---------------------------- расчёт цен ------------------------------------
+//
+// itemRange/itemMinutes/orderRange и статус заявки (готово/ждёт запчасть) —
+// в web/order-calc.js: чистые функции без DOM, проверяются юнит-тестами
+// напрямую (см. tests/order-calc.test.js), без браузера.
 
-// qty у работы и у каждого усложнения — сколько раз это сделано (несколько
-// колёс, несколько спиц и т.п.); значимо только когда у работы/усложнения
-// стоит галочка «несколько», иначе всегда 1 и ни на что не влияет.
-const partsCost = (parts) => (parts || []).reduce((s, p) => s + (p.price || 0) * (p.qty || 1), 0);
-function itemRange(it) {
-  const qty = it.qty || 1;
-  const wholeItemQty = repeatsWholeItem(it) ? qty : 1;
-  const base = (it.workPrice || 0) * qty + ((it.partsPrice || 0) + partsCost(it.parts)) * wholeItemQty;
-  let min = base, max = base;
-  for (const d of it.difficulties || []) {
-    const amt = (d.add || 0) * (d.qty || 1) * wholeItemQty;
-    if (d.state === "yes") { min += amt; max += amt; }
-    else if (d.state === "unknown") max += amt;
-  }
-  return { min, max };
-}
-
-// Ориентировочное время работы с учётом отмеченных трудностей (будет/неизвестно
-// тоже добавляют время, как и цену — на «неизвестно» берём время по максимуму).
-function itemMinutes(it) {
-  const qty = it.qty || 1;
-  const wholeItemQty = repeatsWholeItem(it) ? qty : 1;
-  let m = (it.estimateMinutes || 0) * qty;
-  for (const d of it.difficulties || []) {
-    if (d.state === "yes" || d.state === "unknown") m += (d.addMinutes || 0) * (d.qty || 1) * wholeItemQty;
-  }
-  return m;
-}
-const orderRange = (o) =>
-  o.items.filter((i) => i.agreed).reduce(
-    (a, it) => { const r = itemRange(it); return { min: a.min + r.min, max: a.max + r.max }; },
-    { min: 0, max: 0 });
-// Все согласованные работы отмечены готовыми — заявка фактически готова к
-// выдаче, даже если статус в базе всё ещё «взята в работу» (отдельной
-// стадии для этого больше нет). Используется и на самом экране «Ремонт»
-// (когда включать «Выдать клиенту»), и в списке обращений (какой тег
-// показать).
-const orderAllDone = (o) => {
-  const agreed = o.items.filter((i) => i.agreed);
-  return agreed.length > 0 && agreed.length === o.items.length && agreed.every((i) => i.done);
-};
-// Хотя бы одна согласованная и ещё не готовая работа помечена «ждёт
-// запчасть» (см. openRepairSheet) — заявка фактически стоит, даже если
-// статус в базе всё ещё «взята в работу»: отдельной стадии для этого нет,
-// это только отображаемый тег (см. orderStatusTag), как и «Готово к выдаче».
-const orderWaitingForPart = (o) => o.items.some((i) => i.agreed && !i.done && i.waitingForPart);
-const orderPausedForPart = (o) => o.items.length > 0 &&
-  o.items.every((i) => i.agreed && (i.done || i.waitingForPart)) && orderWaitingForPart(o);
-// Встали, ждём деталь — работа пока не актуальна, не должна мешать сканировать
-// список того, что реально ещё предстоит сделать: опускаем её в конец
-// (sort стабильный, порядок остального не трогает).
-const waitingLast = (a, b) => (a.waitingForPart && !a.done ? 1 : 0) - (b.waitingForPart && !b.done ? 1 : 0);
-// То же самое, но для списка обращений целиком (главный экран) — заявка,
-// которая стоит из-за запчасти, не должна закрывать собой те, что можно
-// делать прямо сейчас.
-const orderWaitingLast = (a, b) => (orderWaitingForPart(a) ? 1 : 0) - (orderWaitingForPart(b) ? 1 : 0);
 // Пункт наряда неделим — его делает один мастер целиком, от начала до конца
 // (qty > 1, если стоит «несколько», влияет только на цену/время, не на то,
 // сколько человек его выполняли). Если работу реально нужно поделить между
@@ -172,25 +114,14 @@ const completionsSummary = (it) => it.doneBy?.masterName || "";
 // другом на практике исключены, без необходимости смотреть на весь список
 // позиций заявки.
 const instanceCode = (base) => `${base}~${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-// До согласования ничего ещё не отмечено agreed — считаем по всему списку целиком.
-const orderRangeAll = (o) =>
-  o.items.reduce((a, it) => { const r = itemRange(it); return { min: a.min + r.min, max: a.max + r.max }; }, { min: 0, max: 0 });
 const rangeText = (r) => (r.min === r.max ? money(r.min) : `${money(r.min)} – ${money(r.max)}`);
 // Компактный вид предварительной цены: вместо тяжёлой вилки «600–1 200 ₽»
 // показываем базовую сумму и знак «+», если возможны усложнения.
 const rangePlusText = (r) => r.min === r.max ? money(r.min) : `${Number(r.min || 0).toLocaleString("ru-RU")}+ ₽`;
-// Ориентировочное время — не для мастера в интерфейсе наравне с ценой, а тихой строкой для клиента.
-const orderMinutes = (o, onlyAgreed) =>
-  o.items.filter((i) => !onlyAgreed || i.agreed).reduce((s, it) => s + itemMinutes(it), 0);
 function minutesText(m) {
   if (!m) return null;
   const h = Math.floor(m / 60), mm = m % 60;
   return "ориентировочно " + (h ? `${h} ч${mm ? " " + mm + " мин" : ""}` : `${mm} мин`);
-}
-// То же для неисправности, заведённой админом вручную (цена лежит в ней самой).
-function customFaultRange(f) {
-  const base = f.price || 0;
-  return { min: base, max: base };
 }
 
 // Неисправность, заведённая администратором вручную (без кода .proc-процедуры) —
