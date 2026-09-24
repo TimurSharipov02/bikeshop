@@ -843,7 +843,7 @@ const routes = [
   [/^\/admin$/, adminOnly(viewAdmin)],
   [/^\/admin\/masters$/, adminOnly(viewMasters)],
   [/^\/admin\/clients$/, adminOnly(viewClients)],
-  [/^\/admin\/clients\/([^/]+)\/bikes\/([^/]+)$/, adminOnly((m) => viewClientBike(decodeURIComponent(m[1]), decodeURIComponent(m[2])))],
+  [/^\/admin\/clients\/([^/]+)\/bikes\/([^/]+)$/, adminOnly((m) => viewClientDetails(decodeURIComponent(m[1]), decodeURIComponent(m[2])))],
   [/^\/admin\/clients\/([^/]+)$/, adminOnly((m) => viewClientDetails(decodeURIComponent(m[1])))],
   [/^\/admin\/reports$/, adminOnly(viewAllMastersReport)],
   [/^\/admin\/reports\/([^/]+)$/, adminOnly((m) => masterReportScreen(m[1], "/admin/reports"))],
@@ -4092,7 +4092,6 @@ function viewClients() {
 }
 
 const clientHref = (phone) => `/admin/clients/${encodeURIComponent(phone)}`;
-const bikeHref = (phone, number) => `${clientHref(phone)}/bikes/${encodeURIComponent(number)}`;
 
 function clientCard(c) {
   const db = loadDB();
@@ -4121,12 +4120,16 @@ function clientOrderRows(orders, db) {
       }));
 }
 
-function viewClientDetails(phone) {
+function viewClientDetails(phone, initialBike = "") {
   const db = loadDB();
   const client = db.clients.find((c) => c.phone === phone);
   if (!client) return [bar("Клиент", "/admin/clients"), el("main", { class: "wrap" }, emptyState("Клиент не найден."))];
   const bikes = db.bikes.filter((b) => b.ownerPhone === phone);
   const orders = db.orders.filter((o) => o.clientPhone === phone);
+  const orderList = el("div", {});
+  const showOrders = (bikeNumber) => orderList.replaceChildren(clientOrderRows(
+    bikeNumber ? orders.filter((o) => o.bikeNumber === bikeNumber) : orders, db));
+  showOrders(bikes.some((b) => b.number === initialBike) ? initialBike : "");
   const onEdit = (newPhone) => {
     if (!newPhone) return go("/admin/clients");
     const target = clientHref(newPhone);
@@ -4138,24 +4141,15 @@ function viewClientDetails(phone) {
         el("div", { class: "admin-person-head" }, el("b", {}, client.name || "Без имени")),
         el("div", { class: "small muted" }, applyPhoneMask(phone)),
         el("button", { class: "small", style: "margin-top:12px", onclick: () => openClientEditor(client, onEdit) }, "Редактировать клиента")),
-      el("h2", { class: "client-detail-heading" }, "Велосипеды"),
-      bikes.length ? el("div", { class: "list", style: "gap:10px" }, bikes.map((bike) =>
-        el("a", { class: "admin-person-card card-link", href: `#${bikeHref(phone, bike.number)}` },
-          el("div", { class: "admin-person-head" }, el("b", {}, bikeLabel(bike) || "Велосипед (без названия)"), el("span", { class: "chev" }, "›")),
-          el("div", { class: "small muted" }, `${orders.filter((o) => o.bikeNumber === bike.number).length} обращ.`))))
-        : el("p", { class: "small muted" }, "Велосипедов пока нет."),
-      el("h2", { class: "client-detail-heading" }, "Все обращения"),
-      clientOrderRows(orders, db))];
-}
-
-function viewClientBike(phone, number) {
-  const db = loadDB();
-  const bike = db.bikes.find((b) => b.number === number && b.ownerPhone === phone);
-  if (!bike) return [bar("Велосипед", clientHref(phone)), el("main", { class: "wrap" }, emptyState("Велосипед не найден."))];
-  return [bar(bikeLabel(bike) || "Велосипед", clientHref(phone)),
-    el("main", { class: "wrap" },
-      el("h2", { class: "client-detail-heading" }, "Обращения по велосипеду"),
-      clientOrderRows(db.orders.filter((o) => o.clientPhone === phone && o.bikeNumber === number), db))];
+      el("h2", { class: "client-detail-heading" }, "Обращения"),
+      el("div", { class: "client-filter" },
+        el("label", { for: "client-bike-filter" }, "Велосипед"),
+        el("div", { class: "client-filter-select" },
+          el("select", { id: "client-bike-filter",
+            onchange: (e) => showOrders(e.target.value) },
+            el("option", { value: "", selected: !bikes.some((b) => b.number === initialBike) }, "Все велосипеды"),
+            bikes.map((bike) => el("option", { value: bike.number, selected: bike.number === initialBike }, bikeLabel(bike) || "Велосипед (без названия)"))))),
+      orderList)];
 }
 
 // Форма правки клиента — телефон тоже редактируемый (используется как ключ
