@@ -1546,7 +1546,9 @@ function partsEditor(parts, stock, onChange, blockId, sideAction = null) {
     const query = q.value.trim().toLowerCase();
     // Пустая рамка без строк смотрится как лишняя полоска — прячем блок
     // целиком, когда показывать нечего, а не просто очищаем содержимое.
-    if (!query) { results.style.display = "none"; results.replaceChildren(); return; }
+    // Подсказки — только с трёх символов: по одной-двум буквам совпадает
+    // почти весь склад, список бесполезно мелькает при каждом нажатии.
+    if (query.replace(/\s+/g, "").length < 3) { results.style.display = "none"; results.replaceChildren(); return; }
     results.style.display = "";
     if (!stock.length) { results.replaceChildren(el("p", { class: "small muted", style: "padding:10px 0" }, "Остатки пусты.")); return; }
     const scoped = wide ? stock : stock.filter((s) => s.group === blockId);
