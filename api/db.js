@@ -44,6 +44,12 @@ export default async function handler(req, res) {
         else if (clientPhone) {
           data.clients = data.clients.filter((c) => c.phone !== clientPhone);
           data.bikes = data.bikes.filter((b) => b.ownerPhone !== clientPhone);
+          // Каскад по явному запросу: вместе с клиентом — его обращения,
+          // кроме выданных (оплаченных): по ним посчитан заработок мастеров
+          // и выгрузка в 1С, их нельзя удалять и поодиночке (см. выше).
+          if (body.withOrders) {
+            data.orders = data.orders.filter((o) => o.clientPhone !== clientPhone || o.status === "выдан" || o.handedOverAt);
+          }
         } else data.bikes = data.bikes.filter((b) => b.number !== bikeNumber);
         return data;
       });

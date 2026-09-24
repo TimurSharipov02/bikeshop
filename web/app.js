@@ -29,11 +29,12 @@
 // ============================================================================
 
 import { itemWorkValue } from "./pricing.js";
+import { matchesQuery } from "./search.js";
 import { reportEntries } from "./report-entries.js";
 import { app, money, iconBtnStyle, toast, closeAllSheets, openSheet, el, bar } from "./dom.js";
 import {
   quantityModeOf, usesQuantity, repeatsWholeItem, WORK_INSTANCE_LIMIT, WORK_QUANTITY_LIMIT,
-  instanceLimitOf, workQuantityLimitOf, itemRange, itemMinutes, orderRange, orderRangeAll, orderMinutes,
+  instanceLimitOf, workQuantityLimitOf, itemRange, itemPartsCost, itemMinutes, orderRange, orderRangeAll, orderMinutes,
   orderAllDone, orderWaitingForPart, orderPausedForPart, orderHasFreeWork, waitingLast, orderWaitingLast, customFaultRange,
 } from "./order-calc.js";
 import {
@@ -184,17 +185,26 @@ const maskedDigits = (value) => (value || "").replace(/\D/g, "").replace(/^7/, "
 // и сохраняет позицию курсора относительно уже введённых цифр (не просто
 // прыгает в конец, чтобы можно было спокойно поправить середину номера).
 function attachPhoneMask(input, onChange) {
+  // Подсказки из контактов айфона тут не нужны: text + inputmode=tel даёт
+  // ту же цифровую клавиатуру, но iOS реже распознаёт поле как «телефон».
+  input.type = "text";
+  input.inputMode = "tel";
+  input.autocomplete = "off";
   input.addEventListener("input", () => {
     const before = input.value;
     const caret = input.selectionStart ?? before.length;
-    const digitsBeforeCaret = before.slice(0, caret).replace(/\D/g, "").length;
+    // Считаем только цифры самого номера, без кода страны: в маске «+7»
+    // есть всегда, а в набранном тексте его может не быть (первая цифра
+    // в пустое поле) — иначе курсор вставал перед только что набранной.
+    const typedDigits = before.replace(/\D/g, "");
+    const hasCountryCode = typedDigits[0] === "7" || typedDigits[0] === "8";
+    const digitsBeforeCaret = Math.max(0, before.slice(0, caret).replace(/\D/g, "").length - (hasCountryCode ? 1 : 0));
     const value = applyPhoneMask(before);
     input.value = value;
-    let seen = 0, pos = value.length;
-    for (let i = 0; i < value.length; i++) {
-      if (/\d/.test(value[i]) && ++seen === digitsBeforeCaret) { pos = i + 1; break; }
+    let seen = 0, pos = 2; // сразу после «+7»
+    for (let i = 2; i < value.length && seen < digitsBeforeCaret; i++) {
+      if (/\d/.test(value[i]) && ++seen === digitsBeforeCaret) pos = i + 1;
     }
-    if (digitsBeforeCaret === 0) pos = 2; // сразу после «+7»
     input.setSelectionRange(pos, pos);
     onChange(value);
   });
@@ -261,7 +271,7 @@ function openWorkPicker({ existingItems, bikeKind, onBack, onPick, allowDuplicat
       const ql = q.value.trim().toLowerCase();
       const rows = pool
         .filter((p) => allowDuplicates || !existingItems.some((i) => (i.sourceCode || i.code) === p.code))
-        .filter((p) => !ql || p.code.toLowerCase().includes(ql) || p.name.toLowerCase().includes(ql));
+        .filter((p) => !ql || matchesQuery(ql, p.code, p.name));
       if (!rows.length) {
         listBox.replaceChildren(emptyState("Ничего не найдено.", EMPTY_ICON_SEARCH));
         return;
@@ -405,6 +415,7 @@ window.addEventListener("popstate", () => {
   const update = () => {
     const heightDiff = Math.max(0, window.innerHeight - vv.height);
     kbOpen = heightDiff > 50;
+    document.documentElement.classList.toggle("kb-open", kbOpen);
     const offset = kbOpen ? Math.max(0, heightDiff - vv.offsetTop) : 0;
     document.documentElement.style.setProperty("--kb-offset", offset + "px");
   };
@@ -809,7 +820,7 @@ function viewNewOrder() {
         if (!items.length) return null;
         return items.reduce((a, it) => { const r = itemRange(it); return { min: a.min + r.min, max: a.max + r.max }; }, { min: 0, max: 0 });
       },
-      totalText: () => rangeText(orderRangeAll(draft)),
+      totalText: () => ({ range: orderRangeAll(draft), count: draft.items.length }),
       onDone: stepClient,
     });
   }
@@ -835,7 +846,7 @@ function viewNewOrder() {
           ? el("p", { class: "small muted" }, "Найден: " + (ec.name || ec.phone))
           : el("div", {},
               el("label", {}, "Имя"),
-              el("input", { type: "text", value: f.name, oninput: (e) => (f.name = e.target.value) })),
+              el("input", { type: "text", value: f.name, placeholder: "не обязательно", oninput: (e) => (f.name = e.target.value) })),
       );
       drawBike();
     }
@@ -875,7 +886,6 @@ function viewNewOrder() {
     attachPhoneMask(phoneInput, (v) => { f.phone = v; drawClient(); });
 
     const wrap = el("main", { class: "wrap" },
-      el("p", { class: "small muted", style: "margin:0 0 8px" }, "Все поля необязательны — этот шаг можно пропустить."),
       el("div", { class: "card" }, el("h2", {}, "Клиент"),
         el("label", {}, "Телефон"),
         phoneInput,
@@ -1094,10 +1104,11 @@ function viewOrder(number) {
   }
 
   // -- запуск диагностики / процедуры внутри обращения --
-  function subBar(code) {
+  // Без code — только заголовок (экран «Добавить работу» во время ремонта).
+  function subBar(code, title = bike ? bikeLabel(bike) : client?.name || "Обращение") {
     return el("header", { class: "bar" },
       el("button", { class: "back", style: "border:0;background:none", onclick: leaveSubScreen }, "‹"),
-      el("h1", {}, bike ? bikeLabel(bike) : client?.name || "Обращение"), el("span", { class: "sub" }, code));
+      el("h1", {}, title), code ? el("span", { class: "sub" }, code) : null);
   }
   // Работа, отмеченная тут (на приёме), попадает в наряд сразу agreed:true —
   // количество и усложнения настраиваются не тут, а прямо в «Списке работ»
@@ -1137,13 +1148,33 @@ function viewOrder(number) {
     enterSubScreen(refresh);
   }
 
+  // Экран оплаты — пока заглушка: приём оплаты ещё в разработке, отсюда
+  // только выдача велосипеда клиенту (раньше это была кнопка прямо на
+  // экране ремонта). «Назад» возвращает на ремонт, ничего не меняя.
+  function openPayment() {
+    const main = el("main", { class: "wrap" },
+      el("div", { class: "card" },
+        el("h2", {}, "Оплата"),
+        el("p", { class: "muted" }, "Экран оплаты в разработке."),
+        totalRow(orderRange(loadDB().orders.find((o) => o.number === number) || order), 2, "К оплате")));
+    const handOver = () => {
+      editOrder(number, (o) => { o.status = "выдан"; o.occupiedBy = null; o.occupiedByName = ""; o.handedOverAt = new Date().toISOString(); });
+      subScreenExit = () => go("/");
+      leaveSubScreen();
+    };
+    render([subBar(null, "Оплата"), main,
+      el("div", { class: "actions" }, el("div", { class: "actions-inner" },
+        el("button", { class: "btn-ok", onclick: handOver }, "Выдать клиенту")))]);
+    enterSubScreen(refresh);
+  }
+
   // Добавление работ во время ремонта — теми же раскрывающимися блоками,
   // что и при создании наряда. Новые позиции держим локально до «Готово»,
   // чтобы кнопка «назад» действительно отменяла весь незавершённый выбор.
   function openAddWorkBlocks() {
     const host = el("div", {});
     const added = [];
-    render([subBar("Добавить работу"), host]);
+    render([subBar(null, "Добавить работу"), host]);
     enterSubScreen(refresh);
     mountDiagnostics(host, {
       onlyBlocks: bike?.kind === "колесо" ? ["WHL"] : null,
@@ -1195,7 +1226,6 @@ function viewOrder(number) {
         if (!items.length) return null;
         return items.reduce((a, it) => { const r = itemRange(it); return { min: a.min + r.min, max: a.max + r.max }; }, { min: 0, max: 0 });
       },
-      totalText: () => rangeText(orderRangeAll({ items: [...order.items.filter((it) => it.agreed), ...added] })),
       onDone: () => {
         if (added.length) editOrder(number, (o) => {
           for (const draftItem of added) {
@@ -1222,8 +1252,10 @@ function viewOrder(number) {
     // попасть пальцем, а кнопка-трубка справа сразу подсказывает, что тут
     // можно позвонить (не теряется мелким значком сразу после текста).
     order.clientPhone
-      ? el("a", { href: `tel:${order.clientPhone.replace(/[^\d+]/g, "")}`, class: "small muted", style: "display:flex;align-items:center;gap:6px" },
-          el("span", { style: "flex:1" }, [client?.name || order.clientName, order.clientPhone].filter(Boolean).join(" · ")),
+      ? el("a", { href: `tel:${order.clientPhone.replace(/[^\d+]/g, "")}`, class: "client-line" },
+          el("span", { style: "flex:1;min-width:0" },
+            client?.name || order.clientName ? el("b", {}, client?.name || order.clientName) : null,
+            el("span", { class: "muted" }, applyPhoneMask(order.clientPhone))),
           el("span", { class: "call-btn", html: ICON_PHONE }))
       : (client?.name || order.clientName ? el("p", { class: "small muted" }, client?.name || order.clientName) : null),
     order.status === "выдан"
@@ -1257,12 +1289,8 @@ function viewOrder(number) {
         el("button", { class: "btn-primary", onclick: () => openDiagnostics() }, "Пройти диагностику"),
         el("button", { onclick: () => openPicker((pick) => { addItem(pick, "", true); refresh(); }) }, "+ работа")),
       itemList(order, false, { onRemove: removeItem, onSave: saveItemEdit, refresh, onDiffSet, onDiffQty }),
-      order.items.length
-        ? el("div", { class: "card card-flush", style: "margin-top:12px" },
-            el("span", { class: "muted small" }, "Итого клиенту"),
-            el("div", { class: "price-range" }, rangeText(orderRangeAll(order))),
-            minutesText(orderMinutes(order, false)) ? el("div", { class: "small muted", style: "margin-top:4px" }, minutesText(orderMinutes(order, false))) : null)
-        : null,
+      totalRow(orderRangeAll(order), order.items.length, "Итого клиенту",
+        minutesText(orderMinutes(order, false)) ? el("div", { class: "small muted" }, minutesText(orderMinutes(order, false))) : null),
       order.items.length
         ? el("button", { class: "btn-primary", style: "width:100%;margin-top:12px", onclick: () => setStatus("согласование") }, "К согласованию")
         : null));
@@ -1278,10 +1306,8 @@ function viewOrder(number) {
           el("span", { class: "small muted" }, rangeText(r)))));
     });
     body.append(
-      el("div", { class: "card card-flush" },
-        el("span", { class: "muted small" }, "Согласовано на"),
-        el("div", { class: "price-range" }, rangeText(range)),
-        minutesText(orderMinutes(order, true)) ? el("div", { class: "small muted", style: "margin-top:4px" }, minutesText(orderMinutes(order, true))) : null),
+      totalRow(range, 2, "Согласовано на",
+        minutesText(orderMinutes(order, true)) ? el("div", { class: "small muted" }, minutesText(orderMinutes(order, true))) : null),
       el("button", {
         class: "btn-primary", style: "width:100%",
         onclick: () => setStatus("взята в работу", (o) => { o.occupiedBy = null; o.occupiedByName = ""; }),
@@ -1336,10 +1362,8 @@ function viewOrder(number) {
         // Итог по всем согласованным работам — раньше был только на отдельном
         // экране-смете, теперь его увели вместе с самим экраном; тут он нужен
         // так же, звонить клиенту с итоговой суммой можно прямо отсюда.
-        if (order.items.some((i) => i.agreed)) b.append(
-          el("div", { class: "card card-flush", style: "margin-top:12px" },
-            el("span", { class: "muted small" }, "Итого"),
-            el("div", { class: "total" }, rangeText(range))));
+        const total = totalRow(range, order.items.filter((i) => i.agreed).length);
+        if (total) b.append(total);
         return b;
       };
       const body = stockCache ? buildBody(stockCache) : el("div", {}, skeletonRows(2));
@@ -1368,20 +1392,14 @@ function viewOrder(number) {
       // что уже виден выше.
       actions = el("div", { class: "actions" }, el("div", { class: "actions-inner" },
         el("button", { onclick: leaveOrder }, "Выйти"),
-        el("button", {
-          class: "btn-ok", disabled: !allDone,
-          onclick: () => { editOrder(number, (o) => { o.status = "выдан"; o.occupiedBy = null; o.occupiedByName = ""; o.handedOverAt = new Date().toISOString(); }); go("/"); },
-        }, "Выдать клиенту")));
+        el("button", { class: "btn-ok", disabled: !allDone, onclick: openPayment }, "Оплатить")));
     }
   }
 
   if (order.status === "выдан") {
     const agreedItems = order.items.filter((i) => i.agreed);
     const itemsBlock = el("div", { class: "rows", style: "margin-top:8px" }, agreedItems.map(detailedItemRow));
-    main.append(stage("Выдан", itemsBlock,
-      el("div", { class: "card card-flush" },
-        el("span", { class: "muted small" }, "Итого"),
-        el("div", { class: "total" }, rangeText(range)))));
+    main.append(stage("Выдан", itemsBlock, totalRow(range, agreedItems.length)));
   }
 
   return [
@@ -1487,7 +1505,7 @@ function partsEditor(parts, stock, onChange, blockId, sideAction = null) {
   const manualToggle = el("button", {
     class: "small parts-text-action",
     onclick: () => { manualOpen = !manualOpen; drawManual(); },
-  }, "+ запчасть не из остатков");
+  }, "+ запчасть");
 
   // maxQty — необязательный потолок у складской позиции (спицы можно взять
   // 64, а цепь — только одну); переносим на саму запчасть в наряде, чтобы
@@ -1533,7 +1551,7 @@ function partsEditor(parts, stock, onChange, blockId, sideAction = null) {
     const scoped = wide ? stock : stock.filter((s) => s.group === blockId);
     // Уже добавленное не повторяем в результатах — и так видно ниже, в
     // «Добавлено», где у него есть свой счётчик количества с «+».
-    const matched = scoped.filter((s) => !isAdded(s) && (s.name.toLowerCase().includes(query) || (s.sku || "").toLowerCase().includes(query))).slice(0, 40);
+    const matched = scoped.filter((s) => !isAdded(s) && matchesQuery(query, s.name, s.sku)).slice(0, 40);
     const rows = matched.map((s) => el("div", {
       class: "row", style: "cursor:pointer",
       onclick: () => addPart(s),
@@ -1553,7 +1571,6 @@ function partsEditor(parts, stock, onChange, blockId, sideAction = null) {
 }
 
 function itemRow(it, showFacts) {
-  const r = itemRange(it);
   return el("div", { class: "row", style: "cursor:default;align-items:flex-start" },
     el("span", { style: "flex:1" }, it.name,
       usesQuantity(it) && (it.qty || 1) > 1 ? el("span", { class: "small muted" }, ` × ${it.qty}`) : null,
@@ -1561,7 +1578,7 @@ function itemRow(it, showFacts) {
       it.notes ? el("span", { class: "small muted" }, el("br"), it.notes) : null,
       showFacts && it.done && (it.parts.length || it.doneBy) ? el("span", { class: "small muted" }, el("br"),
         [it.parts.length ? it.parts.map(partLabel).join(", ") : null, completionsSummary(it)].filter(Boolean).join(" · ")) : null),
-    el("span", { class: "price-tag" }, rangeText(r)));
+    el("div", { class: "price-row" }, itemPriceTags(it)));
 }
 
 // Счётчик количества (сколько раз сделана работа/усложнение — два колеса,
@@ -1606,6 +1623,23 @@ function addRemoveControl(selected, onChange, ariaLabel, disabled = false) {
 // Как работа считается в наряде. Одинаковые экземпляры повторяют целиком
 // одну работу с общей карточкой и мастером. Новую независимую задачу мастер
 // добавляет повторным выбором этой работы из каталога.
+// Описание работы (что в неё входит) — заводит администратор в каталоге.
+// Обычно нигде не показывается, только в меню усложнений работы. Берём из
+// каталога по коду, чтобы правка описания сразу была видна и в уже
+// созданных нарядах.
+function workDescription(it) {
+  const code = it.sourceCode || it.code;
+  return (repairsCache || []).find((r) => `CF-${r.id}` === code)?.description || "";
+}
+function workDescriptionNode(it) {
+  const text = workDescription(it);
+  return text ? el("p", { class: "work-description" }, text) : null;
+}
+function descriptionField(draft) {
+  return [el("label", { style: "margin-top:8px" }, "Описание"),
+    el("textarea", { rows: 3, value: draft.description || "", placeholder: "Что входит в работу — мастер увидит в меню усложнений",
+      oninput: (e) => (draft.description = e.target.value) })];
+}
 function quantityModeEditor(draft) {
   const fieldName = `quantity-mode-${Math.random().toString(36).slice(2)}`;
   const modes = [
@@ -1662,7 +1696,6 @@ function complicationsEditor(list) {
 // какие усложнения ожидаются (будет/не будет/неизвестно) — сразу видны и
 // настраиваются тут же, прямо в списке, без отдельного экрана-дубликата.
 function editableItemRow(it, { onRemove, onSave, refresh, onDiffSet, onDiffQty }) {
-  const r = itemRange(it);
   const isEditing = editingItemCode === it.code;
   // Имя — на своей строке (растягивается на всю ширину, переносится
   // предсказуемо), цена/счётчик количества — строкой ниже, всегда в одном
@@ -1672,7 +1705,7 @@ function editableItemRow(it, { onRemove, onSave, refresh, onDiffSet, onDiffQty }
     el("span", { style: "width:100%" }, it.name, it.notes ? el("span", { class: "small muted" }, el("br"), it.notes) : null),
     el("div", { style: "display:flex;align-items:center;gap:10px;width:100%" },
       usesQuantity(it) ? qtyStepper(it.qty, (qty) => onSave(it.code, { qty }), workQuantityLimitOf(it), () => onRemove(it.code)) : null,
-      el("span", { class: "price-tag", style: "margin-left:auto" }, rangeText(r))));
+      el("div", { class: "price-row", style: "margin-left:auto" }, itemPriceTags(it))));
   const header = swipeActions(rowContent, [
     { label: ICON_EDIT, ariaLabel: "Изменить работу", onClick: () => { editingItemCode = isEditing ? null : it.code; refresh(); } },
     { label: ICON_CLOSE, ariaLabel: "Убрать работу", className: "warn", onClick: () => { if (confirm(`Убрать «${it.name}» из наряда?`)) onRemove(it.code); } },
@@ -1765,7 +1798,6 @@ function workStatePill(it) {
 // покрупнее, разбивка по составляющим ниже. Раньше была своя, более сжатая
 // вёрстка — то же самое выглядело по-разному в двух соседних стадиях.
 function detailedItemRow(it) {
-  const r = itemRange(it);
   const nameRow = el("div", { style: "display:flex;align-items:center;gap:8px" },
     el("b", { style: "flex:1;min-width:0" }, it.name, usesQuantity(it) && (it.qty || 1) > 1 ? el("span", { class: "small muted" }, ` × ${it.qty}`) : null),
     workStatePill(it));
@@ -1773,8 +1805,7 @@ function detailedItemRow(it) {
     nameRow,
     costBreakdown(it),
     it.notes ? el("p", { class: "small muted", style: "margin-top:4px" }, it.notes) : null,
-    el("div", { class: "report-history-footer" },
-      el("span", { class: "report-history-total" }, rangeText(r))));
+    priceRow(it, "margin-top:16px"));
 }
 
 // Список усложнений — на «Оценке» (прикидка для клиента, ещё не известно
@@ -1796,6 +1827,27 @@ const difficultyMinutes = (d) => (d.addMinutes || 0) * difficultyQty(d);
 // в приёмке, усложнениях или ремонте.
 function controlPriceTag(text, included = true) {
   return el("span", { class: "control-price" + (included ? "" : " excluded") }, text);
+}
+// Цена работы пузырём; если в ней есть запчасти — слева отдельный пузырь
+// запчастей другим цветом, чтобы сразу было видно, что за труд, а что за
+// детали.
+function itemPriceTags(it, included = true) {
+  const parts = itemPartsCost(it);
+  const r = itemRange(it);
+  return [
+    parts > 0 ? el("span", { class: "control-price parts" + (included ? "" : " excluded"), title: "Запчасти" },
+      el("span", { class: "price-icon", html: ICONS.stock }), money(parts)) : null,
+    controlPriceTag(rangeText({ min: r.min - parts, max: r.max - parts }), included),
+  ];
+}
+const priceRow = (it, style = "") => el("div", { class: "price-row", style }, itemPriceTags(it));
+// «Итого» тем же пузырём, что и цены работ, только крупнее. Для наряда из
+// одной работы не показывается — её цена и так видна прямо над ним.
+function totalRow(range, count, label = "Итого", extra = null) {
+  if (count < 2) return null;
+  return el("div", { class: "total-row" },
+    el("div", {}, el("span", { class: "muted" }, label), extra),
+    el("span", { class: "control-price control-price-lg" }, rangeText(range)));
 }
 function difficultyPriceTag(d) {
   return controlPriceTag(`+${money(difficultyAmount(d))}`, d.state === "yes");
@@ -1869,7 +1921,6 @@ function difficultyList(difficulties, onSet, onQty, fact) {
 // то как «+ доп. работа», то как невидимая навсегда, — и тут явный шаг
 // нужен в обоих случаях одинаково.
 function pendingAgreementRow(it, { onAgree, onRemove, onSet, onDiffQty, onParts }, stock) {
-  const r = itemRange(it);
   const box = el("div", { class: "assess" });
   const nameRow = el("div", {
     style: "display:flex;align-items:center;gap:8px;cursor:pointer",
@@ -1877,7 +1928,7 @@ function pendingAgreementRow(it, { onAgree, onRemove, onSet, onDiffQty, onParts 
   },
     el("b", { style: "flex:1;min-width:0" }, it.name, usesQuantity(it) && (it.qty || 1) > 1 ? el("span", { class: "small muted" }, ` × ${it.qty}`) : null),
     el("span", { style: "flex:0 0 auto;color:var(--line);font-size:19px" }, "›"));
-  box.append(nameRow, el("div", { class: "price-tag", style: "margin-top:2px" }, rangeText(r)));
+  box.append(nameRow, priceRow(it, "margin-top:6px"));
   // «Согласовано»/«Убрать» — основное действие для этой карточки, оставляем
   // видимым сразу на строке, не прячем за открытием формы деталей.
   box.append(el("div", { class: "btn-row", style: "margin-top:10px" },
@@ -1929,13 +1980,14 @@ function openPendingSheet(it, stock, { onSet, onDiffQty, onParts }, siblings = [
     if (!hasDiffs) tab = "parts";
     tabs.set(instance.code, tab);
     return el("div", { class: "instance-panel" },
+      workDescriptionNode(instance),
       hasDiffs ? el("div", { class: "segmented", style: "margin-bottom:14px" },
         el("button", { class: tab === "diff" ? "active" : "", onclick: () => { tabs.set(instance.code, "diff"); draw(); } }, "Усложнения"),
         el("button", { class: tab === "parts" ? "active" : "", onclick: () => { tabs.set(instance.code, "parts"); draw(); } }, "Запчасти")) : null,
       tab === "diff"
         ? (hasDiffs ? difficultyList(instance.difficulties, (di, st) => { onSet(instance.code, di, st); draw(); }, (di, qty) => { onDiffQty(instance.code, di, qty); draw(); })
           : el("p", { class: "small muted" }, "Трудностей не ожидается."))
-        : el("div", {}, el("label", { style: "margin-top:0" }, "Запчасти"), partsEditor(instance.parts, stock, () => { onParts(instance.code, instance.parts); draw(); }, partBlockIdOf(instance))));
+        : el("div", {}, partsEditor(instance.parts, stock, () => { onParts(instance.code, instance.parts); draw(); }, partBlockIdOf(instance))));
   }
   function draw() {
     let dots = null, label = null;
@@ -2012,7 +2064,7 @@ function repairItem(it, stock, { onSave, onQty, onRemove, onAdd, onClaim }) {
   const quantityControl = usesQuantity(it) && onQty
     ? qtyStepper(it.qty, onQty, workQuantityLimitOf(it), onRemove ? () => onRemove(it.code) : undefined)
     : null;
-  const priceControl = controlPriceTag(rangeText(itemRange(it)));
+  const priceControl = itemPriceTags(it);
   // Кликабельна вся карточка (имя + сумма + разбивка по составляющим), а не
   // только строка с именем — с разбивкой карточка стала заметно выше, и тап
   // ниже имени должен так же открывать форму, а не проваливаться в никуда.
@@ -2179,11 +2231,11 @@ function openRepairSheet(it, stock, onSave, siblings = [it], { onAdd: onAddInsta
     const tabContent = s.tab === "diff"
       ? diffBox
       : el("div", {},
-          el("label", { style: "margin-top:0" }, "Запчасти"),
           partsEditor(s.parts, stock, () => save(instance, { parts: s.parts }), partBlockIdOf(instance),
             instance.waitingForPart ? null : waitBlock),
           instance.waitingForPart ? waitBlock : null);
     const inner = el("div", {},
+      workDescriptionNode(instance),
       tabs,
       tabContent,
       doneBlock);
@@ -2322,7 +2374,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
   // (catalog/repairs). Старый встроенный каталог процедур (.proc) отсюда
   // убран — он больше нигде не отображается.
   const blockFaults = (b) => repairs.filter((r) => r.group === b.id).map((r) => ({
-    label: r.label, code: `CF-${r.id}`, custom: true, id: r.id,
+    label: r.label, description: r.description || "", code: `CF-${r.id}`, custom: true, id: r.id,
     price: r.price, minutes: r.minutes, complications: r.complications,
     quantityMode: quantityModeOf(r), maxInstances: instanceLimitOf(r),
   }));
@@ -2350,23 +2402,24 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
   // Форма добавления своей неисправности (только у администратора) — цена,
   // время и усложнения задаются сразу тут же, без .proc-процедуры.
   function customFaultForm(blockId) {
-    const draftFa = { label: "", price: 0, minutes: 0, complications: [], quantityMode: "single", maxInstances: 0 };
+    const draftFa = { label: "", description: "", price: 0, minutes: 0, complications: [], quantityMode: "single", maxInstances: 0 };
     const compsBox = complicationsEditor(draftFa.complications);
     return el("div", { class: "card card-flush", style: "margin-top:8px" },
       el("label", {}, "Название неисправности"),
       el("input", { placeholder: "напр. Восьмёрка", oninput: (e) => (draftFa.label = e.target.value) }),
+      descriptionField(draftFa),
       el("div", { style: "display:flex;flex-wrap:wrap;gap:8px;margin-top:8px" },
         el("div", { style: "flex:1;min-width:120px" }, el("label", {}, "Цена, ₽"), el("input", { type: "number", oninput: (e) => (draftFa.price = +e.target.value || 0) })),
         el("div", { style: "flex:1;min-width:120px" }, el("label", {}, "Минуты"), el("input", { type: "number", oninput: (e) => (draftFa.minutes = +e.target.value || 0) }))),
       quantityModeEditor(draftFa),
-      el("label", { style: "margin-top:8px" }, "Усложнения (надбавка к цене и времени, необязательно)"),
+      el("label", { style: "margin-top:8px" }, "Усложнения"),
       compsBox,
       el("div", { class: "btn-row", style: "margin-top:10px" },
         el("button", { class: "btn-primary", onclick: async () => {
           if (!draftFa.label.trim()) return alert("Укажите название");
           const r = await fetch("/api/repairs", {
             method: "POST", headers: { "content-type": "application/json" },
-            body: JSON.stringify({ group: blockId, label: draftFa.label.trim(), price: draftFa.price, minutes: draftFa.minutes,
+            body: JSON.stringify({ group: blockId, label: draftFa.label.trim(), description: draftFa.description, price: draftFa.price, minutes: draftFa.minutes,
               complications: draftFa.complications, quantityMode: draftFa.quantityMode }),
           });
           const j = await r.json().catch(() => ({}));
@@ -2381,24 +2434,25 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
   // Правка своей неисправности (заведённой через «+ своя неисправность»,
   // хранится в catalog/repairs) — то же самое, что и при создании, но PUT.
   function customFaultEditForm(f, onClose) {
-    const draftFa = { label: f.label, price: f.price || 0, minutes: f.minutes || 0,
+    const draftFa = { label: f.label, description: f.description || "", price: f.price || 0, minutes: f.minutes || 0,
       complications: JSON.parse(JSON.stringify(f.complications || [])), quantityMode: quantityModeOf(f), maxInstances: instanceLimitOf(f) };
     const compsBox = complicationsEditor(draftFa.complications);
     return el("div", { class: "card card-flush", style: "margin-top:8px" },
       el("label", {}, "Название неисправности"),
       el("input", { value: draftFa.label, oninput: (e) => (draftFa.label = e.target.value) }),
+      descriptionField(draftFa),
       el("div", { style: "display:flex;flex-wrap:wrap;gap:8px;margin-top:8px" },
         el("div", { style: "flex:1;min-width:120px" }, el("label", {}, "Цена, ₽"), el("input", { type: "number", value: draftFa.price, oninput: (e) => (draftFa.price = +e.target.value || 0) })),
         el("div", { style: "flex:1;min-width:120px" }, el("label", {}, "Минуты"), el("input", { type: "number", value: draftFa.minutes, oninput: (e) => (draftFa.minutes = +e.target.value || 0) }))),
       quantityModeEditor(draftFa),
-      el("label", { style: "margin-top:8px" }, "Усложнения (надбавка к цене и времени, необязательно)"),
+      el("label", { style: "margin-top:8px" }, "Усложнения"),
       compsBox,
       el("div", { class: "btn-row", style: "margin-top:10px" },
         el("button", { class: "btn-primary", onclick: async () => {
           if (!draftFa.label.trim()) return alert("Укажите название");
           const r = await fetch("/api/repairs", {
             method: "PUT", headers: { "content-type": "application/json" },
-            body: JSON.stringify({ id: f.id, label: draftFa.label.trim(), price: draftFa.price, minutes: draftFa.minutes,
+            body: JSON.stringify({ id: f.id, label: draftFa.label.trim(), description: draftFa.description, price: draftFa.price, minutes: draftFa.minutes,
               complications: draftFa.complications, quantityMode: draftFa.quantityMode }),
           });
           const j = await r.json().catch(() => ({}));
@@ -2536,7 +2590,8 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
           // по первой строке текста) — соседние строки списка «плясали».
           // Так счётчик всегда на одной и той же высоте, вровень с первой
           // строкой названия, независимо от того, сколько строк оно занимает.
-          const rowContent = el("div", { class: "row opt priced-control-row work-picker-row", style: "cursor:pointer" },
+          if (priceNode) priceNode.classList.add("tap");
+          const rowContent = el("div", { class: "row opt priced-control-row work-picker-row" },
             // min-width:0 — без него flex-item с длинным неразрывным словом
             // (напр. «Обслуживание», «Переспицовка») не мог сжаться уже
             // своего мин-контента, и цена/счётчик справа вылезали за край
@@ -2552,10 +2607,10 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
           // тут стоял просто onclick в el(), он сработал бы раньше свайпа
           // и отмечал бы галочку даже во время жеста «смахнуть для правки».
           const toggle = () => {
-            // Тап по названию открывает карточку работы. Если работа ещё не
-            // выбрана — сначала добавляем её. Отдельная кнопка справа отвечает
-            // только за добавление/снятие, поэтому повторный тап по строке уже
-            // не удаляет выбранную позицию случайно.
+            // Тап по цене открывает меню усложнений работы. Если работа ещё
+            // не выбрана — сначала добавляем её. Кнопка «+»/счётчик рядом
+            // отвечает только за добавление/снятие; остальная строка
+            // (название) не нажимается, чтобы не открывать меню случайно.
             if (!checked) {
               if (instanceUnavailable) return;
               if (instanceMode) setInstanceCount(1);
@@ -2586,7 +2641,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
             editingThis
               ? customFaultEditForm(f, () => { editOverrideFor.delete(editKey); draw(); })
               : null));
-          rowContent.addEventListener("click", toggle);
+          rowContent.addEventListener("click", (e) => { if (e.target.closest(".control-price")) toggle(); });
         });
         if (faultNodes.length) fb.append(rowsList(faultNodes, true));
         if (SESSION?.role === "admin") {
@@ -2631,9 +2686,8 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
           onclick: () => { miscOpen = true; draw(); },
         }, "+ добавить разовую услугу"));
 
-    if (totalText) wrap.append(el("div", { class: "card" },
-      el("span", { class: "muted small" }, "Итого"),
-      el("div", { class: "price-range" }, totalText())));
+    const total = totalText?.();
+    if (total) wrap.append(el("div", { class: "card" }, totalRow(total.range, total.count)));
 
     host.replaceChildren(wrap,
       el("div", { class: "actions" }, el("div", { class: "actions-inner" },
@@ -2681,6 +2735,13 @@ function authCard(title, hint, fields, onSubmit, submitLabel) {
   return box();
 }
 
+// Строка компактной формы: подпись слева, поле справа, строки — одной
+// группой с тонкими разделителями (как в настройках айфона), а не столбик
+// огромных отдельных полей. suffix — единица измерения справа («%»).
+function formRow(label, control, suffix) {
+  return el("label", { class: "form-row" }, el("span", { class: "form-row-label" }, label), control,
+    suffix ? el("span", { class: "form-row-suffix" }, suffix) : null);
+}
 function field(label, name, type, autocomplete) {
   return [el("label", {}, label), el("input", { name, type: type || "text", autocomplete: autocomplete || "off" })];
 }
@@ -2735,13 +2796,17 @@ function viewProfile() {
   return [
     bar(SESSION?.name || SESSION?.login || "Профиль", "/"),
     el("main", { class: "wrap" },
-      el("div", { class: "rows", style: "margin-bottom:12px" },
+      el("div", { class: "rows rows-separate", style: "margin-bottom:12px" },
         homeLink("Выполненные работы", "/profile/report", ICONS.report),
         SESSION?.role === "admin" ? homeLink("Админка", "/admin", ICONS.admin) : null,
         el("button", { class: "row profile-menu-action", type: "button", onclick: changePassword },
           el("span", { class: "row-icon", html: ICON_SVG('<rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>') }),
           el("span", { style: "flex:1" }, "Сменить пароль"), el("span", { class: "chev" }, "›"))),
-      el("button", { style: "margin-top:16px;border:0;background:none;color:var(--muted);text-decoration:underline;padding:0", onclick: logout }, "Выйти")),
+      el("div", { style: "display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-top:16px" },
+        el("button", { style: "border:0;background:none;color:var(--muted);text-decoration:underline;padding:0;min-height:0", onclick: logout }, "Выйти"),
+        // Время сборки = время публикации на сайте (Vercel собирает при каждом
+        // пуше) — видно, обновилась ли у мастера страница после выкладки.
+        BUILD_TIME ? el("span", { class: "small muted" }, "Версия от " + BUILD_TIME) : null)),
   ];
 }
 
@@ -2978,7 +3043,7 @@ function buildReportTab(masterId, percentOf, tab) {
             el("div", { class: "small muted report-history-lines" },
               rec.lines.map((l) => el("div", {}, "– ", l.name, " ", money(l.earned)))),
             el("div", { class: "report-history-footer" },
-              el("span", { class: "report-history-total" }, money(rec.earned))))))
+              el("span", { class: "control-price" }, money(rec.earned))))))
     );
   };
 
@@ -3170,39 +3235,46 @@ function mastersScreen(list, error) {
     },
   },
     el("h2", {}, "Новый сотрудник"),
-    ...field("Имя", "name"), ...field("Логин", "login"), ...field("Пароль", "password", "password", "new-password"),
-    el("label", {}, "Роль"),
-    el("select", { name: "role" }, el("option", { value: "master" }, "мастер"), el("option", { value: "admin" }, "администратор")),
-    el("label", { style: "margin-top:8px" }, "Процент от стоимости работы"),
-    el("input", { name: "commissionPercent", type: "number", min: 0, max: 100, value: 0 }),
-    el("div", { class: "btn-row", style: "margin-top:12px" }, el("button", { class: "btn-primary", type: "submit" }, "Добавить")));
+    el("div", { class: "form-list" },
+      formRow("Имя", el("input", { name: "name", autocomplete: "off" })),
+      formRow("Логин", el("input", { name: "login", autocomplete: "off", autocapitalize: "off" })),
+      formRow("Пароль", el("input", { name: "password", type: "password", autocomplete: "new-password" })),
+      formRow("Роль", el("select", { name: "role" }, el("option", { value: "master" }, "Мастер"), el("option", { value: "admin" }, "Администратор"))),
+      formRow("Процент", el("input", { name: "commissionPercent", type: "number", min: 0, max: 100, value: 0, inputmode: "numeric" }), "%")),
+    el("button", { class: "btn-primary", type: "submit", style: "width:100%;margin-top:16px" }, "Добавить"));
 
+  // Настройки мастера — по разделам (оплата, пароль, доступ), каждое
+  // действие со своей кнопкой под своим разделом, а не всё в одну кучу.
   const openMasterSettings = (u) => {
     let sheet;
     const controls = el("div", { class: "admin-person-controls" });
 
     controls.append(el("form", {
-      style: "display:flex;gap:8px;margin-top:10px", onsubmit: async (ev) => {
+      class: "sheet-section", onsubmit: async (ev) => {
+        ev.preventDefault();
+        if (await usersApi("PUT", { id: u.id, commissionPercent: ev.target.commissionPercent.value })) { sheet.close(); loadMasters(); toast("Процент обновлён"); }
+      },
+    },
+      el("h3", {}, "Оплата"),
+      el("div", { class: "form-list" },
+        formRow("Процент от работы", el("input", { name: "commissionPercent", type: "number", min: 0, max: 100, value: u.commissionPercent || 0, inputmode: "numeric" }), "%")),
+      el("button", { type: "submit", style: "width:100%;margin-top:10px" }, "Сохранить процент")));
+
+    controls.append(el("form", {
+      class: "sheet-section", onsubmit: async (ev) => {
         ev.preventDefault();
         const password = ev.target.password.value;
         if (!password) return;
         if (await usersApi("PUT", { id: u.id, password })) { sheet.close(); toast("Пароль обновлён"); }
       },
     },
-      el("input", { name: "password", type: "password", placeholder: "новый пароль", style: "flex:1", autocomplete: "new-password" }),
-      el("button", { type: "submit" }, "Сменить")));
+      el("h3", {}, "Пароль"),
+      el("div", { class: "form-list" },
+        formRow("Новый пароль", el("input", { name: "password", type: "password", autocomplete: "new-password" }))),
+      el("button", { type: "submit", style: "width:100%;margin-top:10px" }, "Сменить пароль")));
 
-    controls.append(el("form", {
-      style: "display:flex;gap:8px;align-items:center;margin-top:10px", onsubmit: async (ev) => {
-        ev.preventDefault();
-        if (await usersApi("PUT", { id: u.id, commissionPercent: ev.target.commissionPercent.value })) { sheet.close(); loadMasters(); toast("Процент обновлён"); }
-      },
-    },
-      el("label", { class: "small muted", style: "flex:0 0 auto" }, "Процент от работы"),
-      el("input", { name: "commissionPercent", type: "number", min: 0, max: 100, value: u.commissionPercent || 0, style: "width:70px" }),
-      el("button", { type: "submit" }, "Сохранить")));
-
-    controls.append(el("div", { class: "btn-row", style: "margin-top:10px" },
+    controls.append(el("h3", { class: "sheet-section-title" }, "Доступ"));
+    controls.append(el("div", { class: "btn-row" },
       el("button", { onclick: async () => { if (await usersApi("PUT", { id: u.id, active: !u.active })) { sheet.close(); loadMasters(); } } },
         u.active ? "Отключить" : "Включить"),
       el("button", {
@@ -3289,7 +3361,7 @@ function clientOrderRows(orders, db) {
             el("span", { class: "chev" }, "›")),
           el("div", { class: "small muted" }, formatDateShort(o.handedOverAt || o.createdAt) || "Без даты"),
           el("div", { class: "client-order-footer" }, orderStatusTag(o),
-            el("span", { class: "report-history-total" }, rangeText(orderRangeAll(o)))));
+            el("span", { class: "control-price" }, rangeText(orderRangeAll(o)))));
       }));
 }
 
@@ -3398,12 +3470,17 @@ function openClientEditor(c, onChange) {
   };
 
   const deleteClient = async () => {
-    const usedInOrders = loadDB().orders.some((o) => o.clientPhone === c.phone);
-    const msg = usedInOrders
-      ? `Удалить клиента «${state.name || c.phone}»? У него есть обращения — в них останется только номер телефона, без имени и марки велосипеда.`
-      : `Удалить клиента «${state.name || c.phone}»?`;
+    const own = loadDB().orders.filter((o) => o.clientPhone === c.phone);
+    const paid = own.filter((o) => o.status === "выдан" || o.handedOverAt).length;
+    const open = own.length - paid;
+    const who = `«${state.name || c.phone}»`;
+    const msg = [
+      `Удалить клиента ${who} вместе с его велосипедами?`,
+      open ? `Незакрытые обращения (${open}) тоже удалятся.` : "",
+      paid ? `Выданные (${paid}) останутся в истории работ — по ним посчитан заработок мастеров.` : "",
+    ].filter(Boolean).join(" ");
     if (!confirm(msg)) return;
-    const ok = await deleteClientApi(c.phone);
+    const ok = await deleteClientApi(c.phone, { withOrders: true });
     if (!ok) return alert("Не удалось удалить — нет соединения");
     toast("Клиент удалён");
     sheet.close();
@@ -3531,7 +3608,7 @@ function stockScreen(data, error) {
     if (newItemIndex >= 0) matchedIdx = matchedIdx.filter(({ i }) => i === newItemIndex);
     if (groupFilter) matchedIdx = matchedIdx.filter(({ it }) => (it.group || "") === groupFilter);
     if (onlyProblem) matchedIdx = matchedIdx.filter(({ it }) => stockLevel(it.qty) !== "ok");
-    if (ql) matchedIdx = matchedIdx.filter(({ it }) => it.name.toLowerCase().includes(ql) || (it.sku || "").toLowerCase().includes(ql));
+    if (ql) matchedIdx = matchedIdx.filter(({ it }) => matchesQuery(ql, it.name, it.sku));
     // Проблемные — худшее сверху (нулевые раньше «мало»); иначе просто по алфавиту.
     matchedIdx.sort(onlyProblem ? (a, b) => (a.it.qty || 0) - (b.it.qty || 0) : (a, b) => a.it.name.localeCompare(b.it.name, "ru"));
     const total = matchedIdx.length;

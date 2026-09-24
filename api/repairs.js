@@ -38,6 +38,7 @@ export default async function handler(req, res) {
       id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
       group: String(body.group || "").trim(),
       label,
+      description: String(body.description || "").trim(),
       price: Number(body.price) || 0,
       minutes: Number(body.minutes) || 0,
       complications: sanitizeComplications(body.complications),
@@ -57,6 +58,7 @@ export default async function handler(req, res) {
     const it = store.items.find((x) => x.id === body.id);
     if (!it) return res.status(404).json({ error: "не найдено" });
     if (body.label != null) it.label = String(body.label).trim();
+    if (body.description != null) it.description = String(body.description).trim();
     if (body.price != null) it.price = Number(body.price) || 0;
     if (body.minutes != null) it.minutes = Number(body.minutes) || 0;
     if (body.complications != null) it.complications = sanitizeComplications(body.complications);

@@ -29,7 +29,7 @@ const catalog = {
   diagnosticBlocks,
 };
 
-// Склеить бандл: pricing.js + report-entries.js + order-calc.js + dom.js +
+// Склеить бандл: pricing.js + report-entries.js + order-calc.js + search.js + dom.js +
 // store.js + app.js (без import/export между ними — всё сложено в общую
 // область видимости).
 const strip = (src) =>
@@ -41,6 +41,7 @@ const bundle = [
   strip(readFileSync(p("web/pricing.js"), "utf8")),
   strip(readFileSync(p("web/report-entries.js"), "utf8")),
   strip(readFileSync(p("web/order-calc.js"), "utf8")),
+  strip(readFileSync(p("web/search.js"), "utf8")),
   strip(readFileSync(p("web/dom.js"), "utf8")),
   strip(readFileSync(p("web/store.js"), "utf8")),
   strip(readFileSync(p("web/app.js"), "utf8")),

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   quantityModeOf, usesQuantity, repeatsWholeItem, instanceLimitOf, workQuantityLimitOf,
   WORK_INSTANCE_LIMIT, WORK_QUANTITY_LIMIT,
-  itemRange, itemMinutes, orderRange, orderRangeAll, orderMinutes,
+  itemRange, itemPartsCost, itemMinutes, orderRange, orderRangeAll, orderMinutes,
   orderAllDone, orderWaitingForPart, orderPausedForPart, orderHasFreeWork, waitingLast, orderWaitingLast,
   customFaultRange,
 } from '../web/order-calc.js';
@@ -77,6 +77,16 @@ test('itemRange: difficulty state yes affects both min and max, unknown only max
 test('itemRange: a difficulty\'s own qty (multiple:true) multiplies its addon', () => {
   const it = { workPrice: 0, qty: 1, difficulties: [{ add: 40, qty: 3, state: 'yes' }] };
   assert.deepEqual(itemRange(it), { min: 120, max: 120 });
+});
+
+test('itemPartsCost is the parts share of itemRange, multiplied only for "instances"', () => {
+  const base = { workPrice: 100, partsPrice: 10, parts: [{ price: 5, qty: 2 }], difficulties: [] };
+  assert.equal(itemPartsCost({ ...base, qty: 1 }), 20);
+  assert.equal(itemPartsCost({ ...base, quantityMode: 'quantity', qty: 3 }), 20);
+  assert.equal(itemPartsCost({ ...base, quantityMode: 'instances', qty: 3 }), 60);
+  const it = { ...base, quantityMode: 'instances', qty: 3 };
+  assert.equal(itemRange(it).min - itemPartsCost(it), 300, 'the rest of the range is the work itself');
+  assert.equal(itemPartsCost({ workPrice: 100 }), 0);
 });
 
 // --- itemMinutes ---------------------------------------------------------------

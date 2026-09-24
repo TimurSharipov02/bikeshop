@@ -285,10 +285,13 @@ export async function deleteOrderApi(number) {
 // Тот же принцип — клиента/велосипед тоже нельзя просто убрать локально и
 // дождаться обычного пуша: mergeDB на сервере видит объединение и вернёт
 // удалённую запись обратно на следующем же слиянии.
-export async function deleteClientApi(phone) {
+// withOrders — каскад: заодно удалить незакрытые обращения клиента (при
+// смене номера телефона старая запись удаляется без каскада — её обращения
+// к этому моменту уже переведены на новый номер).
+export async function deleteClientApi(phone, { withOrders = false } = {}) {
   try {
     if (dirty && !(await flushPending())) return false;
-    const r = await fetch("/api/db", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ clientPhone: phone }) });
+    const r = await fetch("/api/db", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ clientPhone: phone, withOrders }) });
     if (!r.ok) return false;
     serverOK = true;
     adopt(await r.json());

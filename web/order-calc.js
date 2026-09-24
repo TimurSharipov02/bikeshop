@@ -20,6 +20,11 @@ export const workQuantityLimitOf = (x) => repeatsWholeItem(x) ? (x.maxInstances 
 // колёс, несколько спиц и т.п.); значимо только когда у работы/усложнения
 // стоит галочка «несколько», иначе всегда 1 и ни на что не влияет.
 export const partsCost = (parts) => (parts || []).reduce((s, p) => s + (p.price || 0) * (p.qty || 1), 0);
+// Сколько из цены работы приходится на запчасти (они не зависят от
+// усложнений, поэтому одно число, а не вилка) — для отдельного пузыря цены
+// запчастей рядом с ценой самой работы.
+export const itemPartsCost = (it) =>
+  ((it.partsPrice || 0) + partsCost(it.parts)) * (repeatsWholeItem(it) ? (it.qty || 1) : 1);
 export function itemRange(it) {
   const qty = it.qty || 1;
   const wholeItemQty = repeatsWholeItem(it) ? qty : 1;
