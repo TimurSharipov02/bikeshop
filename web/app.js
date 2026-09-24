@@ -572,7 +572,7 @@ const orderRange = (o) =>
 // показать).
 const orderAllDone = (o) => {
   const agreed = o.items.filter((i) => i.agreed);
-  return agreed.length > 0 && agreed.every((i) => i.done);
+  return agreed.length > 0 && agreed.length === o.items.length && agreed.every((i) => i.done);
 };
 // Хотя бы одна согласованная и ещё не готовая работа помечена «ждёт
 // запчасть» (см. openRepairSheet) — заявка фактически стоит, даже если
@@ -816,7 +816,7 @@ const statusTag = (status) => el("span", { class: "tag " + (STATUS_TAG_CLASS[sta
 const orderStatusTag = (o) => {
   if (o.status === "взята в работу" && orderAllDone(o)) return el("span", { class: "tag tag-check" }, "Готово к выдаче");
   if (o.status === "взята в работу" && orderWaitingForPart(o)) return el("span", { class: "tag tag-block" }, "Ожидает запчасть");
-  if (o.status === "взята в работу" && !o.occupiedBy) return el("span", { class: "tag tag-new" }, "Свободна");
+  if (o.status === "взята в работу") return el("span", { class: "tag tag-progress" }, "В работе");
   return statusTag(o.status);
 };
 
@@ -1204,7 +1204,7 @@ function orderRow(o, d, onDelete) {
       (client?.name || o.clientName || o.clientPhone) ? el("span", { class: "small muted" }, client?.name || o.clientName || o.clientPhone) : null,
       // Занятость мастером — теперь сама по себе статус («взята в работу»),
       // тут только его имя.
-      o.occupiedByName ? el("span", { class: "small muted" }, " · мастер: " + o.occupiedByName) : null),
+      null),
     orderStatusTag(o));
   return onDelete ? swipeToDelete(row, () => onDelete(o)) : row;
 }
@@ -1413,7 +1413,7 @@ function viewNewOrder() {
         d.orders.push({
           number, clientPhone: p, clientName: f.name.trim(), bikeNumber: bn,
           request: draft.request, diagnosticNotes: [], status: "взята в работу",
-          occupiedBy: SESSION?.id || null, occupiedByName: SESSION?.name || "",
+          occupiedBy: null, occupiedByName: "",
           items: draft.items.map((it) => ({ ...it, agreed: true })), createdAt: new Date().toISOString(),
         });
       });
@@ -1771,7 +1771,7 @@ function viewOrder(number) {
   const jumpToStage = (target) => {
     editOrder(number, (o) => {
       o.status = target;
-      if (target === "взята в работу") { o.occupiedBy = SESSION?.id || null; o.occupiedByName = SESSION?.name || ""; o.handedOverAt = null; }
+      if (target === "взята в работу") { o.occupiedBy = null; o.occupiedByName = ""; o.handedOverAt = null; }
     });
     render(viewOrder(number));
   };
@@ -1811,7 +1811,7 @@ function viewOrder(number) {
         minutesText(orderMinutes(order, true)) ? el("div", { class: "small muted", style: "margin-top:4px" }, minutesText(orderMinutes(order, true))) : null),
       el("button", {
         class: "btn-primary", style: "width:100%",
-        onclick: () => setStatus("взята в работу", (o) => { o.occupiedBy = SESSION?.id || null; o.occupiedByName = SESSION?.name || ""; }),
+        onclick: () => setStatus("взята в работу", (o) => { o.occupiedBy = null; o.occupiedByName = ""; }),
       }, "В работу"));
     main.append(stage("Согласование с клиентом", body));
   }
@@ -1823,13 +1823,7 @@ function viewOrder(number) {
     // забирает один мастер, другой экземпляр другой, см. repairGroupItem/
     // openRepairSheet). occupiedBy остаётся только информационной меткой
     // «кто сюда заходил», ни на что не влияет и ничего не блокирует.
-    if (!order.occupiedBy) {
-      editOrder(number, (o) => { o.occupiedBy = SESSION?.id || null; o.occupiedByName = SESSION?.name || ""; });
-    }
-    const leaveOrder = () => {
-      editOrder(number, (o) => { o.occupiedBy = null; o.occupiedByName = ""; });
-      go("/");
-    };
+    const leaveOrder = () => go("/");
 
     {
       // Склад почти всегда уже в кэше (его подтягивали раньше на этом же
@@ -1854,8 +1848,8 @@ function viewOrder(number) {
               });
               refresh();
             },
-            onQty: (qty) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) x.qty = qty; }); refresh(); },
-            onRemove: (code) => removeItem(code),
+            onQty: (it.claimedBy && it.claimedBy.masterId !== SESSION?.id && SESSION?.role !== "admin") ? null : (qty) => { editOrder(number, (o) => { const x = o.items.find((i) => i.code === it.code); if (x) { x.qty = qty; x.claimedBy ||= { masterId: SESSION?.id, masterName: SESSION?.name }; } }); refresh(); },
+            onRemove: (!it.claimedBy || it.claimedBy.masterId === SESSION?.id || SESSION?.role === "admin") ? (code) => removeItem(code) : null,
           }));
         });
         // Итог по всем согласованным работам — раньше был только на отдельном
@@ -2039,7 +2033,7 @@ function partsEditor(parts, stock, onChange, blockId, sideAction = null) {
         el("button", { onclick: () => { manualOpen = false; drawManual(); } }, "Отмена"))));
   };
   const manualToggle = el("button", {
-    class: "small", style: "border:0;background:none;color:var(--muted);text-decoration:underline;padding:0",
+    class: "small parts-text-action",
     onclick: () => { manualOpen = !manualOpen; drawManual(); },
   }, "+ запчасть не из остатков");
 
@@ -2622,7 +2616,7 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove, onAdd }) {
     el("b", { style: "flex:1;min-width:0" }, it.name),
     workStatePill(it),
     el("span", { style: "flex:0 0 auto;color:var(--line);font-size:19px" }, "›"));
-  const quantityControl = usesQuantity(it)
+  const quantityControl = usesQuantity(it) && onQty
     ? qtyStepper(it.qty, onQty, workQuantityLimitOf(it), onRemove ? () => onRemove(it.code) : undefined)
     : null;
   const priceControl = controlPriceTag(rangeText(itemRange(it)));
@@ -2816,7 +2810,7 @@ function openRepairSheet(it, stock, onSave, siblings = [it], { onAdd: onAddInsta
               onclick: () => { instance.waitingForPart = null; save(instance, { waitingForPart: null }); redrawPanel(instance); },
             }, "Запчасть пришла — продолжить") : null)
         : el("button", {
-            style: "width:100%",
+            class: "small parts-text-action",
             onclick: () => {
               instance.waitingForPart = { masterId: myId, masterName: SESSION?.name || "—", at: new Date().toISOString() };
               save(instance, { waitingForPart: instance.waitingForPart });

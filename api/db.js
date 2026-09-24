@@ -3,11 +3,13 @@
 import { requireUser } from "./_lib.js";
 import { dbRedis, loadDB, updateDB } from "./_atomic-db.js";
 import { mergeDB, MergeConflict } from "./_db-merge.js";
+import { assertWorkAccess } from "./_work-access.js";
 
 export default async function handler(req, res) {
   const r = dbRedis();
   if (!r) return res.status(503).json({ error: "storage not configured" });
-  if (!(await requireUser(req, res))) return;
+  const user = await requireUser(req, res);
+  if (!user) return;
 
   try {
     if (req.method === "GET") {
@@ -17,7 +19,11 @@ export default async function handler(req, res) {
     if (req.method === "PUT" || req.method === "POST") {
       const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
       if (!body.base || !body.next) return res.status(400).json({ error: "Обновите страницу перед сохранением" });
-      const merged = await updateDB(r, (current) => mergeDB(body.base, body.next, current));
+      const merged = await updateDB(r, (current) => {
+        const next = mergeDB(body.base, body.next, current);
+        assertWorkAccess(current, next, user);
+        return next;
+      });
       return res.status(200).json(merged);
     }
     if (req.method === "DELETE") {

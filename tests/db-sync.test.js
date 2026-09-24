@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mergeDB, MergeConflict } from '../api/_db-merge.js';
 import { updateDB, loadDB } from '../api/_atomic-db.js';
 import { itemWorkValue } from '../web/pricing.js';
+import { assertWorkAccess } from '../api/_work-access.js';
 
 const order = () => ({ number: 'V1', items: [
   { code: 'A', done: false, workPrice: 100 },
@@ -33,6 +34,34 @@ test('simultaneous edits to different work items both survive', async () => {
   ]);
   assert.deepEqual(r.read().orders[0].items.map((it) => it.done), [true, true]);
   assert.equal((await loadDB(r)).version, 2);
+});
+
+test('one master cannot alter or delete work claimed by another', () => {
+  const current = db();
+  current.orders[0].status = 'взята в работу';
+  current.orders[0].items[0].agreed = true;
+  current.orders[0].items[0].claimedBy = { masterId: 'one', masterName: 'One' };
+  const other = { uid: 'two', role: 'master' };
+  const edited = copy(current);
+  edited.orders[0].items[0].done = true;
+  assert.throws(() => assertWorkAccess(current, edited, other), MergeConflict);
+  const deleted = copy(current);
+  deleted.orders[0].items.shift();
+  assert.throws(() => assertWorkAccess(current, deleted, other), MergeConflict);
+  const own = copy(current);
+  own.orders[0].items[0].done = true;
+  assert.doesNotThrow(() => assertWorkAccess(current, own, { uid: 'one', role: 'master' }));
+});
+
+test('a stale handover cannot skip a newly added unfinished work item', () => {
+  const base = db();
+  base.orders[0].status = 'взята в работу';
+  base.orders[0].items.forEach((item) => { item.agreed = true; item.done = true; });
+  const current = copy(base), handover = copy(base);
+  current.orders[0].items.push({ code: 'C', name: 'New work', agreed: true, done: false });
+  handover.orders[0].status = 'выдан';
+  const merged = mergeDB(base, handover, current);
+  assert.throws(() => assertWorkAccess(current, merged, { uid: 'one', role: 'master' }), MergeConflict);
 });
 
 test('changes to different fields of one work item both survive', () => {

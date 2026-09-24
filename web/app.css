@@ -96,6 +96,7 @@ header.bar .bar-title-lg { font-size:19px; font-weight:700; }
 .parts-action-row > button, .parts-action-row .part-wait-control button { width:100%; min-width:0; min-height:44px; margin:0; white-space:normal; }
 .part-wait-control { margin-top:16px; }
 .parts-action-row .part-wait-control { margin-top:0; }
+.parts-action-row .parts-text-action { border:0; background:none; color:var(--muted); text-decoration:underline; padding:0; font-weight:normal; }
 .report-history-card { display:block; }
 .report-history-title { display:block; font-size:17px; line-height:1.3; }
 .report-history-date { margin-top:5px; }
