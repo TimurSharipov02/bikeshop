@@ -313,6 +313,16 @@ header.bar .bar-title-lg { font-size:19px; font-weight:700; }
 .sheet-header { display:flex; align-items:center; justify-content:space-between; padding:6px 10px 6px 20px; flex:0 0 auto; }
 .sheet-header h2 { margin:0; font-size:var(--fs-lg); font-weight:700; letter-spacing:-.01em; }
 .sheet-body { padding:0 20px calc(20px + env(safe-area-inset-bottom)); overflow-y:auto; }
+/* Пока открыта клавиатура — шторка ровно на видимую над ней область, а не
+   по высоте содержимого: иначе при каждом вводе в поиск список результатов
+   меняет высоту шторки, её верх вместе с полем прыгает вверх-вниз. */
+.kb-open .sheet { bottom:var(--kb-offset, 0px); max-height:none;
+  height:calc(var(--vv-h, 85vh) - 24px - env(safe-area-inset-top)); }
+.kb-open .sheet .sheet-body { flex:1; padding-bottom:12px; }
+/* Поиск запчастей в шторке прилипает к верху, результаты прокручиваются под ним. */
+.parts-results { margin-top:4px; max-height:260px; overflow-y:auto; }
+.kb-open .parts-results { max-height:none; overflow:visible; }
+.sheet .search-wrap { position:sticky; top:0; z-index:2; background:var(--card); padding:6px 0; margin-top:-6px; }
 
 /* Тост — короткое всплывающее подтверждение действия. */
 .toast { position:fixed; left:50%; bottom:calc(84px + env(safe-area-inset-bottom)); z-index:60;

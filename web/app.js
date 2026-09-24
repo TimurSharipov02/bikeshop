@@ -418,6 +418,7 @@ window.addEventListener("popstate", () => {
     document.documentElement.classList.toggle("kb-open", kbOpen);
     const offset = kbOpen ? Math.max(0, heightDiff - vv.offsetTop) : 0;
     document.documentElement.style.setProperty("--kb-offset", offset + "px");
+    document.documentElement.style.setProperty("--vv-h", vv.height + "px");
   };
   vv.addEventListener("resize", update);
   vv.addEventListener("scroll", () => { if (kbOpen) update(); });
@@ -1538,7 +1539,7 @@ function partsEditor(parts, stock, onChange, blockId, sideAction = null) {
     type: "button", class: "search-clear", html: ICON_CLOSE, style: "display:none",
     onclick: () => { q.value = ""; clearBtn.style.display = "none"; drawResults(); q.focus(); },
   });
-  const results = el("div", { class: "rows", style: "max-height:260px;overflow-y:auto;margin-top:8px" });
+  const results = el("div", { class: "rows parts-results" });
   const widenLink = el("p", { class: "small", style: "margin-top:2px" },
     el("a", { href: "#", onclick: (e) => { e.preventDefault(); wide = true; drawResults(); } }, "Искать среди всех остатков →"));
   const drawResults = () => {
