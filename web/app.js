@@ -999,7 +999,6 @@ const ICON_SVG = (inner) =>
 // символов ✎/✕ из системного шрифта, которые на разных устройствах
 // выглядят по-разному и не в стиле остальных SVG-иконок приложения.
 const ICON_EDIT = ICON_SVG('<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>');
-const ICON_PHONE = ICON_SVG('<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.4 19.4 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7l.6 3a2 2 0 0 1-.6 1.8L7.3 10a16 16 0 0 0 6.7 6.7l1.5-1.8a2 2 0 0 1 1.8-.6l3 .6a2 2 0 0 1 1.7 2Z"/>');
 const ICON_CLOSE = ICON_SVG('<path d="M18 6 6 18"/><path d="M6 6l12 12"/>');
 const ICON_CHECK = ICON_SVG('<path d="M20 6 9 17l-5-5"/>');
 const ICON_TRASH = ICON_SVG('<path d="M4 7h16"/><path d="M9 7V4.5A1.5 1.5 0 0 1 10.5 3h3A1.5 1.5 0 0 1 15 4.5V7"/><path d="M6 7l.8 12a2 2 0 0 0 2 1.9h6.4a2 2 0 0 0 2-1.9L18 7"/><path d="M10 11v6"/><path d="M14 11v6"/>');
@@ -3452,28 +3451,6 @@ function field(label, name, type, autocomplete) {
   return [el("label", {}, label), el("input", { name, type: type || "text", autocomplete: autocomplete || "off" })];
 }
 
-// Форма-карточка, встраиваемая внутрь другого экрана (в отличие от authCard,
-// который сам себе целая страница). При ошибке заменяет сама себя в DOM.
-function formCard(title, hint, fields, onSubmit, submitLabel, error) {
-  let formEl;
-  const submit = async (ev) => {
-    ev.preventDefault();
-    try {
-      await onSubmit(ev.target);
-    } catch (e) {
-      formEl.replaceWith(formCard(title, hint, fields, onSubmit, submitLabel, e.message || "ошибка"));
-    }
-  };
-  formEl = el("form", { class: "card", onsubmit: submit },
-    el("h2", {}, title),
-    hint ? el("p", { class: "small muted" }, hint) : null,
-    error ? el("p", { class: "small", style: "color:var(--warn)" }, error) : null,
-    ...fields,
-    el("div", { class: "btn-row", style: "margin-top:16px" },
-      el("button", { class: "btn-primary", type: "submit" }, submitLabel)));
-  return formEl;
-}
-
 function viewLogin() {
   return authCard("Вход в Veloterra", null,
     [...field("Логин", "login"), ...field("Пароль", "password", "password", "current-password")],
@@ -3502,21 +3479,36 @@ function viewSetup() {
 }
 
 function viewProfile() {
+  const changePassword = () => {
+    const error = el("p", { class: "small", style: "color:var(--warn);display:none" });
+    let sheet;
+    const form = el("form", { onsubmit: async (ev) => {
+      ev.preventDefault();
+      error.style.display = "none";
+      try {
+        await authAction({ action: "changePassword", currentPassword: ev.target.current.value, newPassword: ev.target.next.value });
+        sheet.close();
+        toast("Пароль изменён");
+      } catch (e) {
+        error.textContent = e.message || "Не удалось сменить пароль";
+        error.style.display = "";
+      }
+    } },
+      ...field("Текущий пароль", "current", "password", "current-password"),
+      ...field("Новый пароль", "next", "password", "new-password"),
+      error,
+      el("button", { class: "btn-primary", type: "submit", style: "width:100%;margin-top:16px" }, "Сохранить"));
+    sheet = openSheet("Сменить пароль", form);
+  };
   return [
     bar(SESSION?.name || SESSION?.login || "Профиль", "/"),
     el("main", { class: "wrap" },
       el("div", { class: "rows", style: "margin-bottom:12px" },
         homeLink("Выполненные работы", "/profile/report", ICONS.report),
-        SESSION?.role === "admin" ? homeLink("Админка", "/admin", ICONS.admin) : null),
-      formCard("Сменить пароль", null,
-        [...field("Текущий пароль", "current", "password", "current-password"),
-         ...field("Новый пароль", "next", "password", "new-password")],
-        async (form) => {
-          await authAction({ action: "changePassword", currentPassword: form.current.value, newPassword: form.next.value });
-          alert("Пароль изменён");
-          location.hash = "/";
-          router();
-        }, "Сохранить"),
+        SESSION?.role === "admin" ? homeLink("Админка", "/admin", ICONS.admin) : null,
+        el("button", { class: "row profile-menu-action", type: "button", onclick: changePassword },
+          el("span", { class: "row-icon", html: ICON_SVG('<rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>') }),
+          el("span", { style: "flex:1" }, "Сменить пароль"), el("span", { class: "chev" }, "›"))),
       el("button", { style: "margin-top:16px;border:0;background:none;color:var(--muted);text-decoration:underline;padding:0", onclick: logout }, "Выйти")),
   ];
 }
@@ -4141,10 +4133,10 @@ function viewClientDetails(phone, initialBike = "") {
         "aria-label": "Редактировать клиента", title: "Редактировать клиента", html: ICON_EDIT,
         onclick: () => openClientEditor(client, onEdit) })),
     el("main", { class: "wrap" },
-      el("div", { class: "admin-person-card client-phone-card" },
+      el("a", { class: "admin-person-card card-link client-phone-card", href: `tel:${phone.replace(/[^\d+]/g, "")}`,
+        "aria-label": `Позвонить ${applyPhoneMask(phone)}` },
         el("span", { class: "client-phone-number" }, applyPhoneMask(phone)),
-        el("a", { class: "client-call-btn", href: `tel:${phone.replace(/[^\d+]/g, "")}`,
-          "aria-label": `Позвонить ${applyPhoneMask(phone)}`, title: "Позвонить", html: ICON_PHONE })),
+        el("span", { class: "client-call-icon" }, "📞")),
       el("h2", { class: "client-detail-heading" }, "Обращения"),
       el("div", { class: "client-filter" },
         el("div", { class: "client-filter-select" },
