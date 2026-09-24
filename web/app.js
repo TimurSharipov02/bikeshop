@@ -579,6 +579,8 @@ const orderAllDone = (o) => {
 // статус в базе всё ещё «взята в работу»: отдельной стадии для этого нет,
 // это только отображаемый тег (см. orderStatusTag), как и «Готово к выдаче».
 const orderWaitingForPart = (o) => o.items.some((i) => i.agreed && !i.done && i.waitingForPart);
+const orderPausedForPart = (o) => o.items.length > 0 &&
+  o.items.every((i) => i.agreed && (i.done || i.waitingForPart)) && orderWaitingForPart(o);
 // Встали, ждём деталь — работа пока не актуальна, не должна мешать сканировать
 // список того, что реально ещё предстоит сделать: опускаем её в конец
 // (sort стабильный, порядок остального не трогает).
@@ -814,8 +816,9 @@ const statusTag = (status) => el("span", { class: "tag " + (STATUS_TAG_CLASS[sta
 // нет — надо звонить клиенту); иначе, без хозяина (только что оформлена
 // или освобождена кнопкой «Выйти») — «Свободна».
 const orderStatusTag = (o) => {
-  if (o.status === "взята в работу" && orderAllDone(o)) return el("span", { class: "tag tag-check" }, "Готово к выдаче");
-  if (o.status === "взята в работу" && orderWaitingForPart(o)) return el("span", { class: "tag tag-block" }, "Ожидает запчасть");
+  if (o.status === "взята в работу" && orderAllDone(o)) return el("span", { class: "tag tag-check" }, "Готова к выдаче");
+  if (o.status === "взята в работу" && o.items.some((i) => i.agreed && !i.done && !i.claimedBy)) return el("span", { class: "tag tag-new" }, "Свободна");
+  if (o.status === "взята в работу" && orderPausedForPart(o)) return el("span", { class: "tag tag-block" }, "Ожидает запчасть");
   if (o.status === "взята в работу") return el("span", { class: "tag tag-progress" }, "В работе");
   return statusTag(o.status);
 };
@@ -1840,6 +1843,15 @@ function viewOrder(number) {
         // не объединяем их общей карточкой и не прячем в карусель.
         order.items.filter((i) => i.agreed).sort(waitingLast).forEach((it) => {
           b.append(repairItem(it, stock, {
+            onClaim: () => {
+              if (!it.claimedBy && !it.done) {
+                editOrder(number, (o) => {
+                  const x = o.items.find((i) => i.code === it.code);
+                  if (x && !x.claimedBy) x.claimedBy = { masterId: SESSION?.id, masterName: SESSION?.name };
+                });
+                refresh();
+              }
+            },
             onRun: () => openRunner(it.code),
             onSave: (patch) => {
               editOrder(number, (o) => {
@@ -2306,8 +2318,9 @@ function workStatePill(it) {
   if (it.waitingForPart && !it.done) {
     return el("span", { class: "pill", style: "background:var(--yellow-weak);color:var(--yellow-ink)" }, "ждёт запчасть");
   }
-  if (it.done) return el("span", { class: "pill" }, completionsSummary(it) || "готово");
-  return null;
+  if (it.done) return el("span", { class: "pill" }, it.doneBy?.masterName || completionsSummary(it) || "Готово");
+  if (it.claimedBy) return el("span", { class: "pill pill-muted" }, it.claimedBy.masterName || "Занята");
+  return el("span", { class: "pill pill-muted" }, "Свободно");
 }
 
 // Та же вёрстка, что у repairItem («В работе») — только без клика на форму
@@ -2610,7 +2623,7 @@ function pendingAgreementCard(order, handlers, stock) {
 // Правки в форме (было/не было, запчасти) сохраняются сами, без
 // подтверждения, но на статус «готово» не влияют — им управляет одна кнопка
 // внизу формы: «Готово» либо «Отменить», в обе стороны без ограничений.
-function repairItem(it, stock, { onRun, onSave, onQty, onRemove, onAdd }) {
+function repairItem(it, stock, { onRun, onSave, onQty, onRemove, onAdd, onClaim }) {
   const box = el("div", { class: "assess" });
   const nameRow = el("div", { style: "display:flex;align-items:center;gap:8px" },
     el("b", { style: "flex:1;min-width:0" }, it.name),
@@ -2630,7 +2643,7 @@ function repairItem(it, stock, { onRun, onSave, onQty, onRemove, onAdd }) {
     // openRepairSheet теперь всегда принимает (code, patch) — тут это одна-
     // единственная позиция без соседей, просто отбрасываем code и зовём
     // прежний, привязанный к конкретной работе onSave(patch).
-    onclick: () => openRepairSheet(it, stock, (code, patch) => onSave(patch), [it], { onAdd, onRemove }),
+    onclick: () => { onClaim?.(); openRepairSheet(it, stock, (code, patch) => onSave(patch), [it], { onAdd, onRemove }); },
   },
     nameRow,
     // Та же разбивка по составляющим, что и в списке «выдан» — не нужно
@@ -2673,8 +2686,8 @@ function repairGroupItem(items, stock, { onSave, onAdd, onRemove }) {
       // сгруппирована работа или нет.
       if (i.done) return el("span", { class: "pill" }, i.doneBy?.masterName || "готово");
       if (i.waitingForPart) return el("span", { class: "pill", style: "background:var(--yellow-weak);color:var(--yellow-ink)" }, "ждёт запчасть");
-      if (i.claimedBy) return el("span", { class: "pill" }, i.claimedBy.masterName || "—");
-      return el("span", { class: "pill", style: "background:var(--fill);color:var(--muted)" }, "Свободен");
+      if (i.claimedBy) return el("span", { class: "pill pill-muted" }, i.claimedBy.masterName || "Занята");
+      return el("span", { class: "pill pill-muted" }, "Свободно");
     }));
   box.append(el("div", {
     style: "cursor:pointer",
@@ -2794,7 +2807,10 @@ function openRepairSheet(it, stock, onSave, siblings = [it], { onAdd: onAddInsta
     const unmarkDone = () => {
       instance.done = false;
       instance.doneBy = null;
-      save(instance, { done: false, doneBy: null });
+      instance.claimedBy = null;
+      instance.waitingForPart = null;
+      // Освобождение работы должно быть единым изменением на сервере.
+      onSave(instance.code, { done: false, doneBy: null, claimedBy: null, waitingForPart: null });
       redrawPanel(instance);
     };
     // «Жду запчасть» — мастер начал работу, но встал из-за отсутствующей
@@ -2817,8 +2833,9 @@ function openRepairSheet(it, stock, onSave, siblings = [it], { onAdd: onAddInsta
               redrawPanel(instance);
             },
           }, "Жду запчасть"));
+    const canUndoDone = isAdmin || instance.doneBy?.masterId === myId || (!instance.doneBy && instance.claimedBy?.masterId === myId);
     const doneBlock = instance.done
-      ? el("button", { style: "width:100%;margin-top:16px", onclick: unmarkDone }, "Снять отметку «готово»")
+      ? canUndoDone ? el("button", { style: "width:100%;margin-top:16px", onclick: unmarkDone }, "Снять отметку «готово»") : null
       : el("button", { class: "btn-ok", style: "width:100%;margin-top:16px", onclick: markDone }, "Отметить готово");
     const tabs = hasDiffs ? el("div", { class: "segmented", style: "margin-bottom:14px" },
       el("button", { class: s.tab === "diff" ? "active" : "", onclick: () => { s.tab = "diff"; redrawPanel(instance); } }, "Усложнения"),

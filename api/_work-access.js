@@ -14,11 +14,20 @@ export function assertWorkAccess(current, merged, user) {
       const next = newItems.get(old.code);
       if (same(old, next)) continue;
       if (previous.status === "взята в работу" && old.agreed && user.role !== "admin") {
+        const releasingDone = old.done && next && !next.done && !next.doneBy && !next.claimedBy && !next.waitingForPart &&
+          Object.keys(old).every((key) => ["done", "doneBy", "claimedBy", "waitingForPart"].includes(key) || same(old[key], next[key]));
+        if (releasingDone && old.doneBy?.masterId === user.uid) continue;
+        if (old.done && next && !next.done && old.doneBy?.masterId !== user.uid) {
+          throw new MergeConflict(`снять отметку может только исполнитель работы «${old.name}»`);
+        }
         if (old.claimedBy?.masterId && old.claimedBy.masterId !== user.uid) {
           throw new MergeConflict(`работа «${old.name}» закреплена за другим мастером`);
         }
         if (next && next.claimedBy?.masterId !== (old.claimedBy?.masterId || user.uid)) {
           throw new MergeConflict(`работа «${old.name}» должна быть закреплена за вами`);
+        }
+        if (next?.done && !old.done && next.doneBy?.masterId !== user.uid) {
+          throw new MergeConflict(`исполнитель работы «${old.name}» не совпадает с текущим мастером`);
         }
       }
     }

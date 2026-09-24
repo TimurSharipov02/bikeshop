@@ -50,6 +50,7 @@ test('one master cannot alter or delete work claimed by another', () => {
   assert.throws(() => assertWorkAccess(current, deleted, other), MergeConflict);
   const own = copy(current);
   own.orders[0].items[0].done = true;
+  own.orders[0].items[0].doneBy = { masterId: 'one', masterName: 'One' };
   assert.doesNotThrow(() => assertWorkAccess(current, own, { uid: 'one', role: 'master' }));
 });
 
@@ -62,6 +63,31 @@ test('a stale handover cannot skip a newly added unfinished work item', () => {
   handover.orders[0].status = 'выдан';
   const merged = mergeDB(base, handover, current);
   assert.throws(() => assertWorkAccess(current, merged, { uid: 'one', role: 'master' }), MergeConflict);
+});
+
+test('opening a free work item claims it; only its performer can release completed work', () => {
+  const current = db();
+  current.orders[0].status = 'взята в работу';
+  current.orders[0].items[0].agreed = true;
+  const one = { uid: 'one', role: 'master' };
+  const two = { uid: 'two', role: 'master' };
+  const claimed = copy(current);
+  claimed.orders[0].items[0].claimedBy = { masterId: 'one', masterName: 'One' };
+  assert.doesNotThrow(() => assertWorkAccess(current, claimed, one));
+  const done = copy(claimed);
+  done.orders[0].items[0].done = true;
+  done.orders[0].items[0].doneBy = { masterId: 'one', masterName: 'One' };
+  const released = copy(done);
+  released.orders[0].items[0].done = false;
+  released.orders[0].items[0].doneBy = null;
+  released.orders[0].items[0].claimedBy = null;
+  assert.throws(() => assertWorkAccess(done, released, two), MergeConflict);
+  assert.doesNotThrow(() => assertWorkAccess(done, released, one));
+  assert.doesNotThrow(() => assertWorkAccess(done, released, { uid: 'admin', role: 'admin' }));
+  const stolen = copy(claimed);
+  stolen.orders[0].items[0].done = true;
+  stolen.orders[0].items[0].doneBy = { masterId: 'two', masterName: 'Two' };
+  assert.throws(() => assertWorkAccess(claimed, stolen, one), MergeConflict);
 });
 
 test('changes to different fields of one work item both survive', () => {

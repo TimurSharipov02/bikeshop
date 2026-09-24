@@ -233,7 +233,7 @@ header.bar .bar-title-lg { font-size:19px; font-weight:700; }
 .tag.tag-quote   { background:var(--orange-weak); color:var(--orange); }
 .tag.tag-approve { background:var(--purple-weak); color:var(--purple); }
 .tag.tag-progress{ background:var(--accent-weak); color:var(--accent); }
-.tag.tag-check   { background:var(--teal-weak); color:var(--teal); }
+.tag.tag-check   { background:var(--accent-weak); color:var(--accent); }
 .tag.tag-done    { background:var(--ok-weak); color:var(--ok); }
 .tag.tag-block   { background:var(--yellow-weak); color:var(--yellow-ink); }
 
@@ -331,6 +331,7 @@ label { display:block; font-size:13px; color:var(--muted); margin:var(--sp-4) 0 
 .pill { display:inline-block; font-size:12px; font-weight:600; padding:2px 9px; border-radius:999px;
   background:var(--accent-weak); border:0; color:var(--accent); margin-left:6px;
   animation:pill-pop .22s cubic-bezier(.34,1.56,.64,1); }
+.pill-muted { background:var(--fill); color:var(--muted); }
 @keyframes pill-pop { from { transform:scale(.6); opacity:0; } to { transform:scale(1); opacity:1; } }
 
 .done-log summary { color:var(--muted); font-size:13px; cursor:pointer; }
