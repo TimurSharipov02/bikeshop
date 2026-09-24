@@ -4,7 +4,7 @@ import {
   quantityModeOf, usesQuantity, repeatsWholeItem, instanceLimitOf, workQuantityLimitOf,
   WORK_INSTANCE_LIMIT, WORK_QUANTITY_LIMIT,
   itemRange, itemMinutes, orderRange, orderRangeAll, orderMinutes,
-  orderAllDone, orderWaitingForPart, orderPausedForPart, waitingLast, orderWaitingLast,
+  orderAllDone, orderWaitingForPart, orderPausedForPart, orderHasFreeWork, waitingLast, orderWaitingLast,
   customFaultRange,
 } from '../web/order-calc.js';
 
@@ -130,6 +130,23 @@ test('orderWaitingForPart/orderPausedForPart: paused means every agreed item is 
   // Кто-то ещё реально работает (pending, не ждёт и не готово) — заявка не «встала».
   assert.equal(orderPausedForPart({ items: [waiting, pending] }), false);
   assert.equal(orderPausedForPart({ items: [done, done] }), false);
+});
+
+test('orderHasFreeWork: an item waiting for a part is never "free", even if nobody formally claimed it (legacy data without claimedBy)', () => {
+  const untouched = { done: false, claimedBy: null };
+  const claimed = { done: false, claimedBy: { masterId: 'u1' } };
+  const waitingClaimed = { done: false, claimedBy: { masterId: 'u1' }, waitingForPart: { masterId: 'u1' } };
+  const waitingUnclaimed = { done: false, claimedBy: null, waitingForPart: { masterId: 'u1' } };
+  assert.equal(orderHasFreeWork({ items: [] }), true, 'an order with no items at all still counts as "free" (nothing blocks it)');
+  assert.equal(orderHasFreeWork({ items: [untouched] }), true);
+  assert.equal(orderHasFreeWork({ items: [claimed] }), false);
+  // Баг из скриншота пользователя: работу пометили «ждёт запчасть», но
+  // claimedBy почему-то не выставился — раньше именно это заставляло тег
+  // на главном экране показывать «Свободна» вместо «Ожидает запчасть».
+  assert.equal(orderHasFreeWork({ items: [waitingUnclaimed] }), false);
+  assert.equal(orderHasFreeWork({ items: [waitingClaimed] }), false);
+  assert.equal(orderHasFreeWork({ items: [waitingClaimed, untouched] }), true,
+    'one item stuck on a part does not hide that another item in the same order is still free to pick up');
 });
 
 test('waitingLast keeps a stable relative order and only pushes waiting-for-part items to the end', () => {

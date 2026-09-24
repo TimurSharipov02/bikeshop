@@ -34,7 +34,7 @@ import { app, money, iconBtnStyle, toast, closeAllSheets, openSheet, el, bar } f
 import {
   quantityModeOf, usesQuantity, repeatsWholeItem, WORK_INSTANCE_LIMIT, WORK_QUANTITY_LIMIT,
   instanceLimitOf, workQuantityLimitOf, itemRange, itemMinutes, orderRange, orderRangeAll, orderMinutes,
-  orderAllDone, orderWaitingForPart, orderPausedForPart, waitingLast, orderWaitingLast, customFaultRange,
+  orderAllDone, orderWaitingForPart, orderPausedForPart, orderHasFreeWork, waitingLast, orderWaitingLast, customFaultRange,
 } from "./order-calc.js";
 import {
   dirty, setInSubScreen,
@@ -294,8 +294,8 @@ const statusTag = (status) => el("span", { class: "tag " + (STATUS_TAG_CLASS[sta
 // или освобождена кнопкой «Выйти») — «Свободна».
 const orderStatusTag = (o) => {
   if (o.status === "взята в работу" && orderAllDone(o)) return el("span", { class: "tag tag-check" }, "Готова к выдаче");
-  if (o.status === "взята в работу" && (!o.items.length || o.items.some((i) => !i.done && !i.claimedBy))) return el("span", { class: "tag tag-new" }, "Свободна");
   if (o.status === "взята в работу" && orderPausedForPart(o)) return el("span", { class: "tag tag-block" }, "Ожидает запчасть");
+  if (o.status === "взята в работу" && orderHasFreeWork(o)) return el("span", { class: "tag tag-new" }, "Свободна");
   if (o.status === "взята в работу") return el("span", { class: "tag tag-progress" }, "В работе");
   return statusTag(o.status);
 };

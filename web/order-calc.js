@@ -71,6 +71,13 @@ export const orderAllDone = (o) => {
 export const orderWaitingForPart = (o) => o.items.some((i) => i.agreed && !i.done && i.waitingForPart);
 export const orderPausedForPart = (o) => o.items.length > 0 &&
   o.items.every((i) => i.agreed && (i.done || i.waitingForPart)) && orderWaitingForPart(o);
+// «Свободна» в orderStatusTag — есть работа, которую прямо сейчас может
+// взять любой мастер: ещё не готова, никем не занята. Работа, вставшая
+// из-за детали, этому не подходит, даже если её никто формально не
+// «занял» (например, отметили «жду запчасть» без claimedBy, старые
+// данные) — иначе тег «Свободна» перекрывает «Ожидает запчасть» и
+// пользователь не видит, что заявка на самом деле стоит.
+export const orderHasFreeWork = (o) => !o.items.length || o.items.some((i) => !i.done && !i.claimedBy && !i.waitingForPart);
 // Встали, ждём деталь — работа пока не актуальна, не должна мешать сканировать
 // список того, что реально ещё предстоит сделать: опускаем её в конец
 // (sort стабильный, порядок остального не трогает). Сортировать нужно уже
