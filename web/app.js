@@ -1905,12 +1905,6 @@ function viewOrder(number) {
         el("div", { class: "total" }, rangeText(range)))));
   }
 
-  // Список работ длинный — «Итого» внизу карточки может уйти за экран, пока
-  // листаешь. Закреплённая мини-сумма снизу экрана держит её на виду. Там,
-  // где уже есть закреплённая панель actions с кнопками, своя «Итого»-плашка
-  // поверх неё была бы лишней.
-  const agreedCount = order.items.filter((i) => i.agreed).length;
-  const showStickyTotal = order.status === "выдан" && agreedCount > 3;
   return [
     // Название велосипеда вместо номера обращения, покрупнее остальных
     // заголовков — по нему сразу видно, с чем работаешь. Номер обращения
@@ -1929,14 +1923,7 @@ function viewOrder(number) {
       }) : null),
     main,
     actions,
-    showStickyTotal ? stickyTotal(range) : null,
   ];
-}
-
-function stickyTotal(range) {
-  return el("div", { class: "sticky-total" },
-    el("span", { class: "muted small" }, "Итого"),
-    el("span", { class: "amount" }, rangeText(range)));
 }
 
 function stage(title, ...body) { return el("div", { class: "card" }, el("h2", {}, title), ...body); }

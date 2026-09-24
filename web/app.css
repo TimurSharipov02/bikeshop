@@ -155,15 +155,6 @@ header.bar .bar-title-lg { font-size:19px; font-weight:700; }
 .qty-stepper-value { min-width:24px; text-align:center; color:var(--ink); font-size:16px; font-weight:600;
   font-variant-numeric:tabular-nums; }
 
-/* Закреплённая мини-сумма снизу экрана — видна независимо от прокрутки
-   длинного списка работ. */
-.sticky-total { position:fixed; left:0; right:0; bottom:0; z-index:40;
-  background:color-mix(in srgb, var(--card) 92%, transparent);
-  -webkit-backdrop-filter:saturate(180%) blur(18px); backdrop-filter:saturate(180%) blur(18px);
-  border-top:.5px solid var(--line); padding:10px 16px calc(10px + env(safe-area-inset-bottom));
-  display:flex; align-items:center; justify-content:space-between; max-width:640px; margin:0 auto; }
-.sticky-total .amount { font-size:19px; font-weight:700; letter-spacing:-.01em; }
-
 /* Заглушка-силуэт на время подгрузки. */
 .skeleton { display:flex; flex-direction:column; gap:10px; }
 .skeleton-row { height:52px; border-radius:var(--radius-sm);
