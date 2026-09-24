@@ -3,8 +3,7 @@
   --bg:#f2f2f7; --card:#ffffff; --ink:#1c1c1e; --muted:#6e6e73; --line:#e5e5ea;
   --accent:#007aff; --accent-weak:#e8f0fe; --accent-ink:#fff;
   --ok:#34c759; --ok-weak:#e7f8ec; --warn:#ff3b30; --warn-weak:#ffece9;
-  --orange:#ff9500; --orange-weak:#fff2e0; --purple:#af52de; --purple-weak:#f6ecfc;
-  --teal:#30b0c7; --teal-weak:#e6f6f8; --fill:#e9e9ee;
+  --purple:#af52de; --purple-weak:#f6ecfc; --fill:#e9e9ee;
   --yellow:#ffcc00; --yellow-weak:#fff6cc; --yellow-ink:#8a6d00;
   --on-accent:#fff;
   --radius-sm:12px; --radius:16px; --radius-lg:22px;
@@ -28,8 +27,7 @@
     --bg:#000000; --card:#1c1c1e; --ink:#ffffff; --muted:#98989f; --line:#38383a;
     --accent:#0a84ff; --accent-weak:#12283f; --accent-ink:#fff;
     --ok:#30d158; --ok-weak:#0f2a17; --warn:#ff453a; --warn-weak:#3a1210;
-    --orange:#ff9f0a; --orange-weak:#3a2708; --purple:#bf5af2; --purple-weak:#2c1c38;
-    --teal:#40c8e0; --teal-weak:#0e2b30; --fill:#2c2c2e;
+    --purple:#bf5af2; --purple-weak:#2c1c38; --fill:#2c2c2e;
     --yellow:#ffd60a; --yellow-weak:#3a3008; --yellow-ink:#ffd60a;
     --shadow-sm:0 1px 3px rgba(0,0,0,.6), 0 4px 10px rgba(0,0,0,.4);
     --shadow-md:0 8px 24px rgba(0,0,0,.55); --shadow-lg:0 20px 48px rgba(0,0,0,.7);
@@ -238,7 +236,6 @@ header.bar .bar-title-lg { font-size:19px; font-weight:700; }
 
 /* статус обращения — цвет для быстрого сканирования списка */
 .tag.tag-new     { background:var(--fill); color:var(--muted); }
-.tag.tag-quote   { background:var(--orange-weak); color:var(--orange); }
 .tag.tag-approve { background:var(--purple-weak); color:var(--purple); }
 .tag.tag-progress{ background:var(--ok-weak); color:var(--ok); }
 .tag.tag-check   { background:var(--accent-weak); color:var(--accent); }
@@ -330,21 +327,11 @@ label { display:block; font-size:13px; color:var(--muted); margin:var(--sp-4) 0 
   width:32px; height:32px; display:flex; align-items:center; justify-content:center; }
 .search-clear svg { width:16px; height:16px; }
 
-.crumbs { font-size:12px; color:var(--muted); padding:14px 16px 0; max-width:640px; margin:0 auto; }
-.chapter-title { font-size:20px; font-weight:700; letter-spacing:-.01em; margin:6px 0 14px; padding:0 16px; max-width:640px; margin-left:auto; margin-right:auto; }
-.step-text { font-size:19px; line-height:1.45; }
-.note { font-size:14px; color:var(--muted); margin-top:10px; padding-left:12px; border-left:2px solid var(--accent); }
-.check-box { background:var(--card); border:.5px solid var(--line); border-radius:var(--radius); padding:18px;
-  margin:10px 0; font-weight:600; box-shadow:var(--shadow-sm); }
 .pill { display:inline-block; font-size:12px; font-weight:600; padding:2px 9px; border-radius:999px;
   background:var(--accent-weak); border:0; color:var(--accent); margin-left:6px;
   animation:pill-pop .22s cubic-bezier(.34,1.56,.64,1); }
 .pill-muted { background:var(--fill); color:var(--muted); }
 @keyframes pill-pop { from { transform:scale(.6); opacity:0; } to { transform:scale(1); opacity:1; } }
-
-.done-log summary { color:var(--muted); font-size:13px; cursor:pointer; }
-.done-log .item { font-size:13px; color:var(--muted); padding:4px 0; border-bottom:.5px solid var(--line); }
-.done-log .item.fail { color:var(--warn); }
 
 .opt { display:flex; align-items:center; gap:10px; padding:13px; border:.5px solid var(--line); border-radius:var(--radius-sm);
   margin:6px 0; cursor:pointer; background:var(--card); transition:border-color .12s ease, background .12s ease; }
@@ -414,11 +401,8 @@ label { display:block; font-size:13px; color:var(--muted); margin:var(--sp-4) 0 
 .complication-multiple input.chk { width:18px; height:18px; padding:0; }
 .compact-add-btn { width:auto; min-height:34px; margin-top:5px; padding:4px 2px; border:0; background:none; color:var(--accent); font-size:13px; font-weight:600; }
 
-.check-item { padding:10px 0; border-bottom:.5px solid var(--line); }
-.hint-toggle { border:0; background:none; padding:4px 0; color:var(--accent); min-height:auto; }
 .assess { padding:14px 0; border-bottom:.5px solid var(--line); }
 .assess:last-child { border-bottom:0; }
-.price-row { padding:12px 0; border-bottom:.5px solid var(--line); }
 .price-range { font-size:24px; font-weight:700; letter-spacing:-.01em; }
 .total { font-size:22px; font-weight:700; letter-spacing:-.01em; }
 /* Цена в строке конкретной работы — не такая крупная, как общий итог, но
