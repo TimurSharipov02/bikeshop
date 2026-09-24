@@ -2687,7 +2687,8 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
         }, "+ добавить разовую услугу"));
 
     const total = totalText?.();
-    if (total) wrap.append(el("div", { class: "card" }, totalRow(total.range, total.count)));
+    const totalNode = total && totalRow(total.range, total.count);
+    if (totalNode) wrap.append(el("div", { class: "card" }, totalNode));
 
     host.replaceChildren(wrap,
       el("div", { class: "actions" }, el("div", { class: "actions-inner" },
