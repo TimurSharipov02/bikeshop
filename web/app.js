@@ -1,9 +1,20 @@
 // ============================================================================
-//  Веломастерская Veloterra — всё приложение в одном файле.
-//  Обычный JavaScript. Ни сборщиков, ни фреймворков.
+//  Веломастерская Veloterra — экраны и роутер.
+//  Обычный JavaScript. Ни сборщиков, ни фреймворков — npm run build просто
+//  склеивает несколько файлов в один <script> (см. scripts/build-html.js).
 //
 //    CATALOG  — узлы велосипеда для группировки работ (вшиты в HTML при сборке)
-//    DB       — обращения, клиенты, велосипеды (localStorage браузера)
+//    DB       — обращения, клиенты, велосипеды (localStorage браузера + /api/db)
+//
+//  Устройство по файлам:
+//    dom.js     — el/bar/toast/openSheet: строительные блоки интерфейса,
+//                 без бизнес-логики.
+//    store.js   — данные: DB/BASE, синхронизация с сервером, сессия,
+//                 кэш серверных справочников (остатки, работы, мастера).
+//    pricing.js — общая формула цены работы (используется и тут, и в
+//                 выгрузке для 1С).
+//    app.js (этот файл) — роутер и все экраны (view*): строят DOM из
+//                 данных store.js и примитивов dom.js.
 //
 //  Как всё устроено:
 //    1. Роутер смотрит на #адрес и вызывает нужный экран (view*).
@@ -16,6 +27,16 @@
 
 import { itemWorkValue } from "./pricing.js";
 import { reportEntries } from "./report-entries.js";
+import { app, money, iconBtnStyle, toast, closeAllSheets, openSheet, el, bar } from "./dom.js";
+import {
+  dirty, setInSubScreen,
+  SESSION, NEEDS_SETUP, authAction, loadSession, logout,
+  repairsCache, clearRepairsCache, ensureRepairs,
+  clearUsersCache, ensureUsers,
+  stockCache, clearStockCache, ensureStock,
+  loadDB, syncFromServer,
+  editDB, editOrder, deleteOrderApi, deleteClientApi, deleteBikeApi, pushDbNow, flushPending,
+} from "./store.js";
 
 const RAW = window.CATALOG;
 // Версия — время сборки страницы (проставляется при npm run build / деплое).
@@ -53,423 +74,6 @@ const partBlockIdOf = (it) => {
   }
   return blockIdOf(it.code);
 };
-
-const app = document.getElementById("app");
-const money = (n) => `${Number(n || 0).toLocaleString("ru-RU")} ₽`;
-
-// Тост — короткое подтверждение действия (добавил/убрал/сохранил), которое
-// не привязано к дереву app и переживает полную перерисовку экрана: сама app
-// вычищается на каждый render(), а тост живёт своим элементом на body.
-let toastTimer = null;
-function toast(text) {
-  let node = document.getElementById("toast");
-  if (!node) {
-    node = document.createElement("div");
-    node.id = "toast";
-    node.className = "toast";
-    document.body.appendChild(node);
-  }
-  node.textContent = text;
-  node.classList.add("show");
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => node.classList.remove("show"), 1600);
-}
-
-// Модальная панель снизу экрана — для форм, которые не должны раздувать
-// список под собой (усложнения+запчасти у работы и т.п.), как в большинстве
-// современных приложений. Живёт на body, а не в дереве app — переживает
-// render() экрана позади себя, пока форма открыта. Закрывается тапом по
-// фону, крестиком или свайпом вниз по шапке.
-const openSheetClosers = new Set();
-function closeAllSheets() {
-  for (const close of [...openSheetClosers]) close(true);
-}
-function openSheet(title, bodyNode) {
-  // iOS оставляет системную панель перехода между полями (стрелки и
-  // галочка), если открыть шторку, пока textarea/input позади неё в фокусе.
-  // Снимаем фокус до показа и ещё раз перед закрытием самой шторки.
-  if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-  const backdrop = el("div", { class: "sheet-backdrop", onclick: () => close() });
-  const sheet = el("div", { class: "sheet" },
-    el("div", { class: "sheet-handle" }),
-    el("div", { class: "sheet-header" }, el("h2", {}, title),
-      el("button", { style: iconBtnStyle, onclick: () => close() }, "✕")),
-    el("div", { class: "sheet-body" }, bodyNode));
-  let closed = false;
-  function close(immediate = false) {
-    if (closed) return;
-    closed = true;
-    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-    openSheetClosers.delete(close);
-    backdrop.classList.remove("show");
-    sheet.classList.remove("show");
-    if (immediate) { backdrop.remove(); sheet.remove(); }
-    else setTimeout(() => { backdrop.remove(); sheet.remove(); }, 220);
-  }
-  openSheetClosers.add(close);
-  // Свайп вниз по шапке — тот же жест, что закрывает системные bottom sheet.
-  let startY = null;
-  const handleArea = sheet.firstChild;
-  handleArea.addEventListener("touchstart", (e) => { startY = e.touches[0].clientY; }, { passive: true });
-  handleArea.addEventListener("touchmove", (e) => {
-    if (startY == null) return;
-    const dy = e.touches[0].clientY - startY;
-    if (dy > 0) sheet.style.transform = `translateY(${dy}px)`;
-  }, { passive: true });
-  handleArea.addEventListener("touchend", (e) => {
-    const dy = (e.changedTouches[0]?.clientY ?? startY) - startY;
-    startY = null;
-    if (dy > 60) close();
-    else sheet.style.transform = "";
-  }, { passive: true });
-  document.body.append(backdrop, sheet);
-  requestAnimationFrame(() => { backdrop.classList.add("show"); sheet.classList.add("show"); });
-  return { close };
-}
-
-/** Создать элемент: el("div", {class:"card", onclick:fn}, "текст", childNode, [array]) */
-function el(tag, attrs, ...kids) {
-  const n = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs || {})) {
-    if (v == null || v === false) continue;
-    if (k === "class") n.className = v;
-    else if (k === "html") n.innerHTML = v;
-    else if (k === "value") n.value = v;
-    else if (k === "checked") n.checked = !!v;
-    else if (k === "selected") n.selected = !!v;
-    else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
-    else n.setAttribute(k, v);
-  }
-  for (const kid of kids.flat()) {
-    if (kid == null || kid === false) continue;
-    n.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
-  }
-  return n;
-}
-const bar = (title, backHash, rightNode) =>
-  el("header", { class: "bar" },
-    backHash != null ? el("a", { class: "back", href: "#" + backHash }, "‹") : null,
-    el("h1", {}, title),
-    rightNode || null);
-
-// ---------------------------- хранилище --------------------------------------
-//
-//  Данные лежат и в браузере (мгновенный доступ), и на сервере /api/db
-//  (общие для всех устройств). При каждой правке пишем локально и отправляем
-//  на сервер; при переходе между экранами подтягиваем свежие данные.
-//  Если сервер недоступен (нет интернета или не подключена база) — работаем
-//  только локально.
-
-const DB_KEY = "vella.db.v1";
-const DB_BASE_KEY = "vella.db.server.v1";
-const DB_DIRTY_KEY = "vella.db.dirty.v1";
-
-// Переименования статусов («в работе» → «принята»/«взята в работу», «проверка»
-// → «готово к выдаче»). Старые записи приводим к новым статусам при каждой
-// загрузке; исправление уедет на сервер со следующим же пушем (он шлёт всю DB
-// целиком), отдельная разовая миграция не нужна.
-// Для завершённой работы (done:true) усложнение не может оставаться в
-// состоянии «неизвестно» — это прогнозное значение, для факта его больше
-// не предлагают (см. difficultyList с fact:true), но в старых данных оно
-// могло остаться нетронутым. Без него itemRange считает такую работу
-// диапазоном, а не точной ценой, хотя по факту она уже сделана.
-const fixDoneDifficulties = (items) =>
-  (items || []).map((it) => {
-    if (!it.done || !(it.difficulties || []).some((d) => d.state === "unknown")) return it;
-    return { ...it, difficulties: it.difficulties.map((d) => (d.state === "unknown" ? { ...d, state: "no" } : d)) };
-  });
-
-// Запчасти раньше были просто названиями (строками) без цены и количества —
-// приводим к {name, price, qty}, иначе itemRange не может посчитать их
-// стоимость, а старые записи ломают рендер списка (ожидает объект).
-const fixPartsShape = (items) =>
-  (items || []).map((it) => {
-    if (!(it.parts || []).some((p) => typeof p === "string")) return it;
-    return { ...it, parts: it.parts.map((p) => (typeof p === "string" ? { name: p, price: 0, qty: 1 } : p)) };
-  });
-
-// «Кто сделал» прошло два формата: сперва просто имя строкой (doneBy),
-// потом — список completions {masterId, masterName, qty, at}, чтобы делить
-// размноженный пункт между несколькими мастерами по qty. От дележа по qty
-// отказались (см. историю): пункт либо неразделим — один мастер на весь
-// пункт, либо, если реально нужно несколько человек, оформляется отдельными
-// позициями наряда (см. instanceCode). Приводим оба старых формата к
-// единственному doneBy-объекту {masterId, masterName, at}; если completions
-// было несколько (старые записи до отказа от дележа) — берём самую позднюю.
-const fixDoneBy = (items) =>
-  (items || []).map((it) => {
-    if (!it.completions && (!it.doneBy || typeof it.doneBy !== "string")) return it;
-    let doneBy = null;
-    if (it.completions && it.completions.length) {
-      const last = it.completions.reduce((a, b) => (!a.at || (b.at && b.at > a.at) ? b : a));
-      doneBy = { masterId: last.masterId || null, masterName: last.masterName || "—", at: last.at || null };
-    } else if (typeof it.doneBy === "string") {
-      doneBy = { masterId: null, masterName: it.doneBy || "—", at: null };
-    }
-    const { completions, ...rest } = it;
-    return { ...rest, doneBy };
-  });
-
-const migrateOrders = (orders) =>
-  (orders || []).map((o) => {
-    let next = o;
-    if (next.status === "в работе") next = { ...next, status: "взята в работу" };
-    // «принята» убрали как отдельный шаг — заявки без хозяина (occupiedBy)
-    // сами доберут его при открытии (см. viewOrder), тут только статус.
-    if (next.status === "принята") next = { ...next, status: "взята в работу" };
-    if (next.status === "проверка") next = { ...next, status: "готово к выдаче" };
-    // «готово к выдаче» тоже убрали отдельным шагом — экран «в работе» и так
-    // показывает тот же список работ и предлагает «Выдать клиенту», как
-    // только всё отмечено готовым; отдельная стадия-подтверждение не нужна.
-    if (next.status === "готово к выдаче") next = { ...next, status: "взята в работу" };
-    // «оценка» убрали как отдельный шаг — её функциональность (количество,
-    // усложнения, итог) переехала в диагностику на стадии «приём»; раз
-    // заявка уже дошла до отдельного экрана оценки, дальше остаётся только
-    // один шаг — согласование.
-    if (next.status === "оценка") next = { ...next, status: "согласование" };
-    let items = fixDoneDifficulties(next.items);
-    items = fixPartsShape(items);
-    items = fixDoneBy(items);
-    if (items !== next.items) next = { ...next, items };
-    return next;
-  });
-
-// Раньше у велосипеда были отдельные марка и модель — теперь одна строка
-// name. Старые записи (только brand/model, без name) склеиваем в неё разом;
-// сами поля brand/model в новых записях больше нигде не пишутся.
-const migrateBikes = (bikes) =>
-  (bikes || []).map((b) => {
-    if (b.name) return b;
-    return { number: b.number, ownerPhone: b.ownerPhone, name: [b.brand, b.model].filter(Boolean).join(" ") };
-  });
-
-const normalizeDB = (d) => ({
-  clients: d?.clients || [], bikes: migrateBikes(d?.bikes), orders: migrateOrders(d?.orders),
-  counters: { order: 0, bike: 0, ...(d?.counters || {}) },
-});
-
-let DB = normalizeDB(safeParse(localStorage.getItem(DB_KEY)));
-let BASE = normalizeDB(safeParse(localStorage.getItem(DB_BASE_KEY) || localStorage.getItem(DB_KEY)));
-let serverOK = false;
-let pushTimer = null;
-let dirty = localStorage.getItem(DB_DIRTY_KEY) === "1";
-let conflictShown = false;
-let sending = Promise.resolve();
-// Счётчик «поколений» пуша — см. pushToServer(): нужен, чтобы устаревший
-// ответ (пока он летел, случилась ещё одна правка) не затёр более свежие
-// локальные изменения и не сбросил dirty раньше времени.
-let pushGen = 0;
-// Мы внутри экрана, отрисованного мимо router() (диагностика, «уточнение
-// усложнений», подбор работы, техпроцедура) — хеш при этом не меняется,
-// поэтому фоновый adopt() после debounce-пуша не должен звать router():
-// он бы молча подменил такой экран обычным видом обращения по тому же хешу.
-let inSubScreen = false;
-let editingItemCode = null; // код работы в наряде, у которой сейчас открыта форма редактирования
-
-// ---------------------------- вход и сессия ---------------------------------
-//
-//  Куки (HttpOnly) ставит сервер (/api/auth), клиент их не читает — только
-//  спрашивает "кто я" через GET и шлёт действия через POST. Без сессии
-//  роутер ниже показывает только экран входа/первого запуска.
-
-let SESSION = null; // { login, name, role } | null
-let NEEDS_SETUP = false;
-
-async function authAction(body) {
-  const r = await fetch("/api/auth", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.error || "ошибка");
-  return j;
-}
-async function loadSession() {
-  try {
-    const r = await fetch("/api/auth", { cache: "no-store" });
-    const j = await r.json();
-    SESSION = j.authenticated ? j.user : null;
-    NEEDS_SETUP = !!j.needsSetup;
-  } catch { SESSION = null; }
-}
-async function logout() {
-  try { await authAction({ action: "logout" }); } catch {}
-  SESSION = null;
-  location.hash = "/";
-  router();
-}
-
-// Остатки по запчастям — для выбора детали при отметке работы готовой.
-let stockCache = null;
-async function ensureStock() {
-  if (stockCache) return stockCache;
-  try {
-    const r = await fetch("/api/stock", { cache: "no-store" });
-    const j = await r.json();
-    stockCache = r.ok ? j.items || [] : [];
-  } catch { stockCache = []; }
-  return stockCache;
-}
-
-// Неисправности, заведённые администратором вручную на экране диагностики
-// (без .proc-процедуры, цена/время/усложнения — прямо в них самих). Общие
-// для всех, привязаны к узлу (group = id блока диагностики).
-let repairsCache = null;
-async function ensureRepairs() {
-  if (repairsCache) return repairsCache;
-  try {
-    const r = await fetch("/api/repairs", { cache: "no-store" });
-    const j = await r.json();
-    repairsCache = r.ok ? j.items || [] : [];
-  } catch { repairsCache = []; }
-  return repairsCache;
-}
-
-// Список мастеров (имя/роль/процент) — нужен отчётам о выработке (кто
-// сколько заработал), не только админке. Сбрасывается при любой правке
-// мастера (см. usersApi), чтобы отчёт не показывал устаревший процент.
-let usersCache = null;
-async function ensureUsers() {
-  if (usersCache) return usersCache;
-  try {
-    const r = await fetch("/api/users", { cache: "no-store" });
-    const j = await r.json();
-    usersCache = r.ok ? j.users || [] : [];
-  } catch { usersCache = []; }
-  return usersCache;
-}
-
-function safeParse(s) { try { return JSON.parse(s || "{}"); } catch { return {}; } }
-const loadDB = () => DB;
-function writeLocal() { localStorage.setItem(DB_KEY, JSON.stringify(DB)); }
-
-function adopt(next) {
-  const before = JSON.stringify(DB);
-  DB = normalizeDB(next);
-  BASE = structuredClone(DB);
-  localStorage.setItem(DB_BASE_KEY, JSON.stringify(BASE));
-  writeLocal();
-  if (JSON.stringify(DB) !== before && !inSubScreen && !location.hash.startsWith("#/orders/new")) router();
-}
-
-async function syncFromServer() {
-  if (typeof fetch !== "function") return;
-  try {
-    const r = await fetch("/api/db", { cache: "no-store" });
-    if (!r.ok) return;
-    const wasServerOK = serverOK;
-    serverOK = true;
-    // Если есть несохранённые локальные правки — не затирать их устаревшим
-    // ответом сервера; правки уедут своим пушем и вернутся уже слитыми.
-    if (!dirty) adopt(await r.json());
-    if (!wasServerOK && !location.hash.startsWith("#/orders/new")) router();
-  } catch { /* оффлайн — остаёмся на локальных данных */ }
-}
-
-function pushToServer() {
-  if (typeof fetch !== "function") return;
-  dirty = true;
-  localStorage.setItem(DB_DIRTY_KEY, "1");
-  clearTimeout(pushTimer);
-  const myGen = ++pushGen;
-  pushTimer = setTimeout(async () => {
-    await sendSnapshot(myGen);
-  }, 250);
-}
-
-async function sendSnapshot(myGen) {
-  const previous = sending;
-  let release;
-  sending = new Promise((resolve) => { release = resolve; });
-  await previous;
-  try {
-    const base = structuredClone(BASE);
-    const next = structuredClone(DB);
-    const r = await fetch("/api/db", { method: "PUT", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ base, next }) });
-    if (r.status === 409 && !conflictShown) {
-      conflictShown = true;
-      const { current } = await r.json();
-      if (myGen === pushGen && current && confirm("Эти же данные изменили на другом устройстве. Загрузить их версию? Ваши несохранённые правки на этом устройстве будут отменены.")) {
-        dirty = false;
-        localStorage.removeItem(DB_DIRTY_KEY);
-        conflictShown = false;
-        adopt(current);
-      }
-    }
-    if (!r.ok) return false;
-    serverOK = true;
-    const json = await r.json();
-    if (myGen === pushGen) {
-      dirty = false;
-      localStorage.removeItem(DB_DIRTY_KEY);
-      conflictShown = false;
-      adopt(json);
-    } else {
-      BASE = normalizeDB(json);
-      localStorage.setItem(DB_BASE_KEY, JSON.stringify(BASE));
-    }
-    return true;
-  } catch { return false; }
-  finally { release(); }
-}
-
-function saveDB(d) { DB = normalizeDB(d); writeLocal(); pushToServer(); }
-function editDB(fn) { fn(DB); writeLocal(); pushToServer(); }
-function editOrder(number, fn) {
-  editDB((d) => { const o = d.orders.find((x) => x.number === number); if (o) fn(o); });
-}
-
-// Удаление обращения — отдельным запросом мимо обычного merge-пуша (см.
-// api/db.js): слияние только объединяет, само по себе стереть запись на
-// сервере не может. При неудаче (офлайн) ничего не трогаем локально, чтобы
-// запись не «ожила» после следующей синхронизации.
-async function deleteOrderApi(number) {
-  try {
-    if (dirty && !(await flushPending())) return false;
-    const r = await fetch("/api/db", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ number }) });
-    if (!r.ok) return false;
-    serverOK = true;
-    adopt(await r.json());
-    return true;
-  } catch { return false; }
-}
-// Тот же принцип — клиента/велосипед тоже нельзя просто убрать локально и
-// дождаться обычного пуша: mergeDB на сервере видит объединение и вернёт
-// удалённую запись обратно на следующем же слиянии.
-async function deleteClientApi(phone) {
-  try {
-    if (dirty && !(await flushPending())) return false;
-    const r = await fetch("/api/db", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ clientPhone: phone }) });
-    if (!r.ok) return false;
-    serverOK = true;
-    adopt(await r.json());
-    return true;
-  } catch { return false; }
-}
-async function deleteBikeApi(number) {
-  try {
-    if (dirty && !(await flushPending())) return false;
-    const r = await fetch("/api/db", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ bikeNumber: number }) });
-    if (!r.ok) return false;
-    serverOK = true;
-    adopt(await r.json());
-    return true;
-  } catch { return false; }
-}
-// Как editDB, но без 250мс-дебаунса и с ожиданием ответа сервера — нужно
-// там, где следующий шаг (например, DELETE вдогонку) должен видеть уже
-// отправленные правки, а не гнаться с ними наперегонки за debounce-таймером
-// обычного pushToServer().
-async function pushDbNow(fn) {
-  fn(DB);
-  writeLocal();
-  dirty = true;
-  localStorage.setItem(DB_DIRTY_KEY, "1");
-  return flushPending();
-}
-
-async function flushPending() {
-  clearTimeout(pushTimer);
-  return sendSnapshot(++pushGen);
-}
 
 const quantityModeOf = (x) => {
   if (["single", "instances", "quantity"].includes(x?.quantityMode)) return x.quantityMode;
@@ -792,7 +396,7 @@ const routes = [
 ];
 function router() {
   closeAllSheets();
-  inSubScreen = false; // хеш-навигация всегда уводит из любого экрана мимо router()
+  setInSubScreen(false); // хеш-навигация всегда уводит из любого экрана мимо router()
   if (!SESSION) return render(NEEDS_SETUP ? viewSetup() : viewLogin());
   const path = location.hash.replace(/^#/, "") || "/";
   for (const [re, fn] of routes) {
@@ -827,7 +431,7 @@ window.addEventListener("hashchange", () => { router(); if (SESSION) syncFromSer
 // оба пути шли одной и той же дорогой и не расходились между собой.
 let subScreenExit = null;
 function enterSubScreen(onExit) {
-  inSubScreen = true;
+  setInSubScreen(true);
   subScreenExit = onExit;
   history.pushState({ sub: true }, "");
 }
@@ -838,7 +442,7 @@ window.addEventListener("popstate", () => {
   closeAllSheets();
   const fn = subScreenExit;
   subScreenExit = null;
-  inSubScreen = false;
+  setInSubScreen(false);
   if (fn) fn();
 });
 
@@ -1389,7 +993,7 @@ function viewOrder(number) {
   // refresh() из под-экранов (диагностика и т.п.) — сбрасываем и тут, иначе
   // после refresh() флаг остаётся true и фоновые обновления больше никогда
   // не подхватятся автоматически.
-  inSubScreen = false;
+  setInSubScreen(false);
   const d = loadDB();
   const order = d.orders.find((o) => o.number === number);
   if (!order) return [bar(number, "/"), el("main", { class: "wrap" }, el("p", { class: "muted" }, "Не найдено"))];
@@ -2015,10 +1619,6 @@ function itemRow(it, showFacts) {
         [it.parts.length ? it.parts.map(partLabel).join(", ") : null, completionsSummary(it)].filter(Boolean).join(" · ")) : null),
     el("span", { class: "price-tag" }, rangeText(r)));
 }
-
-// min-width/height 44px — минимальная зона тапа по HIG/WCAG, даже когда сама
-// иконка визуально мельче: без этого ✕/+/− ловятся неточно, особенно на ходу.
-const iconBtnStyle = "border:0;background:none;color:var(--muted);cursor:pointer;padding:0;min-width:44px;min-height:44px;display:inline-flex;align-items:center;justify-content:center;font:inherit";
 
 // Счётчик количества (сколько раз сделана работа/усложнение — два колеса,
 // несколько спиц и т.п.). Показывается только когда у работы или усложнения
@@ -2799,7 +2399,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
   });
 
   async function reloadRepairs() {
-    repairsCache = null;
+    clearRepairsCache();
     repairs = await ensureRepairs();
   }
 
@@ -3609,7 +3209,7 @@ async function usersApi(method, body) {
   const r = await fetch("/api/users", { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) { alert(j.error || "ошибка"); return null; }
-  usersCache = null; // список мастеров/процентов изменился — отчётам нужен свежий
+  clearUsersCache(); // список мастеров/процентов изменился — отчётам нужен свежий
   return j;
 }
 
@@ -3897,7 +3497,7 @@ async function saveStockItems(items) {
   const r = await fetch("/api/stock", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ items }) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) { alert(j.error || "ошибка"); return; }
-  stockCache = null; // список мог измениться — сбросить кэш для выбора деталей в ремонте
+  clearStockCache(); // список мог измениться — сбросить кэш для выбора деталей в ремонте
   render(stockScreen(j, ""));
 }
 

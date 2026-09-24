@@ -17,6 +17,11 @@ const diagnosticBlocks = (diagnostics.blocks || []).map((b) => ({
   title: b.title,
   perSide: !!b.perSide,
   prompt: b.prompt || "",
+  // Префиксы старых кодов операций (WHL-05 и т.п.) — нужны только чтобы у
+  // позиций наряда, заведённых до появления поля group на самом пункте
+  // (см. partBlockIdOf в app.js), всё равно определялся правильный узел для
+  // группировки, а не «Прочее».
+  codes: b.codes || [],
 }));
 
 const catalog = {
@@ -24,7 +29,8 @@ const catalog = {
   diagnosticBlocks,
 };
 
-// Склеить бандл: pricing.js + report-entries.js + app.js (без import/export между ними)
+// Склеить бандл: pricing.js + report-entries.js + dom.js + store.js + app.js
+// (без import/export между ними — всё сложено в общую область видимости).
 const strip = (src) =>
   src
     .replace(/^export\s+/gm, "")
@@ -33,6 +39,8 @@ const strip = (src) =>
 const bundle = [
   strip(readFileSync(p("web/pricing.js"), "utf8")),
   strip(readFileSync(p("web/report-entries.js"), "utf8")),
+  strip(readFileSync(p("web/dom.js"), "utf8")),
+  strip(readFileSync(p("web/store.js"), "utf8")),
   strip(readFileSync(p("web/app.js"), "utf8")),
 ].join("\n\n");
 
