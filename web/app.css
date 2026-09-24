@@ -1,4 +1,21 @@
-/* Цвета — системная палитра в духе iOS (Settings-подобный grouped-список). */
+/* Шрифт — Ubuntu (лицензия UFL, файлы и текст лицензии в web/assets/fonts,
+   сборка кладёт их в public/fonts). Только латиница и кириллица: остальное
+   (например ₽) браузер добирает системным шрифтом. */
+@font-face { font-family:"Ubuntu"; font-style:normal; font-weight:400; font-display:swap;
+  src:url(fonts/ubuntu-cyrillic-400-normal.woff2) format("woff2"); unicode-range:U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116; }
+@font-face { font-family:"Ubuntu"; font-style:normal; font-weight:500; font-display:swap;
+  src:url(fonts/ubuntu-cyrillic-500-normal.woff2) format("woff2"); unicode-range:U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116; }
+@font-face { font-family:"Ubuntu"; font-style:normal; font-weight:700; font-display:swap;
+  src:url(fonts/ubuntu-cyrillic-700-normal.woff2) format("woff2"); unicode-range:U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116; }
+@font-face { font-family:"Ubuntu"; font-style:normal; font-weight:400; font-display:swap;
+  src:url(fonts/ubuntu-latin-400-normal.woff2) format("woff2"); unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+@font-face { font-family:"Ubuntu"; font-style:normal; font-weight:500; font-display:swap;
+  src:url(fonts/ubuntu-latin-500-normal.woff2) format("woff2"); unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+@font-face { font-family:"Ubuntu"; font-style:normal; font-weight:700; font-display:swap;
+  src:url(fonts/ubuntu-latin-700-normal.woff2) format("woff2"); unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+
+/* Цвета — системная палитра в духе iOS, поверх неё — детали Frutiger Aero:
+   голубое небо фоном, стеклянные шапка/панель, глянец на кнопках. */
 :root {
   --bg:#f2f2f7; --card:#ffffff; --ink:#1c1c1e; --muted:#6e6e73; --line:#e5e5ea;
   --accent:#007aff; --accent-weak:#e8f0fe; --accent-ink:#fff;
@@ -12,10 +29,22 @@
      чтобы один и тот же стиль работал и в светлой, и в тёмной теме. */
   --hl:rgba(255,255,255,.9); --edge:rgba(0,0,0,.06);
   --btn-top:#ffffff; --btn-bottom:#ededf2;
-  --well-top:#e4e4ea; --well-bottom:#eeeef3;
+  --well-top:#e3f1fb; --well-bottom:#ffffff;
   --shadow-raise:0 8px 18px -8px rgba(0,0,0,.28), 0 1px 3px rgba(0,0,0,.12);
   --shadow-card:inset 0 1px 0 var(--hl), 0 12px 26px -14px rgba(0,0,0,.28), 0 1px 3px rgba(0,0,0,.08);
-  --shadow-inset:inset 0 2px 4px rgba(0,0,0,.09), inset 0 0 0 .5px rgba(0,0,0,.07);
+  --shadow-inset:inset 0 2px 4px rgba(0,60,120,.16), inset 0 -1px 0 rgba(255,255,255,.9), 0 0 0 1px rgba(0,95,175,.22);
+  /* Aero: небо фоном, стекло шапки/панели, глянцевый блик, тиснение текста. */
+  --sky:linear-gradient(180deg, #bfe3fb 0%, #dcf0fd 30%, #eef6fc 65%, #f4f8fb 100%);
+  --glass-top:rgba(255,255,255,.78); --glass-bottom:rgba(214,236,252,.5);
+  --glass-edge:rgba(255,255,255,.95); --glass-line:rgba(0,90,170,.14);
+  --gloss:linear-gradient(180deg, rgba(255,255,255,.62) 0%, rgba(255,255,255,.16) 47%, rgba(255,255,255,0) 50%);
+  /* Блик для тонированных/серых элементов (цена, «+», кружки свайпа) — в
+     тёмной теме полный блик на тёмном фоне «засвечивает» текст. */
+  --gloss-tint:var(--gloss);
+  --price-top:color-mix(in srgb, var(--accent-weak), white 35%);
+  --emboss:0 1px 0 rgba(255,255,255,.85);
+  --emboss-f:drop-shadow(0 1px 0 rgba(255,255,255,.9));
+  --title-grad:linear-gradient(180deg, #123a5e 0%, #1c6fb4 100%);
   /* --shadow-sm раньше был почти не виден (0 1px 2px alpha .04) — карточки
      и списки выглядели плоскими, без «отрыва» от фона. */
   --shadow-sm:0 1px 3px rgba(0,0,0,.08), 0 4px 10px rgba(0,0,0,.05);
@@ -33,24 +62,37 @@
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg:#000000; --card:#1c1c1e; --ink:#ffffff; --muted:#98989f; --line:#38383a;
+    --bg:#000000; --card:#141e29; --ink:#ffffff; --muted:#98989f; --line:#38383a;
     --accent:#0a84ff; --accent-weak:#12283f; --accent-ink:#fff;
     --ok:#30d158; --ok-weak:#0f2a17; --warn:#ff453a; --warn-weak:#3a1210;
-    --purple:#bf5af2; --purple-weak:#2c1c38; --fill:#2c2c2e;
+    --purple:#bf5af2; --purple-weak:#2c1c38; --fill:#1d2a37;
     --yellow:#ffd60a; --yellow-weak:#3a3008; --yellow-ink:#ffd60a;
     --shadow-sm:0 1px 3px rgba(0,0,0,.6), 0 4px 10px rgba(0,0,0,.4);
     --shadow-md:0 8px 24px rgba(0,0,0,.55); --shadow-lg:0 20px 48px rgba(0,0,0,.7);
     --hl:rgba(255,255,255,.07); --edge:rgba(255,255,255,.04);
-    --btn-top:#3a3a3e; --btn-bottom:#2a2a2d;
-    --well-top:#141416; --well-bottom:#1d1d20;
+    --btn-top:#2e3e4f; --btn-bottom:#1e2a37;
+    --well-top:#061626; --well-bottom:#0d2439;
     --shadow-raise:0 8px 18px -6px rgba(0,0,0,.8), 0 1px 3px rgba(0,0,0,.5);
     --shadow-card:inset 0 1px 0 var(--hl), 0 12px 24px -10px rgba(0,0,0,.9), 0 2px 4px rgba(0,0,0,.5);
-    --shadow-inset:inset 0 2px 6px rgba(0,0,0,.6), inset 0 0 0 1px rgba(255,255,255,.06);
+    --shadow-inset:inset 0 2px 6px rgba(0,0,0,.7), inset 0 -1px 0 rgba(150,215,255,.08), 0 0 0 1px rgba(150,215,255,.22);
+    --sky:linear-gradient(180deg, #07294a 0%, #051c33 35%, #020c17 75%, #000 100%);
+    --glass-top:rgba(90,170,235,.26); --glass-bottom:rgba(20,70,120,.14);
+    --glass-edge:rgba(170,225,255,.28); --glass-line:rgba(0,0,0,.5);
+    --emboss:0 1px 2px rgba(0,0,0,.7), 0 0 14px rgba(110,195,255,.16);
+    --emboss-f:drop-shadow(0 0 10px rgba(110,195,255,.4));
+    --title-grad:linear-gradient(180deg, #ffffff 0%, #9fd6ff 100%);
+    --gloss-tint:linear-gradient(180deg, rgba(255,255,255,.16) 0%, rgba(255,255,255,.05) 47%, rgba(255,255,255,0) 50%);
+    --price-top:color-mix(in srgb, var(--accent-weak), var(--accent) 22%);
   }
 }
 * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
 html,body { margin:0; padding:0; }
-body { background:var(--bg); color:var(--ink); font:17px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif; -webkit-text-size-adjust:100%; }
+body { background:var(--bg); color:var(--ink); -webkit-text-size-adjust:100%;
+  font:17px/1.45 "Ubuntu",-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif; }
+/* Небо — отдельным фиксированным слоем, а не background-attachment:fixed
+   (iOS Safari его игнорирует, и градиент растягивался бы на всю длину
+   прокрутки). */
+body::before { content:""; position:fixed; inset:0; z-index:-1; background:var(--sky); pointer-events:none; }
 a { color:var(--accent); text-decoration:none; }
 
 .wrap { max-width:640px; margin:0 auto; padding:var(--sp-5) var(--sp-4) 112px; }
@@ -59,14 +101,20 @@ a { color:var(--accent); text-decoration:none; }
    выглядит, и на главном, на что смотрят на ходу, сразу фокус. Назад/правая
    плашка — абсолютным позиционированием по бокам, чтобы не мешать центровке
    и не съезжать при разной их ширине. */
-header.bar { position:sticky; top:0; z-index:10; background:color-mix(in srgb, var(--card) 82%, transparent);
-  -webkit-backdrop-filter:saturate(180%) blur(18px); backdrop-filter:saturate(180%) blur(18px);
-  border-bottom:.5px solid var(--line); display:flex; align-items:center; justify-content:center;
-  padding:13px 44px; }
+header.bar { position:sticky; top:0; z-index:10; background:linear-gradient(180deg, var(--glass-top), var(--glass-bottom));
+  -webkit-backdrop-filter:blur(22px) saturate(190%); backdrop-filter:blur(22px) saturate(190%);
+  border-bottom:1px solid var(--glass-edge); box-shadow:0 1px 0 var(--glass-line), inset 0 1px 0 rgba(255,255,255,.35);
+  display:flex; align-items:center; justify-content:center; padding:13px 44px; }
 header.bar .back { position:absolute; left:max(8px, calc(50% - 312px)); top:50%; transform:translateY(-50%);
   font-size:26px; color:var(--accent); line-height:1; font-weight:500; padding:0 8px; }
-header.bar h1 { font-size:17px; margin:0; font-weight:600; letter-spacing:-.005em; text-align:center;
+header.bar h1 { font-size:17px; margin:0; font-weight:700; letter-spacing:-.005em; text-align:center;
   min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* Заголовки — с глянцевым градиентом по буквам (синий в светлой теме,
+   бело-голубой со свечением в тёмной), как надписи в Aero. text-shadow
+   тут нельзя: при прозрачном тексте тень просвечивает и буквы «двоятся». */
+header.bar h1, .card h2, .section-title {
+  background:var(--title-grad); -webkit-background-clip:text; background-clip:text; color:transparent;
+  filter:var(--emboss-f); text-shadow:none; }
 header.bar .sub { position:absolute; right:max(16px, calc(50% - 304px)); top:50%; transform:translateY(-50%);
   font-size:14px; color:var(--muted); text-align:right; }
 a.sub:active { opacity:.5; }
@@ -90,7 +138,13 @@ header.bar .bar-title-lg { font-size:19px; font-weight:700; }
 .admin-person-head .chev { margin-left:auto; }
 .client-phone-card { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .client-phone-number { min-width:0; font-size:24px; font-weight:600; letter-spacing:-.02em; overflow-wrap:anywhere; }
-.client-call-icon { flex:0 0 auto; font-size:22px; line-height:1; }
+/* Кнопка звонка — глянцевый зелёный кружок с трубкой (как кнопки Aero),
+   а не эмодзи 📞, который на каждом телефоне выглядит по-своему. */
+.call-btn { flex:0 0 auto; width:40px; height:40px; border-radius:50%; display:inline-flex; align-items:center;
+  justify-content:center; color:#fff; border:1px solid color-mix(in srgb, var(--ok), black 30%);
+  background:var(--gloss), linear-gradient(180deg, color-mix(in srgb, var(--ok), white 30%), var(--ok) 55%, color-mix(in srgb, var(--ok), white 15%));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.75), 0 6px 14px -6px color-mix(in srgb, var(--ok) 70%, transparent); }
+.call-btn svg { width:20px; height:20px; filter:drop-shadow(0 1px 1px rgba(0,0,0,.3)); }
 .client-detail-heading { font-size:17px; margin:20px 0 10px; }
 .client-filter { margin-bottom:12px; }
 .client-filter-select { position:relative; }
@@ -141,12 +195,20 @@ header.bar .bar-title-lg { font-size:19px; font-weight:700; }
    фон которой специально совпадает с фоном страницы, чтобы не читаться
    отдельной приподнятой плашкой. С обычной рамкой+тенью у .card такие
    блоки выглядели как рамка внутри рамки — здесь убираем и то, и другое. */
-.card-flush { background:var(--bg); border:0; box-shadow:none; }
+.card-flush { background:transparent; border:0; box-shadow:none; }
 .muted { color:var(--muted); } .small { font-size:14px; }
 
 /* «сгруппированный список» — один контур, тонкие разделители между строками (как в Настройках iOS) */
 .rows { display:flex; flex-direction:column; background:var(--card); border:.5px solid var(--edge);
   border-radius:var(--radius); box-shadow:var(--shadow-card); overflow:hidden; margin-bottom:var(--sp-4); }
+/* Отдельные карточки вместо склеенной группы — для списка самостоятельных
+   объектов (обращения на главном). Группа остаётся там, где строки — части
+   одного целого (работы одного наряда). */
+.rows.rows-separate { background:none; border:0; box-shadow:none; border-radius:0; overflow:visible; gap:10px; }
+.rows-separate > .swipe-row, .rows-separate > .row {
+  border-radius:var(--radius); background:var(--card); border:.5px solid var(--edge); box-shadow:var(--shadow-card); }
+.rows-separate .row { border-bottom:0; padding:16px 18px; min-height:76px; }
+.rows-separate .swipe-content { border-radius:var(--radius); }
 /* вложенный в .card список — карточка уже даёт рамку/тень, строкам нужны только разделители */
 .card .rows { border:0; box-shadow:none; border-radius:0; margin-bottom:0; }
 .list { display:flex; flex-direction:column; gap:var(--sp-3); }
@@ -155,6 +217,9 @@ header.bar .bar-title-lg { font-size:19px; font-weight:700; }
   border-radius:0; padding:var(--sp-4); width:100%; text-align:left; color:var(--ink); font-size:16px;
   cursor:pointer; transition:background .1s ease; }
 .rows .row:last-child { border-bottom:0; }
+/* Тиснение — лёгкая тень под буквами, текст не «лежит» плоско на стекле. */
+.row, .card, .admin-tile-text b, .swipe-content { text-shadow:var(--emboss); }
+.muted, .tag, button { text-shadow:none; }
 .row:active { background:var(--fill); }
 .row .chev { margin-left:auto; color:var(--line); font-size:19px; flex:0 0 auto; }
 /* Статус — выпуклая пилюля: блик сверху и тонкая кайма своего же цвета
@@ -244,13 +309,15 @@ header.bar .bar-title-lg { font-size:19px; font-weight:700; }
   -webkit-user-drag:none; user-select:none; -webkit-user-select:none; }
 .swipe-actions { position:absolute; top:0; right:0; bottom:0; display:flex;
   align-items:center; justify-content:flex-end; gap:14px; padding:0 15px; }
-.swipe-action-col { display:flex; flex-direction:column; align-items:center; gap:5px; flex:0 0 auto; }
-.swipe-action-btn { width:50px; height:50px; flex:0 0 auto; border:0; border-radius:50%; min-height:0;
-  padding:0; display:flex; align-items:center; justify-content:center; cursor:pointer;
-  background:var(--fill); color:var(--ink); box-shadow:none; transition:opacity .15s ease; }
-.swipe-action-btn.warn { background:var(--warn); color:var(--on-accent); }
+.swipe-action-btn { width:50px; height:50px; flex:0 0 auto; border:1px solid rgba(0,70,140,.25); border-radius:50%; min-height:0;
+  padding:0; display:flex; align-items:center; justify-content:center; cursor:pointer; color:var(--ink);
+  background:var(--gloss-tint), linear-gradient(180deg, var(--btn-top), var(--btn-bottom));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.7), 0 6px 14px -6px rgba(0,40,90,.55); transition:opacity .15s ease; }
+.swipe-action-btn.warn { color:var(--on-accent); border-color:color-mix(in srgb, var(--warn), black 30%);
+  background:var(--gloss), linear-gradient(180deg, color-mix(in srgb, var(--warn), white 30%), var(--warn) 55%, color-mix(in srgb, var(--warn), white 15%));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.75), 0 8px 18px -6px color-mix(in srgb, var(--warn) 70%, transparent); }
 .swipe-action-btn:disabled { opacity:.5; }
-.swipe-action-label { font-size:11px; color:var(--muted); white-space:nowrap; }
+.swipe-action-btn svg { filter:drop-shadow(0 1px 1px rgba(0,0,0,.35)); }
 
 /* статус обращения — цвет для быстрого сканирования списка */
 .tag.tag-new     { background-color:var(--fill); color:var(--muted); }
@@ -276,17 +343,20 @@ button { font:inherit; font-weight:600; border:0; color:var(--ink); border-radiu
 button:active { transform:scale(.97); opacity:.9; }
 button:disabled { opacity:.4; cursor:default; }
 button:disabled:active { transform:none; }
-.btn-primary, .btn-ok, .btn-warn { --btn-c:var(--accent); color:var(--on-accent);
-  background:linear-gradient(180deg, color-mix(in srgb, var(--btn-c), white 16%), var(--btn-c) 70%);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.25), 0 10px 22px -8px color-mix(in srgb, var(--btn-c) 65%, transparent),
-    0 2px 6px rgba(0,0,0,.2); }
+/* Глянец Aero: половинный блик сверху поверх градиента своего цвета. */
+.btn-primary, .btn-ok, .btn-warn { --btn-c:var(--accent); color:var(--on-accent); font-weight:700;
+  border:1px solid color-mix(in srgb, var(--btn-c), black 30%);
+  text-shadow:0 1px 2px color-mix(in srgb, var(--btn-c), black 55%);
+  background:var(--gloss),
+    linear-gradient(180deg, color-mix(in srgb, var(--btn-c), white 30%) 0%, var(--btn-c) 55%, color-mix(in srgb, var(--btn-c), white 18%) 100%);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.8), 0 10px 22px -8px color-mix(in srgb, var(--btn-c) 70%, transparent), 0 2px 5px rgba(0,0,0,.2); }
 .btn-ok { --btn-c:var(--ok); }
 .btn-warn { --btn-c:var(--warn); }
-.btn-primary:disabled, .btn-ok:disabled, .btn-warn:disabled { box-shadow:inset 0 1px 0 rgba(255,255,255,.2); }
+.btn-primary:disabled, .btn-ok:disabled, .btn-warn:disabled { box-shadow:inset 0 1px 0 rgba(255,255,255,.2); text-shadow:none; }
 /* Служебные кнопки-иконки (назад, крестики, точки карусели, текстовые
    ссылки-кнопки) — без объёма основных кнопок: у них свой фон/форма. */
 header.bar .back, .edit-btn, .search-clear, .complication-remove, .compact-add-btn, .carousel-dot,
-.work-select-btn, .qty-stepper button, .admin-settings-btn, button.row,
+.qty-stepper button, .admin-settings-btn, button.row,
 button[style*="background:none"] { box-shadow:none; }
 button.row { font-weight:400; }
 .btn-row { display:flex; gap:var(--sp-3); flex-wrap:wrap; }
@@ -311,10 +381,17 @@ button.row { font-weight:400; }
   align-items:start; row-gap:6px; }
 .priced-control-group { width:100%; min-width:0; display:flex; justify-content:flex-end;
   align-items:center; gap:8px; }
-.control-price { flex:0 0 auto; display:inline-flex; align-items:center; min-height:40px; padding:0 12px;
-  border-radius:9px; background:var(--accent-weak); color:var(--accent); font-size:16px;
-  font-weight:600; white-space:nowrap; font-variant-numeric:tabular-nums; }
-.control-price.excluded { background:var(--fill); color:var(--muted); }
+/* Цена рядом с кнопкой «+»/счётчиком — «перевёртыш»: пока работа не
+   выбрана, цена вдавлена, а «+» выпуклый; после выбора наоборот — цена
+   выпуклая и глянцевая, а кнопка вдавлена. Смена мягко анимирована. */
+.control-price { flex:0 0 auto; display:inline-flex; align-items:center; min-height:40px; padding:0 13px;
+  border-radius:12px; font-size:16px; font-weight:700; white-space:nowrap; font-variant-numeric:tabular-nums;
+  color:var(--accent); border:1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  background:var(--gloss-tint), linear-gradient(180deg, var(--price-top), var(--accent-weak));
+  box-shadow:inset 0 1px 0 var(--hl), 0 6px 14px -6px color-mix(in srgb, var(--accent) 55%, transparent), 0 1px 2px rgba(0,0,0,.12);
+  transition:box-shadow .18s ease, background .18s ease, color .18s ease; }
+.control-price.excluded { color:var(--muted); border-color:transparent;
+  background:linear-gradient(180deg, var(--well-top), var(--well-bottom)); box-shadow:var(--shadow-inset); }
 
 /* Карусель экземпляров одной и той же работы (шторка «Ждёт согласования»/
    «Ремонт») — настоящий свайп пальцем через нативный скролл со snap, без
@@ -334,9 +411,11 @@ button.row { font-weight:400; }
    у нижнего края layout-viewport и прячется под клавиатурой). Запас
    16px+safe-area — чтобы в установленном как приложение виде (standalone,
    без строки браузера) панель не липла к самому краю экрана. */
-.actions { position:fixed; left:0; right:0; bottom:var(--kb-offset, 0px); z-index:40; background:color-mix(in srgb, var(--card) 85%, transparent);
-  -webkit-backdrop-filter:saturate(180%) blur(18px); backdrop-filter:saturate(180%) blur(18px);
-  border-top:.5px solid var(--line); padding:12px 16px calc(16px + env(safe-area-inset-bottom)); }
+.actions { position:fixed; left:0; right:0; bottom:var(--kb-offset, 0px); z-index:40;
+  background:linear-gradient(180deg, var(--glass-top), var(--glass-bottom));
+  -webkit-backdrop-filter:blur(22px) saturate(190%); backdrop-filter:blur(22px) saturate(190%);
+  border-top:1px solid var(--glass-edge); box-shadow:0 -1px 0 var(--glass-line), inset 0 1px 0 rgba(255,255,255,.45);
+  padding:12px 16px calc(16px + env(safe-area-inset-bottom)); }
 .actions-inner { max-width:640px; margin:0 auto; display:flex; gap:var(--sp-3); width:100%; }
 .actions-inner > button { flex:1; }
 
@@ -344,7 +423,9 @@ button.row { font-weight:400; }
 input,textarea,select { font:inherit; width:100%; padding:var(--sp-3) var(--sp-4); border:0; border-radius:16px;
   background:linear-gradient(180deg, var(--well-top), var(--well-bottom)); box-shadow:var(--shadow-inset);
   color:var(--ink); transition:box-shadow .12s ease; }
-input:focus,textarea:focus,select:focus { outline:none; box-shadow:var(--shadow-inset), 0 0 0 3px var(--accent-weak), 0 0 0 1px var(--accent); }
+input:focus,textarea:focus,select:focus { outline:none;
+  box-shadow:var(--shadow-inset), 0 0 0 1px var(--accent), 0 0 0 4px color-mix(in srgb, var(--accent) 25%, transparent),
+    0 0 18px color-mix(in srgb, var(--accent) 35%, transparent); }
 .request-field { height:78px; min-height:78px; max-height:78px; resize:none; }
 .request-field-new { display:block; margin:0 0 12px; }
 /* Родные стрелки +/- у number-полей на узком экране только крадут место у
@@ -391,9 +472,12 @@ label { display:block; font-size:13px; color:var(--muted); margin:var(--sp-4) 0 
 .row.opt.priced-control-row { display:grid; grid-template-columns:minmax(0,1fr);
   align-items:start; row-gap:6px; }
 .work-select-btn { flex:0 0 auto; width:40px; min-width:40px; height:40px; min-height:40px; padding:0;
-  border:0; border-radius:9px; background:var(--fill); color:var(--accent); font-size:24px;
-  font-weight:400; box-shadow:none; }
-.work-select-btn.selected { background:var(--fill); color:var(--muted); font-size:22px; }
+  border:1px solid rgba(0,70,140,.22); border-radius:12px; color:var(--accent); font-size:24px; font-weight:500;
+  background:var(--gloss-tint), linear-gradient(180deg, var(--btn-top), var(--btn-bottom));
+  box-shadow:inset 0 1px 0 var(--hl), var(--shadow-raise);
+  transition:box-shadow .18s ease, background .18s ease, color .18s ease; }
+.work-select-btn.selected { color:var(--muted); font-size:22px; border-color:transparent;
+  background:linear-gradient(180deg, var(--well-top), var(--well-bottom)); box-shadow:var(--shadow-inset); }
 .row-check { flex:0 0 auto; display:flex; color:var(--accent); }
 /* Свой чекбокс/радио вместо голого системного — квадрат со скруглением или
    кружок, заливка акцентом и белая галочка/точка при выборе. */

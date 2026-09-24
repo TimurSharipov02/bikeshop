@@ -477,6 +477,7 @@ const ICON_SVG = (inner) =>
 const ICON_EDIT = ICON_SVG('<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>');
 const ICON_CLOSE = ICON_SVG('<path d="M18 6 6 18"/><path d="M6 6l12 12"/>');
 const ICON_CHECK = ICON_SVG('<path d="M20 6 9 17l-5-5"/>');
+const ICON_PHONE = ICON_SVG('<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2Z"/>');
 const ICONS = {
   prices: ICON_SVG('<path d="M12.6 3H6a2 2 0 0 0-2 2v6.6a2 2 0 0 0 .6 1.4l8.4 8.4a2 2 0 0 0 2.8 0l5.6-5.6a2 2 0 0 0 0-2.8L13 3.6a2 2 0 0 0-1.4-.6Z"/><circle cx="8.5" cy="8.5" r="1.3"/>'),
   admin: ICON_SVG('<path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6l7-3Z"/>'),
@@ -530,8 +531,7 @@ function swipeToDelete(rowNode, onDelete, label = "Удалить") {
   const ACTION_W = swipeActionsWidth(1);
   const wrap = el("div", { class: "swipe-row" });
   const action = el("button", { class: "swipe-action-btn warn", "aria-label": label, html: ICON_CLOSE });
-  const bar = el("div", { class: "swipe-actions" },
-    el("div", { class: "swipe-action-col" }, action, el("span", { class: "swipe-action-label" }, label)));
+  const bar = el("div", { class: "swipe-actions" }, action);
   rowNode.classList.add("swipe-content");
   rowNode.setAttribute("draggable", "false"); // иначе браузер начинает нативный drag ссылки вместо свайпа
   wrap.append(bar, rowNode);
@@ -597,20 +597,18 @@ function swipeToDelete(rowNode, onDelete, label = "Удалить") {
 // Тот же жест, что и swipeToDelete, но открывает несколько кружков-иконок
 // подряд (например правка + удаление), а не один — для плотных списков
 // (правка неисправностей в диагностике), где такие кнопки прямо в строке
-// смотрятся слишком мелко и тесно. actions — [{label, text, ariaLabel,
-// onClick, className}] (label — иконка кнопки, text — подпись под ней).
+// смотрятся слишком мелко и тесно. actions — [{label, ariaLabel, onClick,
+// className}] (label — иконка кнопки).
 function swipeActions(rowNode, actions) {
   const width = swipeActionsWidth(actions.length);
   const wrap = el("div", { class: "swipe-row" });
   const bar = el("div", { class: "swipe-actions" },
-    actions.map((a) => el("div", { class: "swipe-action-col" },
-      el("button", {
-        class: `swipe-action-btn ${a.className || ""}`,
-        "aria-label": a.ariaLabel || a.text || "Действие",
-        html: a.label,
-        onclick: (e) => { e.preventDefault(); e.stopPropagation(); close(); if (openSwipeClose === close) openSwipeClose = null; a.onClick(); },
-      }),
-      a.text ? el("span", { class: "swipe-action-label" }, a.text) : null)));
+    actions.map((a) => el("button", {
+      class: `swipe-action-btn ${a.className || ""}`,
+      "aria-label": a.ariaLabel || "Действие",
+      html: a.label,
+      onclick: (e) => { e.preventDefault(); e.stopPropagation(); close(); if (openSwipeClose === close) openSwipeClose = null; a.onClick(); },
+    })));
   rowNode.classList.add("swipe-content");
   rowNode.setAttribute("draggable", "false");
   wrap.append(bar, rowNode);
@@ -671,14 +669,16 @@ function swipeActions(rowNode, actions) {
 // .row больше не последний ребёнок .rows). Снимаем разделитель явно.
 // flat — список уже внутри своей карточки (например, узла диагностики) и
 // не должен рисовать ещё одну рамку вокруг себя, только убрать разделитель
-// у последней строки, как обычно.
-function rowsList(nodes, flat = false) {
+// у последней строки, как обычно. separate — каждая строка отдельной
+// карточкой (список самостоятельных объектов вроде обращений), а не одной
+// склеенной группой.
+function rowsList(nodes, flat = false, separate = false) {
   if (nodes.length) {
     const last = nodes[nodes.length - 1];
     const rowEl = last.matches?.(".row") ? last : last.querySelector?.(".row");
     if (rowEl) rowEl.style.borderBottom = "0";
   }
-  return el("div", { class: flat ? null : "rows" }, nodes);
+  return el("div", { class: flat ? null : separate ? "rows rows-separate" : "rows" }, nodes);
 }
 
 function formatDateShort(iso) {
@@ -719,10 +719,10 @@ function viewHome() {
     el("header", { class: "bar" }, el("h1", {}, "Veloterra"),
       el("a", { class: "sub", href: "#/profile" }, SESSION?.name || SESSION?.login || "")),
     el("main", { class: "wrap", style: "min-height:calc(100dvh - 56px);display:flex;flex-direction:column" },
-      el("h2", { class: "small muted", style: "margin:0 0 8px;font-weight:600;letter-spacing:.02em" }, "АКТИВНЫЕ ОБРАЩЕНИЯ"),
+      el("h2", { class: "small section-title", style: "margin:0 0 8px;font-weight:700;letter-spacing:.06em" }, "АКТИВНЫЕ ОБРАЩЕНИЯ"),
       active.length === 0
         ? emptyState("Активных обращений нет.")
-        : rowsList(active.map((o) => orderRow(o, d, deleteOrderWithAlert)))),
+        : rowsList(active.map((o) => orderRow(o, d, deleteOrderWithAlert)), false, true)),
     el("div", { class: "actions" }, el("div", { class: "actions-inner" },
       el("button", { class: "btn-primary", onclick: () => go("/orders/new") }, "+ Новое обращение"))),
   ];
@@ -1219,12 +1219,12 @@ function viewOrder(number) {
     // только тип. Номер обращения из вида убрали — мастерам он не нужен.
     bike?.kind ? el("h2", {}, bike.kind) : null,
     // Вся строка — ссылка tel:, а не только номер: на телефоне так проще
-    // попасть пальцем, а 📞 справа, покрупнее, сразу подсказывает, что тут
+    // попасть пальцем, а кнопка-трубка справа сразу подсказывает, что тут
     // можно позвонить (не теряется мелким значком сразу после текста).
     order.clientPhone
       ? el("a", { href: `tel:${order.clientPhone.replace(/[^\d+]/g, "")}`, class: "small muted", style: "display:flex;align-items:center;gap:6px" },
           el("span", { style: "flex:1" }, [client?.name || order.clientName, order.clientPhone].filter(Boolean).join(" · ")),
-          el("span", { style: "font-size:22px;flex:0 0 auto" }, "📞"))
+          el("span", { class: "call-btn", html: ICON_PHONE }))
       : (client?.name || order.clientName ? el("p", { class: "small muted" }, client?.name || order.clientName) : null),
     order.status === "выдан"
       ? (order.request ? el("p", { class: "small muted", style: "margin-top:8px" }, order.request) : null)
@@ -1674,8 +1674,8 @@ function editableItemRow(it, { onRemove, onSave, refresh, onDiffSet, onDiffQty }
       usesQuantity(it) ? qtyStepper(it.qty, (qty) => onSave(it.code, { qty }), workQuantityLimitOf(it), () => onRemove(it.code)) : null,
       el("span", { class: "price-tag", style: "margin-left:auto" }, rangeText(r))));
   const header = swipeActions(rowContent, [
-    { label: ICON_EDIT, text: "Изменить", ariaLabel: "Изменить работу", onClick: () => { editingItemCode = isEditing ? null : it.code; refresh(); } },
-    { label: ICON_CLOSE, text: "Убрать", ariaLabel: "Убрать работу", className: "warn", onClick: () => { if (confirm(`Убрать «${it.name}» из наряда?`)) onRemove(it.code); } },
+    { label: ICON_EDIT, ariaLabel: "Изменить работу", onClick: () => { editingItemCode = isEditing ? null : it.code; refresh(); } },
+    { label: ICON_CLOSE, ariaLabel: "Убрать работу", className: "warn", onClick: () => { if (confirm(`Убрать «${it.name}» из наряда?`)) onRemove(it.code); } },
   ]);
   const diffs = (it.difficulties || []).length
     ? el("div", { style: "width:100%;margin-top:2px" },
@@ -2569,8 +2569,8 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
           faultNodes.push(el("div", {},
             isAdmin
               ? swipeActions(rowContent, [
-                  { label: ICON_EDIT, text: "Изменить", ariaLabel: "Изменить работу", onClick: () => { editingThis ? editOverrideFor.delete(editKey) : editOverrideFor.add(editKey); draw(); } },
-                  { label: ICON_CLOSE, text: "Удалить", ariaLabel: "Удалить работу", className: "warn", onClick: async () => {
+                  { label: ICON_EDIT, ariaLabel: "Изменить работу", onClick: () => { editingThis ? editOverrideFor.delete(editKey) : editOverrideFor.add(editKey); draw(); } },
+                  { label: ICON_CLOSE, ariaLabel: "Удалить работу", className: "warn", onClick: async () => {
                       if (!confirm(`Убрать «${f.label}» из списка совсем?`)) return;
                       const wasChecked = s.faults.has(i);
                       // Реальный уникальный код (CF-id) — может повторяться на обеих
@@ -2895,7 +2895,7 @@ function buildReportTab(masterId, percentOf, tab) {
   const subEl = el("div", { class: "small muted" });
   const historyItemsEl = el("div", {});
   const historySection = el("div", {},
-    el("p", { class: "small muted", style: "margin:16px 0 4px" }, "ИСТОРИЯ ВЫПОЛНЕННЫХ ОБРАЩЕНИЙ"),
+    el("p", { class: "small section-title", style: "margin:16px 0 4px;font-weight:700;letter-spacing:.06em" }, "ИСТОРИЯ ВЫПОЛНЕННЫХ ОБРАЩЕНИЙ"),
     historyItemsEl);
 
   const colWidthPct = 100 / tab.count;
@@ -3316,7 +3316,7 @@ function viewClientDetails(phone, initialBike = "") {
       el("a", { class: "admin-person-card card-link client-phone-card", href: `tel:${phone.replace(/[^\d+]/g, "")}`,
         "aria-label": `Позвонить ${applyPhoneMask(phone)}` },
         el("span", { class: "client-phone-number" }, applyPhoneMask(phone)),
-        el("span", { class: "client-call-icon" }, "📞")),
+        el("span", { class: "call-btn", html: ICON_PHONE })),
       el("h2", { class: "client-detail-heading" }, "Обращения"),
       el("div", { class: "client-filter" },
         el("div", { class: "client-filter-select" },

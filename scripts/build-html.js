@@ -1,7 +1,7 @@
 // Собирает veloterra.html (и public/index.html для Vercel) из исходников.
 // Обычный Node, без зависимостей и без TypeScript.  Запуск:  npm run build
 
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -61,6 +61,11 @@ writeFileSync(p("public/index.html"), html, "utf8");
 // web/assets при каждой сборке, а не держим отдельно в public/.
 copyFileSync(p("web/assets/favicon.jpg"), p("public/favicon.jpg"));
 copyFileSync(p("web/assets/manifest.json"), p("public/manifest.json"));
+// Шрифт (Ubuntu, лицензия UFL) — отдельными файлами рядом со страницей,
+// а не внутри HTML: браузер кеширует их и качает только нужные наборы
+// символов (латиница/кириллица) и начертания.
+mkdirSync(p("public/fonts"), { recursive: true });
+for (const f of readdirSync(p("web/assets/fonts"))) copyFileSync(p(`web/assets/fonts/${f}`), p(`public/fonts/${f}`));
 
 const kb = (Buffer.byteLength(html) / 1024).toFixed(0);
 console.log(`✔ ${diagnosticBlocks.length} узлов · veloterra.html + public/index.html — ${kb} КБ`);
