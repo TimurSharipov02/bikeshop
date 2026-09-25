@@ -822,7 +822,8 @@ function homeLink(text, hash, icon) {
 // подписью, как в Почте/Телефоне на iOS. Открыта всегда только одна строка:
 // свайп другой строки или тап вне списка закрывают предыдущую. onDelete —
 // async, должен вернуть false при неудаче (тогда строка возвращается в
-// закрытое состояние и кнопку можно нажать ещё раз).
+// закрытое состояние и кнопку можно нажать ещё раз). Свайпы остались
+// только у администратора (правка/удаление работ каталога и т.п.).
 let openSwipeClose = null;
 function closeOpenSwipe() { const c = openSwipeClose; openSwipeClose = null; if (c) c(); }
 document.addEventListener("pointerdown", (e) => {
@@ -830,80 +831,12 @@ document.addEventListener("pointerdown", (e) => {
 }, true);
 
 // Ширина области под свайпом: боковые поля + кружки + зазоры между ними —
-// общая формула для одного действия (swipeToDelete) и нескольких подряд
-// (swipeActions), чтобы дистанция свайпа всегда точно совпадала с тем, что
+// общая формула для любого числа действий (swipeActions), чтобы дистанция свайпа всегда точно совпадала с тем, что
 // нарисовано под строкой.
 const SWIPE_CIRCLE = 50, SWIPE_GAP = 14, SWIPE_PAD = 15;
 const swipeActionsWidth = (n) => SWIPE_PAD * 2 + SWIPE_CIRCLE * n + SWIPE_GAP * (n - 1);
 
-function swipeToDelete(rowNode, onDelete, label = "Удалить") {
-  const ACTION_W = swipeActionsWidth(1);
-  const wrap = el("div", { class: "swipe-row" });
-  const action = el("button", { class: "swipe-action-btn warn", "aria-label": label, html: ICON_CLOSE });
-  const bar = el("div", { class: "swipe-actions" }, action);
-  rowNode.classList.add("swipe-content");
-  rowNode.setAttribute("draggable", "false"); // иначе браузер начинает нативный drag ссылки вместо свайпа
-  wrap.append(bar, rowNode);
-
-  let x = 0, dragging = false, locked = null, moved = false, startX = 0, startY = 0, fromX = 0, pid = null;
-  const apply = (animate) => {
-    rowNode.style.transition = animate ? "transform .22s cubic-bezier(.2,.8,.2,1)" : "none";
-    rowNode.style.transform = x ? `translateX(${x}px)` : "";
-  };
-  const close = (animate = true) => { x = 0; apply(animate); };
-  const openFull = (animate = true) => { x = -ACTION_W; apply(animate); openSwipeClose = close; };
-
-  action.onclick = async (e) => {
-    e.preventDefault(); e.stopPropagation();
-    action.disabled = true;
-    const ok = await onDelete();
-    if (ok === false) { action.disabled = false; close(); if (openSwipeClose === close) openSwipeClose = null; }
-  };
-
-  rowNode.addEventListener("pointerdown", (e) => {
-    if (e.pointerType === "mouse" && e.button !== 0) return;
-    if (openSwipeClose && openSwipeClose !== close) closeOpenSwipe();
-    dragging = true; locked = null; moved = false; pid = e.pointerId;
-    startX = e.clientX; startY = e.clientY; fromX = x;
-  });
-  rowNode.addEventListener("pointermove", (e) => {
-    if (!dragging || e.pointerId !== pid) return;
-    const ddx = e.clientX - startX, ddy = e.clientY - startY;
-    if (locked === null) {
-      if (Math.abs(ddx) < 6 && Math.abs(ddy) < 6) return;
-      locked = Math.abs(ddx) > Math.abs(ddy) ? "x" : "y";
-      if (locked === "x") rowNode.setPointerCapture(pid);
-    }
-    if (locked !== "x") return;
-    moved = true;
-    x = Math.max(-ACTION_W - 16, Math.min(0, fromX + ddx));
-    apply(false);
-  });
-  const finish = (e) => {
-    if (!dragging || (e && e.pointerId !== pid)) return;
-    dragging = false;
-    if (locked === "x") {
-      if (x < -ACTION_W / 2) openFull();
-      else { close(); if (openSwipeClose === close) openSwipeClose = null; }
-    }
-  };
-  rowNode.addEventListener("pointerup", finish);
-  rowNode.addEventListener("pointercancel", finish);
-  // stopImmediatePropagation — не только preventDefault(): rowNode может сам
-  // по себе иметь собственный click-обработчик (строка-переключатель, см.
-  // диагностику), зарегистрированный ДО этого. preventDefault гасит только
-  // штатное поведение (например переключение чекбокса через label), но не
-  // чужие addEventListener-слушатели — без stopImmediatePropagation
-  // свайп-жест долетал бы до них как обычный тап и срабатывал бы заодно.
-  rowNode.addEventListener("click", (e) => {
-    if (moved) { e.preventDefault(); e.stopImmediatePropagation(); return; }
-    if (x !== 0) { e.preventDefault(); e.stopImmediatePropagation(); close(); if (openSwipeClose === close) openSwipeClose = null; }
-  });
-
-  return wrap;
-}
-
-// Тот же жест, что и swipeToDelete, но открывает несколько кружков-иконок
+// Свайп влево открывает под строкой несколько кружков-иконок
 // подряд (например правка + удаление), а не один — для плотных списков
 // (правка неисправностей в диагностике), где такие кнопки прямо в строке
 // смотрятся слишком мелко и тесно. actions — [{label, ariaLabel, onClick,
@@ -2564,9 +2497,9 @@ function repairItem(it, stock, { onSave, onQty, onRemove, onAdd, onClaim }) {
     el("div", { style: "margin-top:10px" }, pricedControlGroup(priceControl, quantityControl)));
   box.append(openArea);
   if (it.notes) box.append(el("p", { class: "small muted" }, it.notes));
-  // Свайп «убрать» — только администратору; мастер убирает работу кнопкой
-  // внизу раскрытой работы (openRepairSheet).
-  const row = onRemove && SESSION?.role === "admin" ? swipeToDelete(box, () => { onRemove(it.code); return true; }) : box;
+  // Без свайпа: убрать работу — кнопка «Убрать из обращения» внизу
+  // раскрытой работы (openRepairSheet), одинаково для всех.
+  const row = box;
   row.dataset.workKey = it.code;
   row.dataset.hideActions = "1";
   return row;
