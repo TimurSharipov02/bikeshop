@@ -327,6 +327,7 @@ const routes = [
   [/^\/orders\/([^/]+)$/, (m) => viewOrder(m[1])],
   [/^\/profile$/, viewProfile],
   [/^\/profile\/report$/, () => masterReportScreen(SESSION?.id, "/profile")],
+  [/^\/profile\/settings$/, viewSettings],
   [/^\/admin$/, adminOnly(viewAdmin)],
   [/^\/admin\/masters$/, adminOnly(viewMasters)],
   [/^\/admin\/clients$/, adminOnly(viewClients)],
@@ -758,6 +759,7 @@ const ICONS = {
   masters: ICON_SVG('<circle cx="9" cy="8" r="2.5"/><path d="M4 19c.8-2.6 2.6-4 5-4s4.2 1.4 5 4"/><circle cx="17" cy="9" r="2"/><path d="M15.5 12c1.9.4 3 1.6 3.5 3.2"/>'),
   clients: ICON_SVG('<rect x="3.5" y="5.5" width="17" height="13" rx="2.5"/><circle cx="9" cy="11" r="2"/><path d="M6.3 16c.5-1.7 1.8-2.6 3.3-2.6"/><path d="M14 10h4M14 13.5h4"/>'),
   stock: ICON_SVG('<path d="M3.5 7.5 12 3l8.5 4.5V16L12 20.5 3.5 16V7.5Z"/><path d="M3.5 7.5 12 12l8.5-4.5M12 12v8.5"/>'),
+  settings: ICON_SVG('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/>'),
   report: ICON_SVG('<path d="M4 20V10"/><path d="M11 20V4"/><path d="M18 20v-7"/>'),
   sync: ICON_SVG('<path d="M4 12a8 8 0 0 1 14-5.2M20 12a8 8 0 0 1-14 5.2"/><path d="M18 3v4h-4M6 21v-4h4"/>'),
 };
@@ -3278,7 +3280,8 @@ function viewSetup() {
 // Шторка выбора оформления: тема сверху, ниже стили с кружками-образцами
 // цветов. Выбор сразу применяется ко всему приложению и сохраняется за
 // аккаунтом; если сервер не ответил — вид всё равно остаётся на этом телефоне.
-function openLookSheet() {
+// Оформление — раздел экрана «Настройки» (viewSettings).
+function lookEditor() {
   const body = el("div", {});
   const choose = (patch) => {
     applyLook({ ...currentLook, ...patch });
@@ -3301,51 +3304,56 @@ function openLookSheet() {
         el("span", { style: "flex:1;min-width:0" }, el("b", {}, p.name), el("span", { class: "small muted look-note" }, p.note)),
         currentLook.style === p.id ? el("span", { class: "row-check", html: ICON_CHECK }) : null)))));
   draw();
-  // Раскрывается под строкой «Оформление» в профиле (presentInline).
-  return presentInline("look", "Оформление", body);
+  return body;
 }
 
 function viewProfile() {
-  const changePassword = () => {
-    const error = el("p", { class: "small", style: "color:var(--warn);display:none" });
-    let sheet;
-    const form = el("form", { onsubmit: async (ev) => {
-      ev.preventDefault();
-      error.style.display = "none";
-      try {
-        await authAction({ action: "changePassword", currentPassword: ev.target.current.value, newPassword: ev.target.next.value });
-        sheet.close();
-        toast("Пароль изменён");
-      } catch (e) {
-        error.textContent = e.message || "Не удалось сменить пароль";
-        error.style.display = "";
-      }
-    } },
-      ...field("Текущий пароль", "current", "password", "current-password"),
-      ...field("Новый пароль", "next", "password", "new-password"),
-      error,
-      el("button", { class: "btn-primary", type: "submit", style: "width:100%;margin-top:16px" }, "Сохранить"));
-    sheet = presentInline("password", "Сменить пароль", form);
-  };
+  // Все пункты профиля — одинаковые ссылки на свои экраны; оформление и
+  // смена пароля собраны в «Настройках» (раньше одни пункты открывали
+  // экран, а соседние раскрывались на месте — путало).
   return [
     bar(SESSION?.name || SESSION?.login || "Профиль", "/"),
     el("main", { class: "wrap" },
       el("div", { class: "rows rows-separate", style: "margin-bottom:12px" },
         homeLink("Выполненные работы", "/profile/report", ICONS.report),
         SESSION?.role === "admin" ? homeLink("Админка", "/admin", ICONS.admin) : null,
-        el("button", { class: "row profile-menu-action", type: "button", "data-work-key": "look",
-          onclick: () => isInlineOpen("look") ? closeInlineWork() : openLookSheet() },
-          el("span", { class: "row-icon", html: ICON_SVG('<circle cx="12" cy="12" r="9"/><circle cx="7.8" cy="10.5" r="1.2"/><circle cx="12" cy="7.5" r="1.2"/><circle cx="16.2" cy="10.5" r="1.2"/><path d="M12 21a2.2 2.2 0 0 1 0-4.4h1.6a3.4 3.4 0 0 0 3.4-3.4"/>') }),
-          el("span", { style: "flex:1" }, "Оформление"), el("span", { class: "chev" }, "›")),
-        el("button", { class: "row profile-menu-action", type: "button", "data-work-key": "password",
-          onclick: () => isInlineOpen("password") ? closeInlineWork() : changePassword() },
-          el("span", { class: "row-icon", html: ICON_SVG('<rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>') }),
-          el("span", { style: "flex:1" }, "Сменить пароль"), el("span", { class: "chev" }, "›"))),
+        homeLink("Настройки", "/profile/settings", ICONS.settings)),
       el("div", { style: "display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-top:16px" },
         el("button", { style: "border:0;background:none;color:var(--muted);text-decoration:underline;padding:0;min-height:0", onclick: logout }, "Выйти"),
         // Время сборки = время публикации на сайте (Vercel собирает при каждом
         // пуше) — видно, обновилась ли у мастера страница после выкладки.
         BUILD_TIME ? el("span", { class: "small muted" }, "Версия от " + BUILD_TIME) : null)),
+  ];
+}
+
+// Настройки: оформление и смена пароля — разделами на одном экране, без
+// раскрытий и шторок.
+function viewSettings() {
+  const error = el("p", { class: "small", style: "color:var(--warn);display:none" });
+  const form = el("form", { onsubmit: async (ev) => {
+    ev.preventDefault();
+    error.style.display = "none";
+    try {
+      await authAction({ action: "changePassword", currentPassword: ev.target.current.value, newPassword: ev.target.next.value });
+      ev.target.reset();
+      toast("Пароль изменён");
+    } catch (e) {
+      error.textContent = e.message || "Не удалось сменить пароль";
+      error.style.display = "";
+    }
+  } },
+    ...field("Текущий пароль", "current", "password", "current-password"),
+    ...field("Новый пароль", "next", "password", "new-password"),
+    error,
+    el("button", { class: "btn-primary", type: "submit", style: "width:100%;margin-top:16px" }, "Сменить пароль"));
+  return [
+    bar("Настройки", "/profile"),
+    // Разделы одного уровня — «Тема», «Стиль» (из lookEditor) и «Пароль».
+    el("main", { class: "wrap" },
+      lookEditor(),
+      el("div", { class: "sheet-section" },
+        el("div", { class: "sheet-section-title" }, "Пароль"),
+        el("div", { class: "card settings-password" }, form))),
   ];
 }
 

@@ -718,3 +718,4 @@ label { display:block; font-size:13px; color:var(--muted); margin:var(--sp-4) 0 
   100% { background:transparent; }
 }
 @media (prefers-reduced-motion: reduce) { .misc-opening, .misc-row.just-added { animation:none; } }
+.settings-password label:first-child { margin-top:0; }
