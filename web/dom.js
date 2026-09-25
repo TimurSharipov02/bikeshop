@@ -97,8 +97,17 @@ export function el(tag, attrs, ...kids) {
   }
   return n;
 }
+// Кнопка «‹» ведёт туда же, куда и системный «назад» (свайп, кнопка
+// Android): на предыдущий экран. backHash — только запасной путь, если
+// открыли сразу по ссылке и позади ничего нет. Сам переход — в app.js.
+let backHandler = null;
+export const setBackHandler = (fn) => { backHandler = fn; };
+export const backLink = (backHash) => el("a", {
+  class: "back", href: "#" + backHash,
+  onclick: (e) => { if (backHandler) { e.preventDefault(); backHandler(backHash); } },
+}, "‹");
 export const bar = (title, backHash, rightNode) =>
   el("header", { class: "bar" },
-    backHash != null ? el("a", { class: "back", href: "#" + backHash }, "‹") : null,
+    backHash != null ? backLink(backHash) : null,
     el("h1", {}, title),
     rightNode || null);

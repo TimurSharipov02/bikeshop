@@ -31,7 +31,7 @@
 import { itemWorkValue } from "./pricing.js";
 import { matchesQuery } from "./search.js";
 import { reportEntries } from "./report-entries.js";
-import { app, money, iconBtnStyle, toast, closeAllSheets, openSheet, el, bar } from "./dom.js";
+import { app, money, iconBtnStyle, toast, closeAllSheets, openSheet, el, bar, backLink, setBackHandler } from "./dom.js";
 import {
   quantityModeOf, usesQuantity, repeatsWholeItem, WORK_INSTANCE_LIMIT, WORK_QUANTITY_LIMIT,
   instanceLimitOf, workQuantityLimitOf, itemRange, itemPartsCost, itemMinutes, orderRange, orderRangeAll, orderMinutes,
@@ -349,6 +349,28 @@ function router() {
   render(viewHome());
 }
 const go = (hash) => { location.hash = hash; };
+
+// «Назад» — всегда на тот экран, где был только что: и кнопка «‹», и свайп,
+// и кнопка «назад» Android идут через историю браузера одной дорогой.
+// Раньше «‹» открывала заранее заданный «родительский» экран новой записью
+// в истории — и после неё свайп возвращал обратно, туда, откуда ушёл.
+// Каждой записи истории ставим номер (history.state.idx): по нему видно,
+// есть ли позади экран этого приложения. Если нет (открыли по ссылке,
+// перезагрузили на первом экране) — «‹» ведёт на fallback, заменяя запись.
+let navIdx = 0;
+const stampEntry = (extra) => history.replaceState({ ...(history.state || {}), ...extra, idx: navIdx }, "");
+if (Number.isInteger(history.state?.idx)) navIdx = history.state.idx; else stampEntry();
+// Сменить текущий экран, не оставляя в истории того, с которого ушли
+// (созданный наряд вместо мастера создания, новый адрес клиента).
+function goReplace(hash) {
+  history.replaceState({ idx: navIdx }, "", "#" + hash);
+  onRoute();
+}
+function goBack(fallback = "/") {
+  if (navIdx > 0) history.back();
+  else goReplace(fallback);
+}
+setBackHandler(goBack);
 // keepScroll — для точечных обновлений текущего экрана (галочка, чекбокс,
 // правка поля): не дёргать страницу вверх при каждом клике. Без него — как
 // при обычном переходе на новый экран, скролл сбрасывается в начало.
@@ -415,7 +437,13 @@ function titleMorphPair(list) {
   const to = findTitleLabel(list, oldTitle);
   return to ? { from: oldH1, to } : null;
 }
-window.addEventListener("hashchange", () => { router(); if (SESSION) syncFromServer(); });
+function onRoute() { router(); if (SESSION) syncFromServer(); }
+window.addEventListener("hashchange", () => {
+  // Новая запись (ссылка, go()) приходит без номера — она на шаг дальше.
+  // При шаге по истории номер уже есть и уже учтён в popstate.
+  if (!Number.isInteger(history.state?.idx)) { navIdx++; stampEntry(); }
+  onRoute();
+});
 
 // Полноэкранные под-экраны (диагностика, техпроцедура, подбор работы) внутри
 // обращения не меняют #хеш при входе — рисуются прямо поверх текущего экрана
@@ -435,12 +463,13 @@ let editingItemCode = null; // код работы в наряде, у кото�
 function enterSubScreen(onExit) {
   setInSubScreen(true);
   subScreenExit = onExit;
-  history.pushState({ sub: true }, "");
+  history.pushState({ sub: true, idx: ++navIdx }, "");
 }
 function leaveSubScreen() {
   history.back();
 }
 window.addEventListener("popstate", () => {
+  if (Number.isInteger(history.state?.idx)) navIdx = history.state.idx;
   closeAllSheets();
   const fn = subScreenExit;
   subScreenExit = null;
@@ -1045,7 +1074,9 @@ function viewNewOrder() {
         return itemsRangeWithParts(items);
       },
       totalText: () => ({ range: orderRangeAll(draft), count: draft.items.length, items: draft.items }),
-      onDone: stepClient,
+      // Второй шаг — отдельная запись в истории: «‹», свайп и «Назад»
+      // одинаково возвращают к выбору работ, черновик остаётся.
+      onDone: () => { stepClient(); enterSubScreen(stepWorks); },
     });
   }
 
@@ -1142,14 +1173,17 @@ function viewNewOrder() {
           items: draft.items.map((it) => ({ ...it, agreed: true })), createdAt: new Date().toISOString(),
         });
       });
-      go(`/orders/${number}`);
+      // Созданный наряд встаёт на место мастера создания: «назад» из него —
+      // туда, откуда начинали, а не обратно в пустую форму.
+      subScreenExit = () => goReplace(`/orders/${number}`);
+      leaveSubScreen();
     };
 
     render([
       bar("Новое обращение", "/"),
       wrap,
       el("div", { class: "actions" }, el("div", { class: "actions-inner" },
-        el("button", { onclick: stepWorks }, "Назад"),
+        el("button", { onclick: leaveSubScreen }, "Назад"),
         el("button", { class: "btn-primary", onclick: createOrder }, "Создать наряд"))),
     ]);
   }
@@ -1395,14 +1429,15 @@ function viewOrder(number) {
         // Кто выдал — мастер может сам отменить свою выдачу в первые 15 минут.
         o.handedOverBy = { masterId: SESSION?.id || "", masterName: SESSION?.name || "" };
       });
-      subScreenExit = () => go("/");
+      // Выдали — обращение закрыто, возвращаемся туда, откуда его открыли.
+      subScreenExit = () => goBack("/");
       leaveSubScreen();
     };
     const checkPayment = async () => {
       await syncFromServer();
       const current = loadDB().orders.find((o) => o.number === number);
       if (current?.handedOverAt && current.fiscalReceipt) {
-        subScreenExit = () => go("/");
+        subScreenExit = () => goBack("/");
         leaveSubScreen();
       } else toast("Подтверждение оплаты из 1С ещё не получено");
     };
@@ -1567,7 +1602,7 @@ function viewOrder(number) {
     // забирает один мастер, другой экземпляр другой, см. repairGroupItem/
     // openRepairSheet). occupiedBy остаётся только информационной меткой
     // «кто сюда заходил», ни на что не влияет и ничего не блокирует.
-    const leaveOrder = () => go("/");
+    const leaveOrder = () => goBack("/");
 
     {
       // Склад почти всегда уже в кэше (его подтягивали раньше на этом же
@@ -1651,10 +1686,10 @@ function viewOrder(number) {
     // Название велосипеда вместо номера обращения, покрупнее остальных
     // заголовков — по нему сразу видно, с чем работаешь. Номер обращения
     // нигде в интерфейсе не показываем — мастерам он не нужен, только путает.
-    // Отдельного архива больше нет — «выдан» открывают только из истории в
-    // отчёте по выработке, назад всегда на главный, как и остальные статусы.
+    // «‹» — туда, откуда открыли обращение (главный, выполненные работы,
+    // карточка клиента); если открыли по ссылке — на главный.
     el("header", { class: "bar" },
-      el("a", { class: "back", href: "#/" }, "‹"),
+      backLink("/"),
       el("h1", { class: "bar-title-lg" }, bike ? bikeLabel(bike) : client?.name || order.clientName || "Наряд"),
       // Раньше — отдельная кнопка на всю ширину под «Уточнениями», ниже
       // текста и легко терялась. Карандаш в строке заголовка — тот же
@@ -1708,7 +1743,7 @@ function openIssuedOrderSheet(order) {
       sheet?.close();
       rememberDeleted(order);
       toast("Обращение удалено");
-      go("/");
+      goBack("/");
     },
   });
   const body = issuedIn1C(order)
@@ -3763,9 +3798,9 @@ function viewClientDetails(phone, initialBike = "") {
     bikeNumber ? orders.filter((o) => o.bikeNumber === bikeNumber) : orders, db));
   showOrders(bikes.some((b) => b.number === initialBike) ? initialBike : "");
   const onEdit = (newPhone) => {
-    if (!newPhone) return go("/admin/clients");
+    if (!newPhone) return goBack("/admin/clients");
     const target = clientHref(newPhone);
-    if (location.hash === `#${target}`) router(); else go(target);
+    if (location.hash === `#${target}`) router(); else goReplace(target);
   };
   return [bar(client.name || "Клиент", "/admin/clients",
       el("button", { class: "edit-btn", style: iconBtnStyle,
