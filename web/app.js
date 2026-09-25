@@ -1336,17 +1336,13 @@ function viewOrder(number) {
       error,
       el("button", { class: "btn-primary", style: "width:100%;margin-top:16px", onclick: save }, "Сохранить"),
       // Удаление обращения — здесь, а не свайпом по списку на главном.
-      el("button", { class: "btn-warn", style: "width:100%;margin-top:10px", onclick: () => askDialog({
-        title: "Удалить обращение?",
-        message: "Оно пропадёт из списка вместе со всеми работами. Вернуть можно встряхиванием в течение минуты.",
-        yes: "Удалить", no: "Отмена",
-        onYes: async () => {
-          if (!(await deleteOrderWithAlert(order))) return;
-          sheet.close();
-          toast("Обращение удалено");
-          goBack("/");
-        },
-      }) }, "Удалить обращение")));
+      // Без переспроса: вернуть можно кнопкой «↶» или встряхиванием.
+      el("button", { class: "btn-warn", style: "width:100%;margin-top:10px", onclick: async () => {
+        if (!(await deleteOrderWithAlert(order))) return;
+        sheet.close();
+        toast("Обращение удалено");
+        goBack("/");
+      } }, "Удалить обращение")));
   }
 
   // agreed — работы, отмеченные на приёме (диагностика или «+ работа» на
@@ -1797,19 +1793,15 @@ function openIssuedOrderSheet(order) {
       router();
     },
   });
-  const remove = () => askDialog({
-    title: "Удалить обращение насовсем?",
-    message: "Оно пропадёт из выполненных работ и выработки мастеров. Вернуть будет нельзя.",
-    yes: "Удалить", no: "Отмена",
-    onYes: async () => {
-      armShakeForDelete();
-      if (!(await deleteOrderApi(order.number))) return toast("Не получилось удалить — проверьте связь и права");
-      sheet?.close();
-      rememberDeleted(order);
-      toast("Обращение удалено");
-      goBack("/");
-    },
-  });
+  // Без переспроса: вернуть можно кнопкой «↶» или встряхиванием.
+  const remove = async () => {
+    armShakeForDelete();
+    if (!(await deleteOrderApi(order.number))) return toast("Не получилось удалить — проверьте связь и права");
+    sheet?.close();
+    rememberDeleted(order);
+    toast("Обращение удалено");
+    goBack("/");
+  };
   const body = issuedIn1C(order)
     ? el("p", { class: "muted", style: "margin:0 0 8px" },
         order.fiscalReceipt
@@ -2124,7 +2116,7 @@ function editableItemRow(it, { onRemove, onSave, refresh, onDiffSet, onDiffQty }
   // Свайпы — только у администратора.
   const header = SESSION?.role === "admin" ? swipeActions(rowContent, [
     { label: ICON_EDIT, ariaLabel: "Изменить работу", onClick: () => { editingItemCode = isEditing ? null : it.code; refresh(); } },
-    { label: ICON_CLOSE, ariaLabel: "Убрать работу", className: "warn", onClick: () => { if (confirm(`Убрать «${it.name}» из обращения?`)) onRemove(it.code); } },
+    { label: ICON_CLOSE, ariaLabel: "Убрать работу", className: "warn", onClick: () => onRemove(it.code) },
   ]) : rowContent;
   const diffs = (it.difficulties || []).length
     ? el("div", { style: "width:100%;margin-top:2px" },
@@ -2357,7 +2349,7 @@ function pendingAgreementRow(it, { onAgree, onRemove, onSet, onDiffQty, onParts 
   // видимым сразу на строке, не прячем за открытием формы деталей.
   box.append(el("div", { class: "btn-row", style: "margin-top:10px" },
     el("button", { class: "btn-ok", onclick: () => onAgree(it.code) }, "Согласовано"),
-    el("button", { onclick: () => { if (confirm(`Убрать «${it.name}» из обращения?`)) onRemove(it.code); } }, "Убрать")));
+    el("button", { onclick: () => onRemove(it.code) }, "Убрать")));
   return box;
 }
 
@@ -2718,10 +2710,7 @@ function openRepairSheet(it, stock, onSave, siblings = [it], { onAdd: onAddInsta
       : el("button", { class: "btn-ok", style: "width:100%;margin-top:16px", onclick: markDone }, "Отметить готово");
     const removeBtn = onRemoveInstance && !instance.done ? el("button", {
       class: "small parts-text-action", style: "display:block;margin:14px auto 0",
-      onclick: () => askDialog({
-        title: `Убрать «${instance.name}» из обращения?`, yes: "Убрать", no: "Отмена",
-        onYes: () => removeInstance(instance),
-      }),
+      onclick: () => removeInstance(instance),
     }, "Убрать из обращения") : null;
     const inner = el("div", {},
       workDescriptionNode(instance),
