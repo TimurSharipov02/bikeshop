@@ -557,11 +557,9 @@ label { display:block; font-size:13px; color:var(--muted); margin:var(--sp-4) 0 
 .search-clear svg { width:16px; height:16px; }
 
 .pill { display:inline-block; font-size:12px; font-weight:600; padding:2px 9px; border-radius:999px;
-  background:var(--accent-weak); border:0; color:var(--accent); margin-left:6px;
-  animation:pill-pop .22s cubic-bezier(.34,1.56,.64,1); }
+  background:var(--accent-weak); border:0; color:var(--accent); margin-left:6px; }
 .pill-muted { background:var(--fill); color:var(--muted); --tag-c:var(--muted); }
 .pill-wait { background:var(--yellow-weak); color:var(--yellow-ink); --tag-c:var(--yellow); }
-@keyframes pill-pop { from { transform:scale(.6); opacity:0; } to { transform:scale(1); opacity:1; } }
 
 .opt { display:flex; align-items:center; gap:10px; padding:13px; border:.5px solid var(--line); border-radius:var(--radius-sm);
   margin:6px 0; cursor:pointer; background:var(--card); transition:border-color .12s ease, background .12s ease; }
