@@ -811,3 +811,6 @@ label { display:block; font-size:13px; color:var(--muted); margin:var(--sp-4) 0 
 @media (prefers-reduced-motion: reduce) {
   .login-letter, .login-card, .login-sub, .login-word::after, .login-enter main > :not(.rows), .login-enter .rows > *, .login-enter .actions { animation:none !important; }
 }
+.logout-btn { display:inline-flex; align-items:center; gap:8px; }
+.logout-icon { display:flex; }
+.logout-icon svg { width:20px; height:20px; }

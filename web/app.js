@@ -3446,7 +3446,9 @@ function viewProfile() {
         SESSION?.role === "admin" ? homeLink("Админка", "/admin", ICONS.admin) : null,
         homeLink("Настройки", "/profile/settings", ICONS.settings)),
       el("div", { style: "display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-top:16px" },
-        el("button", { style: "border:0;background:none;color:var(--muted);text-decoration:underline;padding:0;min-height:0", onclick: logout }, "Выйти"),
+        el("button", { class: "logout-btn", style: "border:0;background:none;color:var(--muted);padding:0;min-height:0", onclick: logout },
+          el("span", { class: "logout-icon", html: ICON_SVG('<path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4"/><path d="M10 16l-4-4 4-4"/><path d="M6 12h10"/>') }),
+          el("span", { style: "text-decoration:underline" }, "Выйти")),
         // Время сборки = время публикации на сайте (Vercel собирает при каждом
         // пуше) — видно, обновилась ли у мастера страница после выкладки.
         BUILD_TIME ? el("span", { class: "small muted" }, "Версия от " + BUILD_TIME) : null)),
