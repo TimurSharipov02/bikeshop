@@ -985,9 +985,9 @@ function formatDateShort(iso) {
 }
 
 // Строка обращения в списке активных обращений на главном экране (без
-// номера обращения — мастерам он не нужен, только путает). onDelete, если
-// передан, включает свайп-удаление строки.
-function orderRow(o, d, onDelete) {
+// номера обращения — мастерам он не нужен, только путает). Без свайпа:
+// удалить обращение — карандаш на его экране (шторка «Клиент и велосипед»).
+function orderRow(o, d) {
   const bike = d.bikes.find((b) => b.number === o.bikeNumber);
   const client = d.clients.find((c) => c.phone === o.clientPhone);
   const row = el("a", { class: "row", href: `#/orders/${o.number}` },
@@ -998,7 +998,7 @@ function orderRow(o, d, onDelete) {
       // тут только его имя.
       null),
     orderStatusTag(o));
-  return onDelete ? swipeToDelete(row, () => onDelete(o)) : row;
+  return row;
 }
 
 async function deleteOrderWithAlert(o) {
@@ -1023,7 +1023,7 @@ function viewHome() {
       el("h2", { class: "small section-title", style: "margin:0 0 8px;font-weight:700;letter-spacing:.06em" }, "АКТИВНЫЕ ОБРАЩЕНИЯ"),
       active.length === 0
         ? emptyState("Активных обращений нет.")
-        : rowsList(active.map((o) => orderRow(o, d, deleteOrderWithAlert)), false, true)),
+        : rowsList(active.map((o) => orderRow(o, d)), false, true)),
     el("div", { class: "actions" }, el("div", { class: "actions-inner" },
       el("button", { class: "btn-primary", onclick: () => go("/orders/new") }, "+ Новое обращение"))),
   ];
@@ -1324,7 +1324,19 @@ function viewOrder(number) {
       el("label", { style: "margin-top:10px" }, "Велосипед"),
       el("input", { value: state.bikeName, placeholder: "необязательно", oninput: (e) => (state.bikeName = e.target.value) }),
       error,
-      el("button", { class: "btn-primary", style: "width:100%;margin-top:16px", onclick: save }, "Сохранить")));
+      el("button", { class: "btn-primary", style: "width:100%;margin-top:16px", onclick: save }, "Сохранить"),
+      // Удаление обращения — здесь, а не свайпом по списку на главном.
+      el("button", { class: "btn-warn", style: "width:100%;margin-top:10px", onclick: () => askDialog({
+        title: "Удалить обращение?",
+        message: "Оно пропадёт из списка вместе со всеми работами. Вернуть можно встряхиванием в течение минуты.",
+        yes: "Удалить", no: "Отмена",
+        onYes: async () => {
+          if (!(await deleteOrderWithAlert(order))) return;
+          sheet.close();
+          toast("Обращение удалено");
+          goBack("/");
+        },
+      }) }, "Удалить обращение")));
   }
 
   // agreed — работы, отмеченные на приёме (диагностика или «+ работа» на
@@ -2099,10 +2111,11 @@ function editableItemRow(it, { onRemove, onSave, refresh, onDiffSet, onDiffQty }
     el("div", { style: "display:flex;align-items:center;gap:10px;width:100%" },
       usesQuantity(it) ? qtyStepper(it.qty, (qty) => onSave(it.code, { qty }), workQuantityLimitOf(it), () => onRemove(it.code)) : null,
       el("div", { class: "price-row", style: "margin-left:auto" }, itemPriceTags(it))));
-  const header = swipeActions(rowContent, [
+  // Свайпы — только у администратора.
+  const header = SESSION?.role === "admin" ? swipeActions(rowContent, [
     { label: ICON_EDIT, ariaLabel: "Изменить работу", onClick: () => { editingItemCode = isEditing ? null : it.code; refresh(); } },
     { label: ICON_CLOSE, ariaLabel: "Убрать работу", className: "warn", onClick: () => { if (confirm(`Убрать «${it.name}» из обращения?`)) onRemove(it.code); } },
-  ]);
+  ]) : rowContent;
   const diffs = (it.difficulties || []).length
     ? el("div", { style: "width:100%;margin-top:2px" },
         difficultyList(it.difficulties, (di, st) => onDiffSet(it.code, di, st), (di, qty) => onDiffQty(it.code, di, qty), false))
@@ -2549,7 +2562,9 @@ function repairItem(it, stock, { onSave, onQty, onRemove, onAdd, onClaim }) {
     el("div", { style: "margin-top:10px" }, pricedControlGroup(priceControl, quantityControl)));
   box.append(openArea);
   if (it.notes) box.append(el("p", { class: "small muted" }, it.notes));
-  const row = onRemove ? swipeToDelete(box, () => { onRemove(it.code); return true; }) : box;
+  // Свайп «убрать» — только администратору; мастер убирает работу кнопкой
+  // внизу раскрытой работы (openRepairSheet).
+  const row = onRemove && SESSION?.role === "admin" ? swipeToDelete(box, () => { onRemove(it.code); return true; }) : box;
   row.dataset.workKey = it.code;
   row.dataset.hideActions = "1";
   return row;
@@ -2691,6 +2706,13 @@ function openRepairSheet(it, stock, onSave, siblings = [it], { onAdd: onAddInsta
     const doneBlock = instance.done
       ? canUndoDone ? el("button", { style: "width:100%;margin-top:16px", onclick: unmarkDone }, "Снять отметку «готово»") : null
       : el("button", { class: "btn-ok", style: "width:100%;margin-top:16px", onclick: markDone }, "Отметить готово");
+    const removeBtn = onRemoveInstance && !instance.done ? el("button", {
+      class: "small parts-text-action", style: "display:block;margin:14px auto 0",
+      onclick: () => askDialog({
+        title: `Убрать «${instance.name}» из обращения?`, yes: "Убрать", no: "Отмена",
+        onYes: () => removeInstance(instance),
+      }),
+    }, "Убрать из обращения") : null;
     const inner = el("div", {},
       workDescriptionNode(instance),
       hasDiffs ? workSection("Усложнения", diffBox) : null,
@@ -2698,7 +2720,8 @@ function openRepairSheet(it, stock, onSave, siblings = [it], { onAdd: onAddInsta
         partsEditor(s.parts, stock, () => save(instance, { parts: s.parts }), partBlockIdOf(instance),
           instance.waitingForPart ? null : waitBlock),
         instance.waitingForPart ? waitBlock : null),
-      doneBlock);
+      doneBlock,
+      removeBtn);
     const body = locked
       ? el("div", {},
           el("p", { class: "small", style: "color:var(--muted);margin-bottom:10px" }, `Занято — ${instance.claimedBy?.masterName || "другой мастер"}`),
