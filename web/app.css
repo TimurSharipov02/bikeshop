@@ -717,7 +717,7 @@ label { display:block; font-size:13px; color:var(--muted); margin:var(--sp-4) 0 
 /* Свой раскрывающийся список (pickList в app.js): поле раскрывается вниз
    на месте, варианты выезжают по одному. */
 .pick { border-radius:var(--radius-sm); background:var(--fill); overflow:hidden; }
-.pick-field { display:flex; align-items:center; gap:10px; min-height:52px; padding:0 16px; cursor:pointer;
+.pick-field { display:flex; align-items:center; gap:10px; min-height:46px; padding:0 16px; cursor:pointer;
   color:var(--ink); font-weight:600; -webkit-tap-highlight-color:transparent; }
 .pick-text { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .pick-chev { flex:0 0 auto; color:var(--accent); font-size:22px; line-height:1; transform:rotate(90deg); transition:transform .22s ease; }

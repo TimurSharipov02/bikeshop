@@ -3980,11 +3980,12 @@ function viewClients() {
   const searchInput = el("input", { type: "text", placeholder: "Поиск по имени или телефону" });
   searchInput.addEventListener("input", (e) => { q = e.target.value; redraw(); });
   redraw();
+  // Поиск — внизу экрана, как во «Выполненных работах» и запчастях:
+  // одинаково во всех списках и под большим пальцем.
   return [
     bar("Клиенты", "/admin"),
-    el("main", { class: "wrap" },
-      el("div", { class: "admin-search" }, searchInput),
-      el("div", { style: "margin-top:12px" }, box)),
+    el("main", { class: "wrap" }, box),
+    el("div", { class: "actions" }, el("div", { class: "actions-inner" }, searchInput)),
   ];
 }
 
@@ -4305,9 +4306,7 @@ function stockScreen(data, error) {
     el("main", { class: "wrap" },
       error ? el("p", { class: "small", style: "color:var(--warn)" }, error) : null,
       updated ? el("p", { class: "small muted" }, "Обновлено: " + updated + sourceLabel) : null,
-      el("div", { class: "admin-search" },
-        el("div", { class: "search-wrap" }, searchInput, clearBtn),
-        chipsBox),
+      el("div", { class: "admin-search" }, chipsBox),
       el("div", { class: "admin-stock-list" }, rowsBox),
       el("div", { class: "admin-stock-actions" },
         el("button", { style: "margin-top:10px", onclick: () => {
@@ -4332,6 +4331,9 @@ function stockScreen(data, error) {
               if (parsed.length) saveStockItems(parsed);
             },
           }, "Импортировать (заменит список)")))),
+    // Поиск — внизу, как в остальных списках; фильтры-чипы остались сверху.
+    el("div", { class: "actions" }, el("div", { class: "actions-inner" },
+      el("div", { class: "search-wrap", style: "flex:1;min-width:0" }, searchInput, clearBtn))),
   ];
 }
 
