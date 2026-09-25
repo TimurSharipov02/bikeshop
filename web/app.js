@@ -2749,8 +2749,25 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
     sheet = openSheet(f ? "Изменить работу" : "Новая работа", body);
   }
 
+  // Раскрытый по тапу блок подтягиваем к верху экрана: его работы идут
+  // сразу под заголовком, а не уезжают за нижний край. У нижних блоков
+  // странице не хватает высоты доехать — добавляем запас снизу (до
+  // следующей перерисовки).
+  let scrollToInst = null;
+  function scrollOpenedIntoView(card, wrap) {
+    requestAnimationFrame(() => {
+      if (inline) return card.scrollIntoView({ block: "start", behavior: "smooth" });
+      const bar = document.querySelector("header.bar");
+      const top = Math.max(0, card.getBoundingClientRect().top + window.scrollY - (bar?.offsetHeight || 0) - 12);
+      const lack = top + window.innerHeight - document.documentElement.scrollHeight;
+      if (lack > 0) wrap.style.paddingBottom = `calc(${getComputedStyle(wrap).paddingBottom} + ${Math.ceil(lack)}px)`;
+      window.scrollTo({ top, behavior: "smooth" });
+    });
+  }
+
   function draw() {
     const list = instances();
+    let openedCard = null;
     const wrap = el(inline ? "div" : "main", { class: inline ? null : "wrap" });
 
     // При встраивании в «+ доп. работа» (inline) уточнения не нужны — это
@@ -2769,7 +2786,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
       const s = st(inst.id);
       const header = el("div", {
         style: "display:flex;align-items:center;gap:10px;cursor:pointer",
-        onclick: () => { s.open = !s.open; draw(); },
+        onclick: () => { s.open = !s.open; scrollToInst = s.open ? inst.id : null; draw(); },
       },
         // Текст-подсказку («на что смотреть при проверке узла») пока скрыли —
         // делаем версию для опытных мастеров, которым она не нужна. Данные
@@ -2781,6 +2798,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
           style: `flex:0 0 auto;color:var(--line);font-size:19px;transform:rotate(${s.open ? "90deg" : "0deg"});transition:transform .15s ease`,
         }, "›"));
       const card = el("div", { class: "card" }, header);
+      if (inst.id === scrollToInst) openedCard = card;
 
       if (s.open) {
         const fb = el("div", { style: "margin-top:8px" });
@@ -3010,6 +3028,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
     host.replaceChildren(wrap,
       el("div", { class: "actions" }, el("div", { class: "actions-inner" },
         el("button", { class: "btn-primary", onclick: finish }, "Далее"))));
+    if (openedCard) { scrollToInst = null; scrollOpenedIntoView(openedCard, wrap); }
   }
 
   // Работы уже добавлены живьём по каждому чекбоксу (см. onCheck) — у
