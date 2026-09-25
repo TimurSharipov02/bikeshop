@@ -105,3 +105,14 @@ export async function requireAdmin(req, res, storeRedis) {
   if (s.role !== "admin") { res.status(403).json({ error: "только для администратора" }); return null; }
   return s;
 }
+
+// Логин — номер телефона в едином виде «+7XXXXXXXXXX», как бы его ни ввели
+// (+7 996 606-12-00, 8996…, 996…). Пустая строка — если это не номер.
+export function phoneLogin(s) {
+  let d = String(s || "").replace(/\D/g, "");
+  if (d.length === 11 && (d[0] === "7" || d[0] === "8")) d = d.slice(1);
+  return d.length === 10 ? "+7" + d : "";
+}
+// То, что ввели на экране входа: номер — к единому виду, иначе — старый
+// текстовый логин (у кого номер ещё не вписан в настройках мастера).
+export const loginKey = (s) => phoneLogin(s) || String(s || "").trim().toLowerCase();

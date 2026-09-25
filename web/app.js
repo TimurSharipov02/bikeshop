@@ -3122,10 +3122,21 @@ function formRow(label, control, suffix) {
 function field(label, name, type, autocomplete) {
   return [el("label", {}, label), el("input", { name, type: type || "text", autocomplete: autocomplete || "off" })];
 }
+// Логин сотрудника — его номер телефона: поле с той же маской «+7 …»,
+// что и у клиентов. На экране входа — autocomplete=username, чтобы
+// связка ключей айфона запоминала номер вместе с паролем.
+function phoneLoginInput(name, { value = "", autocomplete = "off" } = {}) {
+  const input = el("input", { name, placeholder: "+7 900 000 00 00", value: value ? applyPhoneMask(value) : "" });
+  attachPhoneMask(input, () => {});
+  input.autocomplete = autocomplete;
+  return input;
+}
+// Как показывать логин: номер — с пробелами, старый текстовый — как есть.
+const loginLabel = (login) => /^\+7\d{10}$/.test(login || "") ? applyPhoneMask(login) : login || "";
 
 function viewLogin() {
   return authCard("Вход в Veloterra", null,
-    [...field("Логин", "login"), ...field("Пароль", "password", "password", "current-password")],
+    [el("label", {}, "Телефон"), phoneLoginInput("login", { autocomplete: "username" }), ...field("Пароль", "password", "password", "current-password")],
     async (form) => {
       await authAction({ action: "login", login: form.login.value.trim(), password: form.password.value });
       await loadSession();
@@ -3137,7 +3148,7 @@ function viewLogin() {
 
 function viewSetup() {
   return authCard("Первый запуск", "Учётных записей ещё нет. Создайте администратора — дальше он сам заведёт мастеров.",
-    [...field("Имя", "name"), ...field("Логин", "login"),
+    [...field("Имя", "name"), el("label", {}, "Телефон"), phoneLoginInput("login", { autocomplete: "username" }),
      ...field("Пароль", "password", "password", "new-password"),
      ...field("Повтор пароля", "password2", "password", "new-password")],
     async (form) => {
@@ -3659,6 +3670,16 @@ function openMasterSettings(u, { onChanged, onDeleted }) {
   controls.append(el("form", {
     class: "sheet-section", onsubmit: async (ev) => {
       ev.preventDefault();
+      if (await usersApi("PUT", { id: u.id, login: ev.target.login.value })) { sheet.close(); onChanged(); toast("Телефон для входа сохранён"); }
+    },
+  },
+    el("h3", {}, "Вход"),
+    el("div", { class: "form-list" }, formRow("Телефон", phoneLoginInput("login", { value: /^\+7\d{10}$/.test(u.login || "") ? u.login : "" }))),
+    el("button", { type: "submit", style: "width:100%;margin-top:10px" }, "Сохранить телефон")));
+
+  controls.append(el("form", {
+    class: "sheet-section", onsubmit: async (ev) => {
+      ev.preventDefault();
       if (await usersApi("PUT", { id: u.id, commissionPercent: ev.target.commissionPercent.value })) { sheet.close(); onChanged(); toast("Процент обновлён"); }
     },
   },
@@ -3713,7 +3734,7 @@ function mastersScreen(list, error) {
     class: "admin-form", onsubmit: async (ev) => {
       ev.preventDefault();
       const ok = await usersApi("POST", {
-        name: ev.target.name.value.trim(), login: ev.target.login.value.trim().toLowerCase(),
+        name: ev.target.name.value.trim(), login: ev.target.login.value.trim(),
         password: ev.target.password.value, role: ev.target.role.value, commissionPercent: ev.target.commissionPercent.value,
       });
       if (ok) { ev.target.reset(); loadMasters(); }
@@ -3722,7 +3743,7 @@ function mastersScreen(list, error) {
     el("h2", {}, "Новый сотрудник"),
     el("div", { class: "form-list" },
       formRow("Имя", el("input", { name: "name", autocomplete: "off" })),
-      formRow("Логин", el("input", { name: "login", autocomplete: "off", autocapitalize: "off" })),
+      formRow("Телефон", phoneLoginInput("login")),
       formRow("Пароль", el("input", { name: "password", type: "password", autocomplete: "new-password" })),
       formRow("Роль", el("select", { name: "role" }, el("option", { value: "master" }, "Мастер"), el("option", { value: "admin" }, "Администратор"))),
       formRow("Процент", el("input", { name: "commissionPercent", type: "number", min: 0, max: 100, value: 0, inputmode: "numeric" }), "%")),
@@ -3736,7 +3757,7 @@ function mastersScreen(list, error) {
       u.role === "admin" ? el("span", { class: "pill" }, "админ") : null,
       !u.active ? el("span", { class: "pill" }, "отключён") : null,
       el("span", { class: "chev" }, "›")),
-    el("div", { class: "small muted" }, u.login)));
+    el("div", { class: "small muted" }, loginLabel(u.login))));
 
   return [
     bar("Мастера", "/admin"),

@@ -2,7 +2,7 @@
 // Учётные записи хранятся тем же способом, что и остальные данные — одним
 // документом в Upstash Redis.
 
-import { redis, readBody, hashPassword, verifyPassword, getSession, setSessionCookie, clearSessionCookie } from "./_lib.js";
+import { redis, readBody, hashPassword, verifyPassword, getSession, setSessionCookie, clearSessionCookie, phoneLogin, loginKey } from "./_lib.js";
 
 const KEY = "vella:users";
 const loadUsers = async (r) => (await r.get(KEY)) || { users: [] };
@@ -32,13 +32,13 @@ export default async function handler(req, res, r = redis()) {
 
     if (body.action === "bootstrap") {
       if (store.users.length > 0) return res.status(400).json({ error: "администратор уже создан" });
-      const login = String(body.login || "").trim().toLowerCase();
+      const login = phoneLogin(body.login);
       const name = String(body.name || "").trim();
       const password = String(body.password || "");
       if (!login || !name || password.length < 4)
-        return res.status(400).json({ error: "заполните имя, логин и пароль (от 4 символов)" });
+        return res.status(400).json({ error: "заполните имя, телефон и пароль (от 4 символов)" });
       const user = {
-        id: `${login}-${Date.now().toString(36)}`, login, name, role: "admin", active: true,
+        id: `u-${Date.now().toString(36)}`, login, name, role: "admin", active: true,
         pwd: hashPassword(password), createdAt: new Date().toISOString(),
       };
       store.users.push(user);
@@ -48,10 +48,10 @@ export default async function handler(req, res, r = redis()) {
     }
 
     if (body.action === "login") {
-      const login = String(body.login || "").trim().toLowerCase();
-      const u = store.users.find((x) => x.login === login && x.active);
+      const login = loginKey(body.login);
+      const u = login && store.users.find((x) => x.login === login && x.active);
       if (!u || !verifyPassword(body.password || "", u.pwd))
-        return res.status(401).json({ error: "неверный логин или пароль" });
+        return res.status(401).json({ error: "неверный телефон или пароль" });
       setSessionCookie(res, { uid: u.id, role: u.role, authVersion: u.authVersion || 0 });
       return res.status(200).json({ user: publicUser(u) });
     }
