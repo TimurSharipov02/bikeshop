@@ -960,7 +960,7 @@ function orderRow(o, d, onDelete) {
   const bike = d.bikes.find((b) => b.number === o.bikeNumber);
   const client = d.clients.find((c) => c.phone === o.clientPhone);
   const row = el("a", { class: "row", href: `#/orders/${o.number}` },
-    el("span", { style: "flex:1;min-width:0" }, bike ? bikeLabel(bike) : (client?.name || o.clientName || "Наряд без данных"),
+    el("span", { style: "flex:1;min-width:0" }, bike ? bikeLabel(bike) : (client?.name || o.clientName || "Обращение без данных"),
       (client?.name || o.clientName || o.clientPhone) ? el("br") : null,
       (client?.name || o.clientName || o.clientPhone) ? el("span", { class: "small muted" }, client?.name || o.clientName || o.clientPhone) : null,
       // Занятость мастером — теперь сама по себе статус («взята в работу»),
@@ -1025,7 +1025,7 @@ function viewNewOrder() {
 
   function stepWorks() {
     const host = el("div", {});
-    render([bar("Новый наряд", "/"), host]);
+    render([bar("Новое обращение", "/"), host]);
     mountDiagnostics(host, {
       // Это не отдельная «Диагностика»: экран просто служит каталогом работ,
       // разложенным по привычным узлам велосипеда.
@@ -1190,7 +1190,7 @@ function viewNewOrder() {
       wrap,
       el("div", { class: "actions" }, el("div", { class: "actions-inner" },
         el("button", { onclick: leaveSubScreen }, "Назад"),
-        el("button", { class: "btn-primary", onclick: createOrder }, "Создать наряд"))),
+        el("button", { class: "btn-primary", onclick: createOrder }, "Создать обращение"))),
     ]);
   }
 
@@ -1199,7 +1199,7 @@ function viewNewOrder() {
   // уже построенный экран. Сначала отдаём лёгкую заглушку роутеру, а полный
   // экран черновика рисуем следующей микрозадачей.
   queueMicrotask(stepWorks);
-  return [bar("Новый наряд", "/"), el("main", { class: "wrap" }, skeletonRows(2))];
+  return [bar("Новое обращение", "/"), el("main", { class: "wrap" }, skeletonRows(2))];
 }
 
 // ============================================================================
@@ -1319,7 +1319,7 @@ function viewOrder(number) {
     removeItemQuiet(code);
     if (editingItemCode === code) editingItemCode = null;
     refresh();
-    toast("Работа убрана из наряда");
+    toast("Работа убрана из обращения");
   }
   // Ещё один экземпляр той же повторяющейся работы (quantityMode:"instances")
   // прямо с экрана «Ремонт» — клонируем статические поля (название/цена/
@@ -1701,7 +1701,7 @@ function viewOrder(number) {
     // карточка клиента); если открыли по ссылке — на главный.
     el("header", { class: "bar" },
       backLink("/"),
-      el("h1", { class: "bar-title-lg" }, bike ? bikeLabel(bike) : client?.name || order.clientName || "Наряд"),
+      el("h1", { class: "bar-title-lg" }, bike ? bikeLabel(bike) : client?.name || order.clientName || "Обращение"),
       // Раньше — отдельная кнопка на всю ширину под «Уточнениями», ниже
       // текста и легко терялась. Карандаш в строке заголовка — тот же
       // паттерн, что и везде в приложении для «изменить», и сразу виден,
@@ -2059,7 +2059,7 @@ function editableItemRow(it, { onRemove, onSave, refresh, onDiffSet, onDiffQty }
       el("div", { class: "price-row", style: "margin-left:auto" }, itemPriceTags(it))));
   const header = swipeActions(rowContent, [
     { label: ICON_EDIT, ariaLabel: "Изменить работу", onClick: () => { editingItemCode = isEditing ? null : it.code; refresh(); } },
-    { label: ICON_CLOSE, ariaLabel: "Убрать работу", className: "warn", onClick: () => { if (confirm(`Убрать «${it.name}» из наряда?`)) onRemove(it.code); } },
+    { label: ICON_CLOSE, ariaLabel: "Убрать работу", className: "warn", onClick: () => { if (confirm(`Убрать «${it.name}» из обращения?`)) onRemove(it.code); } },
   ]);
   const diffs = (it.difficulties || []).length
     ? el("div", { style: "width:100%;margin-top:2px" },
@@ -2292,7 +2292,7 @@ function pendingAgreementRow(it, { onAgree, onRemove, onSet, onDiffQty, onParts 
   // видимым сразу на строке, не прячем за открытием формы деталей.
   box.append(el("div", { class: "btn-row", style: "margin-top:10px" },
     el("button", { class: "btn-ok", onclick: () => onAgree(it.code) }, "Согласовано"),
-    el("button", { onclick: () => { if (confirm(`Убрать «${it.name}» из наряда?`)) onRemove(it.code); } }, "Убрать")));
+    el("button", { onclick: () => { if (confirm(`Убрать «${it.name}» из обращения?`)) onRemove(it.code); } }, "Убрать")));
   return box;
 }
 
@@ -2404,7 +2404,7 @@ function pendingAgreementCard(order, handlers, stock) {
   if (!pending.length) return null;
   return el("div", { class: "card" },
     el("h2", {}, "Ждёт согласования"),
-    el("p", { class: "small muted" }, "Добавлено сверх исходной сметы — позвоните клиенту и подтвердите, тогда работа попадёт в наряд и сумму."),
+    el("p", { class: "small muted" }, "Добавлено сверх исходной сметы — позвоните клиенту и подтвердите, тогда работа попадёт в обращение и сумму."),
     ...pending.map((it) => pendingAgreementRow(it, handlers, stock)));
 }
 
