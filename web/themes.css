@@ -288,8 +288,9 @@
 [data-style="terminal"] .rows-separate > .row, [data-style="terminal"] .rows-separate > .swipe-row > .swipe-content { border:1px solid var(--line); }
 [data-style="terminal"] button:not(:is(.qty-stepper button, .segmented button, .search-clear, header.bar button, [style*="background:none"], .row, .carousel-dot, .parts-text-action, .compact-add-btn, .complication-remove, .admin-settings-btn, .work-select-btn, .swipe-action-btn, .btn-primary, .btn-ok, .btn-warn, .dialog-buttons button, .undo-chip)) { border:1px solid var(--line); border-radius:2px; box-shadow:none; background:var(--card); }
 [data-style="terminal"] :is(.btn-primary, .btn-ok, .btn-warn) { border-radius:2px; box-shadow:0 0 14px -4px color-mix(in srgb, var(--btn-c) 60%, transparent); color:var(--on-accent); }
-[data-style="terminal"] :is(.btn-primary, .btn-ok, .btn-warn):not(:disabled)::before { content:"[ "; }
-[data-style="terminal"] :is(.btn-primary, .btn-ok, .btn-warn):not(:disabled)::after { content:" ]"; }
+/* Неразрывный пробел: скобка не отрывается от слова на узкой кнопке. */
+[data-style="terminal"] :is(.btn-primary, .btn-ok, .btn-warn):not(:disabled)::before { content:"[\00a0"; }
+[data-style="terminal"] :is(.btn-primary, .btn-ok, .btn-warn):not(:disabled)::after { content:"\00a0]"; }
 [data-style="terminal"] .control-price { border:1px solid color-mix(in srgb, var(--accent) 55%, transparent); border-radius:2px; background:transparent; box-shadow:none; text-shadow:var(--term-glow); }
 [data-style="terminal"] .control-price.parts { border-color:color-mix(in srgb, var(--purple) 55%, transparent); }
 [data-style="terminal"] .control-price.excluded { border-style:dashed; border-color:var(--line); text-shadow:none; }

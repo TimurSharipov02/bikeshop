@@ -1839,29 +1839,36 @@ function partsEditor(parts, stock, onChange, blockId, sideAction = null) {
   // такую позицию не с чем сопоставить в остатках/1С, только строкой в наряде.
   let manualOpen = false;
   const manualDraft = { name: "", price: 0 };
-  const manualBox = el("div", { style: "margin-top:8px" });
+  // Поля своей запчасти появляются ровно на месте нажатой «+ запчасть»
+  // (строка с кнопками на это время прячется), а не где-то ниже.
+  const manualSlot = el("div", {});
   const drawManual = () => {
-    if (!manualOpen) return manualBox.replaceChildren();
-    manualBox.replaceChildren(el("div", { class: "card card-flush" },
+    if (!manualOpen) return manualSlot.replaceChildren(actionRow);
+    const nameInput = el("input", { value: manualDraft.name, oninput: (e) => (manualDraft.name = e.target.value) });
+    manualSlot.replaceChildren(el("div", { class: "parts-manual misc-opening" },
       el("label", {}, "Название запчасти"),
-      el("input", { placeholder: "напр. Прокладка", value: manualDraft.name, oninput: (e) => (manualDraft.name = e.target.value) }),
+      nameInput,
       el("label", { style: "margin-top:8px" }, "Цена, ₽"),
       el("input", { type: "number", value: manualDraft.price || "", oninput: (e) => (manualDraft.price = +e.target.value || 0) }),
       el("div", { class: "btn-row", style: "margin-top:10px" },
         el("button", {
           class: "btn-primary", onclick: () => {
             if (!manualDraft.name.trim()) return alert("Укажите название");
-            parts.push({ name: manualDraft.name.trim(), sku: "", price: manualDraft.price, qty: 1, maxQty: 0 });
+            const name = manualDraft.name.trim();
+            parts.push({ name, sku: "", price: manualDraft.price, qty: 1, maxQty: 0 });
             manualOpen = false; manualDraft.name = ""; manualDraft.price = 0;
             drawManual(); drawList(); onChange();
+            toast(`Добавлено: ${name}`);
           },
         }, "Добавить"),
         el("button", { onclick: () => { manualOpen = false; drawManual(); } }, "Отмена"))));
+    nameInput.focus({ preventScroll: true });
   };
   const manualToggle = el("button", {
     class: "small parts-text-action",
     onclick: () => { manualOpen = !manualOpen; drawManual(); },
   }, "+ запчасть");
+  const actionRow = el("div", { class: sideAction ? "parts-action-row" : "parts-action-row parts-action-single" }, manualToggle, sideAction);
 
   // maxQty — необязательный потолок у складской позиции (спицы можно взять
   // 64, а цепь — только одну); переносим на саму запчасть в наряде, чтобы
@@ -1923,9 +1930,9 @@ function partsEditor(parts, stock, onChange, blockId, sideAction = null) {
   q.addEventListener("input", () => { clearBtn.style.display = q.value ? "" : "none"; drawResults(); });
   drawResults();
 
+  drawManual();
   return el("div", {}, el("div", { class: "search-wrap" }, q, clearBtn), results,
-    el("div", { class: sideAction ? "parts-action-row" : "parts-action-row parts-action-single" }, manualToggle, sideAction),
-    manualBox, listLabel, list);
+    manualSlot, listLabel, list);
 }
 
 function itemRow(it, showFacts) {

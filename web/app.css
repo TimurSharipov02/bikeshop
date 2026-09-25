@@ -732,3 +732,7 @@ label { display:block; font-size:13px; color:var(--muted); margin:var(--sp-4) 0 
 @keyframes pick-in { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:none; } }
 @media (prefers-reduced-motion: reduce) { .pick-options, .pick-chev { transition:none; } .pick.open .pick-option { animation:none; } }
 .segmented-field { flex:1; min-width:0; }
+/* Своя запчасть (partsEditor): поля на месте кнопки «+ запчасть». */
+.parts-manual { margin-top:12px; }
+.parts-manual > label:first-child { margin-top:0; }
+.parts-manual .btn-row button { white-space:nowrap; }
