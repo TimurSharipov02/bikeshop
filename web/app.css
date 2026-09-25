@@ -715,7 +715,7 @@ label { display:block; font-size:13px; color:var(--muted); margin:var(--sp-4) 0 
   100% { background:transparent; }
 }
 @media (prefers-reduced-motion: reduce) { .misc-opening, .misc-row.just-added { animation:none; } }
-.settings-password label:first-child { margin-top:0; }
+.settings-password > label:first-child { margin-top:0; }
 /* Свой раскрывающийся список (pickList в app.js): поле раскрывается вниз
    на месте, варианты выезжают по одному. */
 .pick { border-radius:var(--radius-sm); background:var(--fill); overflow:hidden; }

@@ -3369,34 +3369,38 @@ function viewProfile() {
   ];
 }
 
-// Настройки: оформление и смена пароля — разделами на одном экране, без
-// раскрытий и шторок.
+// Настройки: два пункта — «Оформление» и «Сменить пароль»; каждый
+// раскрывается под своей строкой (presentInline), повторный тап — свернуть.
 function viewSettings() {
-  const error = el("p", { class: "small", style: "color:var(--warn);display:none" });
-  const form = el("form", { onsubmit: async (ev) => {
-    ev.preventDefault();
-    error.style.display = "none";
-    try {
-      await authAction({ action: "changePassword", currentPassword: ev.target.current.value, newPassword: ev.target.next.value });
-      ev.target.reset();
-      toast("Пароль изменён");
-    } catch (e) {
-      error.textContent = e.message || "Не удалось сменить пароль";
-      error.style.display = "";
-    }
-  } },
-    ...field("Текущий пароль", "current", "password", "current-password"),
-    ...field("Новый пароль", "next", "password", "new-password"),
-    error,
-    el("button", { class: "btn-primary", type: "submit", style: "width:100%;margin-top:16px" }, "Сменить пароль"));
+  const passwordForm = () => {
+    const error = el("p", { class: "small", style: "color:var(--warn);display:none" });
+    return el("form", { class: "settings-password", onsubmit: async (ev) => {
+      ev.preventDefault();
+      error.style.display = "none";
+      try {
+        await authAction({ action: "changePassword", currentPassword: ev.target.current.value, newPassword: ev.target.next.value });
+        closeInlineWork();
+        toast("Пароль изменён");
+      } catch (e) {
+        error.textContent = e.message || "Не удалось сменить пароль";
+        error.style.display = "";
+      }
+    } },
+      ...field("Текущий пароль", "current", "password", "current-password"),
+      ...field("Новый пароль", "next", "password", "new-password"),
+      error,
+      el("button", { class: "btn-primary", type: "submit", style: "width:100%;margin-top:16px" }, "Сохранить"));
+  };
+  const item = (key, title, icon, open) => el("button", {
+    class: "row profile-menu-action", type: "button", "data-work-key": key,
+    onclick: () => isInlineOpen(key) ? closeInlineWork() : presentInline(key, title, open()),
+  }, el("span", { class: "row-icon", html: icon }), el("span", { style: "flex:1" }, title), el("span", { class: "chev" }, "›"));
   return [
     bar("Настройки", "/profile"),
-    // Разделы одного уровня — «Тема», «Стиль» (из lookEditor) и «Пароль».
     el("main", { class: "wrap" },
-      lookEditor(),
-      el("div", { class: "sheet-section" },
-        el("div", { class: "sheet-section-title" }, "Пароль"),
-        el("div", { class: "card settings-password" }, form))),
+      el("div", { class: "rows rows-separate" },
+        item("look", "Оформление", ICON_SVG('<circle cx="12" cy="12" r="9"/><circle cx="7.8" cy="10.5" r="1.2"/><circle cx="12" cy="7.5" r="1.2"/><circle cx="16.2" cy="10.5" r="1.2"/><path d="M12 21a2.2 2.2 0 0 1 0-4.4h1.6a3.4 3.4 0 0 0 3.4-3.4"/>'), lookEditor),
+        item("password", "Сменить пароль", ICON_SVG('<rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>'), passwordForm))),
   ];
 }
 
