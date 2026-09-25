@@ -2024,7 +2024,7 @@ function quantityModeEditor(draft) {
 // позиции наряда. Мутирует list на месте, box перерисовывается сам.
 function complicationsEditor(list) {
   const box = el("div", {});
-  // Каждое усложнение — своей карточкой: название на всю ширину, ниже два
+  // Каждое усложнение — своим блоком: название на всю ширину, ниже два
   // обычных поля (надбавка и время) с подписями, крупная галочка «несколько
   // раз». Раньше всё было мелкими полями в одну строку и не читалось.
   const numField = (label, value, suffix, aria, onInput) => el("div", { class: "complication-num" },
@@ -2289,7 +2289,7 @@ function difficultyList(difficulties, onSet, onQty, fact) {
 // то как «+ доп. работа», то как невидимая навсегда, — и тут явный шаг
 // нужен в обоих случаях одинаково.
 function pendingAgreementRow(it, { onAgree, onRemove, onSet, onDiffQty, onParts }, stock) {
-  const box = el("div", { class: "assess", "data-work-key": it.code });
+  const box = el("div", { class: "assess", "data-work-key": it.code, "data-hide-actions": "1" });
   const nameRow = el("div", {
     style: "display:flex;align-items:center;gap:8px;cursor:pointer",
     onclick: () => isInlineOpen(it.code) ? closeInlineWork() : openPendingSheet(it, stock, { onSet, onDiffQty, onParts }),
@@ -2338,14 +2338,34 @@ function reattachInlineWork() {
   row.classList.add("work-open");
   row.parentElement.classList.add("has-open-work");
   row.after(inlineWork.panel);
+  // Нижние кнопки экрана прячем только там, где у раскрытого своя главная
+  // кнопка (работа в обращении — «Отметить готово»).
+  document.body.classList.toggle("work-inline-open", row.dataset.hideActions === "1");
 }
 const isInlineOpen = (key) => inlineWork?.key === key;
 function closeInlineWork() { inlineWork?.close(); }
-function presentWork(it, content) {
-  const key = it.code;
+// Подкрутить экран так, чтобы node встал первым под шапкой. Если ниже не
+// хватает высоты — запас снизу у slack (до следующей перерисовки).
+function scrollUnderBar(node, slack) {
+  // Высота страницы не меньше экрана, поэтому первый добавленный отступ
+  // может «съесться» — добираем за пару кадров, пока хватит.
+  const step = (n) => requestAnimationFrame(() => {
+    const barH = document.querySelector("header.bar")?.offsetHeight || 0;
+    const top = Math.max(0, node.getBoundingClientRect().top + window.scrollY - barH - 8);
+    const lack = top + window.innerHeight - document.documentElement.scrollHeight;
+    if (lack > 0 && slack && n < 4) {
+      slack.style.paddingBottom = `${(parseFloat(getComputedStyle(slack).paddingBottom) || 0) + Math.ceil(lack)}px`;
+      return step(n + 1);
+    }
+    window.scrollTo({ top, behavior: "smooth" });
+  });
+  step(0);
+}
+// Раскрыть content под строкой с data-work-key=key; нет строки — шторкой.
+function presentInline(key, title, content) {
   closeInlineWork();
   const row = workRowFor(key);
-  if (!row) return openSheet(it.name, content);
+  if (!row) return openSheet(title, content);
   const panel = el("div", { class: "work-inline" }, content);
   const handle = {
     key, panel,
@@ -2360,17 +2380,11 @@ function presentWork(it, content) {
     },
   };
   inlineWork = handle;
-  document.body.classList.add("work-inline-open");
   reattachInlineWork();
-  requestAnimationFrame(() => {
-    const barH = document.querySelector("header.bar")?.offsetHeight || 0;
-    const top = Math.max(0, row.getBoundingClientRect().top + window.scrollY - barH - 8);
-    const lack = top + window.innerHeight - document.documentElement.scrollHeight;
-    if (lack > 0) panel.style.paddingBottom = `${Math.ceil(lack) + 16}px`;
-    window.scrollTo({ top, behavior: "smooth" });
-  });
+  scrollUnderBar(row, row.closest("main") || panel);
   return handle;
 }
+const presentWork = (it, content) => presentInline(workRowFor(it.code) || !it.sourceCode ? it.code : it.sourceCode, it.name, content);
 
 // Усложнения и запчасти — подряд, каждое под своим заголовком (раньше —
 // переключатель-вкладки, и половину всегда было не видно).
@@ -2504,6 +2518,7 @@ function repairItem(it, stock, { onSave, onQty, onRemove, onAdd, onClaim }) {
   if (it.notes) box.append(el("p", { class: "small muted" }, it.notes));
   const row = onRemove ? swipeToDelete(box, () => { onRemove(it.code); return true; }) : box;
   row.dataset.workKey = it.code;
+  row.dataset.hideActions = "1";
   return row;
 }
 
@@ -2767,6 +2782,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
   // Разовая услуга — форма «+ добавить разовую услугу» под списком узлов,
   // не привязана ни к одному блоку и не сохраняется в общий каталог.
   let miscOpen = false;
+  let chosenOpen = false, chosenJustOpened = false; // «Итого» развёрнуто в список выбранного
   const miscDraft = { label: "", price: 0, minutes: 0 };
   // Добавленные тут разовые услуги — видны списком над формой: в узлах
   // их нет, и раньше после «Добавить» было непонятно, куда она делась.
@@ -3006,7 +3022,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
           // Запчасти — отдельным ценником слева, как в карточке работы в
           // ремонте (itemPriceTags): труд и детали не смешиваются в одну сумму.
           const partsNode = partsSum > 0
-            ? el("span", { class: "control-price parts tap", title: "Запчасти" },
+            ? el("span", { class: "control-price parts", title: "Запчасти" },
               el("span", { class: "price-icon", html: ICONS.stock }), money(partsSum))
             : null;
           // align-items:flex-start (не center из .opt) — иначе у длинных
@@ -3015,13 +3031,12 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
           // по первой строке текста) — соседние строки списка «плясали».
           // Так счётчик всегда на одной и той же высоте, вровень с первой
           // строкой названия, независимо от того, сколько строк оно занимает.
-          if (priceNode) priceNode.classList.add("tap");
           const rowContent = el("div", { class: "row opt priced-control-row work-picker-row" },
             // min-width:0 — без него flex-item с длинным неразрывным словом
             // (напр. «Обслуживание», «Переспицовка») не мог сжаться уже
             // своего мин-контента, и цена/счётчик справа вылезали за край
             // строки вместо того, чтобы остаться у правого края.
-            el("span", { style: "min-width:0;overflow-wrap:break-word" }, f.label),
+            el("span", { class: "work-picker-name", style: "min-width:0;overflow-wrap:break-word;cursor:pointer" }, f.label),
             pricedControlGroup([partsNode, priceNode],
               selectButton || (checked ? el("span", { class: "row-check", html: ICON_CHECK }) : null)));
           // Слушатель добавлен ПОСЛЕ swipeActions(rowContent, ...) ниже (не
@@ -3032,10 +3047,11 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
           // тут стоял просто onclick в el(), он сработал бы раньше свайпа
           // и отмечал бы галочку даже во время жеста «смахнуть для правки».
           const toggle = () => {
-            // Тап по цене открывает меню усложнений работы. Если работа ещё
-            // не выбрана — сначала добавляем её. Кнопка «+»/счётчик рядом
-            // отвечает только за добавление/снятие; остальная строка
-            // (название) не нажимается, чтобы не открывать меню случайно.
+            // Тап по названию раскрывает усложнения и запчасти работы прямо
+            // под строкой (presentWork); повторный — сворачивает. Если работа
+            // ещё не выбрана — сначала добавляем её. Кнопка «+»/счётчик
+            // рядом отвечает только за добавление/снятие, цена — не кнопка.
+            if (checked && f.code && isInlineOpen(f.code)) return closeInlineWork();
             if (!checked) {
               if (instanceUnavailable) return;
               if (instanceMode) setInstanceCount(1);
@@ -3046,7 +3062,9 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
           // Раньше ✎/✕ жили прямо в строке — с плотным списком смотрелись
           // мелко и тесно. Теперь открываются свайпом влево, как удаление
           // в других списках приложения.
-          faultNodes.push(el("div", {},
+          // data-work-key — только у выбранной: раскрытая под невыбранной
+          // (сняли галочку) сама закрывается при перерисовке.
+          faultNodes.push(el("div", checked && f.code ? { "data-work-key": f.code } : {},
             isAdmin
               ? swipeActions(rowContent, [
                   { label: ICON_EDIT, ariaLabel: "Изменить работу", onClick: () => openWorkFormSheet(f) },
@@ -3063,7 +3081,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
                     } },
                 ])
               : rowContent));
-          rowContent.addEventListener("click", (e) => { if (e.target.closest(".control-price")) toggle(); });
+          rowContent.addEventListener("click", (e) => { if (e.target.closest(".work-picker-name")) toggle(); });
         });
         if (faultNodes.length) fb.append(rowsList(faultNodes, true));
         if (SESSION?.role === "admin") {
@@ -3131,44 +3149,40 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
         }, "+ добавить разовую услугу"));
 
     const total = totalText?.();
-    // Нажатие на «Итого» — шторка со списком того, что уже выбрано, в том
-    // же виде, что карточка «Ремонт» в обращении: название, из чего
-    // складывается цена, ценники и счётчик. Сами работы разбросаны по
-    // раскрытым блокам, а тут видно всё сразу; счётчик меняет и список позади.
-    const showChosen = () => {
-      const body = el("div", {});
+    // Нажатие на «Итого» — карточка разворачивается на месте в список того,
+    // что уже выбрано, в том же виде, что «Ремонт» в обращении: название,
+    // из чего складывается цена, ценники и счётчик; поднимается под шапку.
+    // Повторный тап по «Итого» — свернуть.
+    let totalCard = null;
+    if (!total || total.count < 2 || !total.items) chosenOpen = false;
+    if (chosenOpen) {
       const setQty = (it, n) => {
         const fa = { code: it.sourceCode || it.code };
         if (repeatsWholeItem(it)) onInstanceCount?.(fa, n); else onQuantity?.(fa, n);
-        fill();
         draw();
       };
-      // Тап по цене — меню усложнений и запчастей этой работы (шторка поверх
-      // этой), как по цене в самом списке; после правок обе обновляются.
-      const priceTags = (it) => itemPriceTags(it).filter(Boolean).map((tag) => {
-        tag.classList.add("tap");
-        tag.addEventListener("click", () => onOpen?.({ code: it.sourceCode || it.code }, () => { fill(); draw(); }));
-        return tag;
-      });
       const chosenRow = (it) => el("div", { class: "assess" },
         el("b", {}, it.name),
         costBreakdown(it),
-        el("div", { class: "price-row", style: "margin-top:12px" }, priceTags(it),
+        el("div", { class: "price-row", style: "margin-top:12px" }, itemPriceTags(it).filter(Boolean),
           usesQuantity(it) ? qtyStepper(it.qty || 1, (n) => setQty(it, n), workQuantityLimitOf(it)) : null));
-      const fill = () => {
-        const now = totalText();
-        body.replaceChildren(...now.items.map(chosenRow), totalRow(now.range, now.count) || el("span"));
-      };
-      fill();
-      openSheet("Выбранные работы", body);
-    };
-    const totalNode = total && totalRow(total.range, total.count, "Итого", null, total.items ? showChosen : null);
-    if (totalNode) wrap.append(el("div", { class: "card" }, totalNode));
+      totalCard = el("div", { class: "card chosen-card" + (chosenJustOpened ? " misc-opening" : "") },
+        el("h2", {}, "Выбранные работы"),
+        ...total.items.map(chosenRow),
+        totalRow(total.range, total.count, "Итого", null, () => { chosenOpen = false; draw(); }));
+    } else {
+      const totalNode = total && totalRow(total.range, total.count, "Итого", null,
+        total.items ? () => { chosenOpen = true; chosenJustOpened = true; draw(); } : null);
+      if (totalNode) totalCard = el("div", { class: "card" }, totalNode);
+    }
+    if (totalCard) wrap.append(totalCard);
 
     host.replaceChildren(wrap,
       el("div", { class: "actions" }, el("div", { class: "actions-inner" },
         el("button", { class: "btn-primary", onclick: finish }, "Далее"))));
     if (openedCard) { scrollToInst = null; scrollOpenedIntoView(openedCard, wrap); }
+    if (chosenJustOpened && totalCard) { chosenJustOpened = false; scrollUnderBar(totalCard, wrap); }
+    reattachInlineWork();
   }
 
   // Работы уже добавлены живьём по каждому чекбоксу (см. onCheck) — у
@@ -3287,7 +3301,8 @@ function openLookSheet() {
         el("span", { style: "flex:1;min-width:0" }, el("b", {}, p.name), el("span", { class: "small muted look-note" }, p.note)),
         currentLook.style === p.id ? el("span", { class: "row-check", html: ICON_CHECK }) : null)))));
   draw();
-  openSheet("Оформление", body);
+  // Раскрывается под строкой «Оформление» в профиле (presentInline).
+  return presentInline("look", "Оформление", body);
 }
 
 function viewProfile() {
@@ -3310,7 +3325,7 @@ function viewProfile() {
       ...field("Новый пароль", "next", "password", "new-password"),
       error,
       el("button", { class: "btn-primary", type: "submit", style: "width:100%;margin-top:16px" }, "Сохранить"));
-    sheet = openSheet("Сменить пароль", form);
+    sheet = presentInline("password", "Сменить пароль", form);
   };
   return [
     bar(SESSION?.name || SESSION?.login || "Профиль", "/"),
@@ -3318,10 +3333,12 @@ function viewProfile() {
       el("div", { class: "rows rows-separate", style: "margin-bottom:12px" },
         homeLink("Выполненные работы", "/profile/report", ICONS.report),
         SESSION?.role === "admin" ? homeLink("Админка", "/admin", ICONS.admin) : null,
-        el("button", { class: "row profile-menu-action", type: "button", onclick: openLookSheet },
+        el("button", { class: "row profile-menu-action", type: "button", "data-work-key": "look",
+          onclick: () => isInlineOpen("look") ? closeInlineWork() : openLookSheet() },
           el("span", { class: "row-icon", html: ICON_SVG('<circle cx="12" cy="12" r="9"/><circle cx="7.8" cy="10.5" r="1.2"/><circle cx="12" cy="7.5" r="1.2"/><circle cx="16.2" cy="10.5" r="1.2"/><path d="M12 21a2.2 2.2 0 0 1 0-4.4h1.6a3.4 3.4 0 0 0 3.4-3.4"/>') }),
           el("span", { style: "flex:1" }, "Оформление"), el("span", { class: "chev" }, "›")),
-        el("button", { class: "row profile-menu-action", type: "button", onclick: changePassword },
+        el("button", { class: "row profile-menu-action", type: "button", "data-work-key": "password",
+          onclick: () => isInlineOpen("password") ? closeInlineWork() : changePassword() },
           el("span", { class: "row-icon", html: ICON_SVG('<rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>') }),
           el("span", { style: "flex:1" }, "Сменить пароль"), el("span", { class: "chev" }, "›"))),
       el("div", { style: "display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-top:16px" },

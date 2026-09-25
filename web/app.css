@@ -629,8 +629,9 @@ label { display:block; font-size:13px; color:var(--muted); margin:var(--sp-4) 0 
 /* Усложнения вторичны относительно самой работы, поэтому редактор у них
    плотнее: небольшие поля, обычный чекбокс без ещё одной карточки и
    текстовая кнопка добавления. */
-/* Редактор усложнений (complicationsEditor): каждое — своей карточкой. */
-.complication-edit-item { padding:14px; margin-top:10px; border:1px solid var(--line); border-radius:var(--radius-sm); }
+/* Редактор усложнений (complicationsEditor): без рамки вокруг каждого —
+   только тонкий разделитель между ними. */
+.complication-edit-item { padding:12px 0 14px; border-bottom:1px solid var(--line); }
 .complication-edit-head { display:flex; gap:8px; align-items:center; }
 .complication-edit-head input { flex:1; min-width:0; }
 .complication-edit-nums { display:flex; gap:10px; margin-top:4px; }
@@ -693,8 +694,10 @@ label { display:block; font-size:13px; color:var(--muted); margin:var(--sp-4) 0 
    бледнеют; нижние кнопки экрана прячем — у работы своя «Отметить готово». */
 .work-chev { flex:0 0 auto; color:var(--line); font-size:19px; display:inline-block; transition:transform .18s ease, color .18s ease; }
 .work-open .work-chev { transform:rotate(90deg); color:var(--accent); }
-.has-open-work > [data-work-key] { transition:opacity .2s ease; }
-.has-open-work > [data-work-key]:not(.work-open) { opacity:.4; }
+.work-open .chev { display:inline-block; transform:rotate(90deg); color:var(--accent); transition:transform .18s ease; }
+.rows-separate > .work-inline { border-top:0; padding:6px 4px 10px; }
+.has-open-work > * { transition:opacity .2s ease; }
+.has-open-work > :not(.work-open):not(.work-inline) { opacity:.4; }
 .work-inline { padding:14px 0 18px; border-top:1px dashed var(--line); animation:work-inline-in .22s ease; }
 .work-open .assess, .assess.work-open { border-bottom:0; }
 .work-section { margin-top:14px; }
