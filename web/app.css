@@ -740,3 +740,9 @@ label { display:block; font-size:13px; color:var(--muted); margin:var(--sp-4) 0 
 .parts-manual { margin-top:12px; }
 .parts-manual > label:first-child { margin-top:0; }
 .parts-manual .btn-row button { white-space:nowrap; }
+/* Списки работ (выбор работ в блоке, «Ремонт» в обращении): тонкий
+   разделитель между соседними работами — одинаково везде, как в
+   развёрнутом «Итого». Раскрытая работа отделена своим пунктиром. */
+.work-list > * + * { border-top:.5px solid var(--line); }
+.work-list > .work-inline { border-top:1px dashed var(--line); }
+.work-list .assess { border-bottom:0; }

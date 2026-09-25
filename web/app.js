@@ -1671,7 +1671,7 @@ function viewOrder(number) {
       // на миг мигает пустыми полосками вместо того, чтобы просто остаться
       // на месте с обновлённым пунктом.
       const buildBody = (stock) => {
-        const b = el("div", {});
+        const b = el("div", { class: "work-list" });
         const pendingCard = pendingAgreementCard(order, pendingHandlers, stock);
         if (pendingCard) b.append(pendingCard);
         // Разные экземпляры одной работы всегда остаются отдельными задачами.
@@ -3138,7 +3138,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
               : rowContent));
           rowContent.addEventListener("click", (e) => { if (e.target.closest(".work-picker-name")) toggle(); });
         });
-        if (faultNodes.length) fb.append(rowsList(faultNodes, true));
+        if (faultNodes.length) fb.append(el("div", { class: "work-list" }, faultNodes));
         if (SESSION?.role === "admin") {
           fb.append(el("button", {
             class: "small", style: "margin-top:8px;border:0;background:none;color:var(--muted);text-decoration:underline;padding:0",
