@@ -332,3 +332,73 @@
   box-shadow:0 0 14px -5px var(--yellow); }
 [data-style="terminal"] .pill { background:transparent !important; border:1px solid currentColor; border-radius:2px; }
 [data-style="terminal"] .pill-wait { color:var(--yellow); }
+
+/* ==== Аэро: светлая — «Фрутигер» (небо и трава), тёмная — «Аква» (глубина
+   воды, лучи и пузырьки). Карточки — стекло, кнопки — сочный глянец,
+   экран — «окном» со скруглёнными верхними углами. ==== */
+
+[data-style="aero"] .card, [data-style="aero"] .rows-separate > .row, [data-style="aero"] .rows-separate > .swipe-row > .swipe-content {
+  background:var(--glass-card) !important; backdrop-filter:blur(18px) saturate(1.6); -webkit-backdrop-filter:blur(18px) saturate(1.6);
+  border:1px solid var(--glass-rim) !important;
+  box-shadow:inset 0 1px 0 var(--glass-hl), inset 0 -1px 0 rgba(255,255,255,.08), 0 18px 40px -18px var(--glass-shadow), 0 2px 6px -2px var(--glass-shadow) !important; }
+[data-style="aero"] header.bar { background:var(--bar-bg) !important; backdrop-filter:blur(20px) saturate(1.8); border-bottom:1px solid var(--glass-rim) !important;
+  box-shadow:inset 0 1px 0 var(--glass-hl), 0 8px 24px -12px var(--glass-shadow) !important; }
+[data-style="aero"] header.bar::after { content:""; position:absolute; left:0; right:0; top:0; height:50%; pointer-events:none;
+  background:linear-gradient(180deg, rgba(255,255,255,.45), rgba(255,255,255,.08)); }
+[data-style="aero"] :is(.btn-primary) { --btn-c:var(--accent) !important; }
+[data-style="aero"] :is(.btn-primary, .btn-ok, .btn-warn, .wait-toggle.on) {
+  border:1px solid color-mix(in srgb, var(--btn-c), black 25%) !important;
+  background:linear-gradient(180deg, rgba(255,255,255,.85) 0%, rgba(255,255,255,.25) 48%, rgba(255,255,255,0) 50%),
+    linear-gradient(180deg, color-mix(in srgb, var(--btn-c), white 45%) 0%, var(--btn-c) 52%, color-mix(in srgb, var(--btn-c), black 12%) 53%, color-mix(in srgb, var(--btn-c), white 25%) 100%) !important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.95), inset 0 -2px 6px color-mix(in srgb, var(--btn-c), white 40%), 0 10px 24px -8px color-mix(in srgb, var(--btn-c) 85%, transparent), 0 0 0 3px color-mix(in srgb, var(--btn-c) 15%, transparent) !important;
+  text-shadow:0 -1px 0 rgba(0,0,0,.25), 0 1px 2px rgba(0,0,0,.2) !important; color:#fff !important; }
+[data-style="aero"] .btn-ok { --btn-c:var(--ok) !important; }
+[data-style="aero"] .wait-toggle.on { --btn-c:#ffc21a; color:#4a3200 !important; text-shadow:0 1px 0 rgba(255,255,255,.5) !important; }
+[data-style="aero"] button:not(:is(.btn-primary,.btn-ok,.btn-warn,.wait-toggle.on,.qty-stepper button,.segmented button,header.bar button,.row,.search-clear,[style*="background:none"],.swipe-action-btn,.carousel-dot,.complication-remove,.edit-btn,.dialog-buttons button,.undo-chip,.compact-add-btn)) {
+  background:linear-gradient(180deg, rgba(255,255,255,.9) 0%, rgba(255,255,255,.45) 48%, rgba(255,255,255,.15) 50%, rgba(255,255,255,.35) 100%), var(--btn-glass) !important;
+  border:1px solid var(--glass-rim) !important; color:var(--ink) !important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.95), 0 8px 18px -10px var(--glass-shadow) !important; }
+[data-style="aero"] .control-price { border:1px solid color-mix(in srgb, var(--accent) 55%, white) !important;
+  background:linear-gradient(180deg, rgba(255,255,255,.85) 0%, rgba(255,255,255,.2) 50%, rgba(255,255,255,0) 51%), linear-gradient(180deg, color-mix(in srgb, var(--accent) 22%, white), color-mix(in srgb, var(--accent) 40%, white)) !important;
+  color:color-mix(in srgb, var(--accent), black 30%) !important; box-shadow:inset 0 1px 0 #fff, 0 6px 14px -6px color-mix(in srgb, var(--accent) 70%, transparent) !important; }
+[data-style="aero"] .qty-stepper { background:var(--btn-glass) !important; border:1px solid var(--glass-rim) !important; box-shadow:inset 0 2px 5px rgba(0,40,90,.18) !important; }
+[data-style="aero"] input, [data-style="aero"] textarea { background:var(--field-bg) !important; border:1px solid var(--glass-rim) !important;
+  box-shadow:inset 0 2px 5px rgba(0,40,90,.18), inset 0 -1px 0 rgba(255,255,255,.6) !important; }
+[data-style="aero"] body::before { background:var(--sky) !important; }
+[data-style="aero"] body::after { content:""; position:fixed; inset:0; z-index:-1; pointer-events:none; background:var(--sky-deco); }
+
+/* Фрутигер (светлая) */
+:root[data-style="aero"]:not([data-theme="dark"]) { --accent:#1f9bf0; --ok:#6cc51f; --ink:#123018; --muted:#4f6b55;
+  --sky:linear-gradient(180deg, #4aa9ee 0%, #9ad4fb 34%, #e2f5ff 55%, #b8ec7a 72%, #74c93b 88%, #4fa825 100%);
+  --sky-deco:radial-gradient(160px 60px at 25% 10%, rgba(255,255,255,.85), transparent 70%), radial-gradient(140px 50px at 80% 18%, rgba(255,255,255,.7), transparent 70%),
+    radial-gradient(260px 120px at 50% 62%, rgba(255,255,255,.55), transparent 70%),
+    radial-gradient(20px 20px at 86% 48%, rgba(255,255,255,.75), rgba(255,255,255,.12) 60%, transparent 62%), radial-gradient(12px 12px at 10% 40%, rgba(255,255,255,.8), transparent 62%);
+  --glass-card:linear-gradient(180deg, rgba(255,255,255,.8), rgba(240,255,235,.55)); --glass-rim:rgba(255,255,255,.95); --glass-hl:#fff;
+  --glass-shadow:rgba(20,90,30,.4); --bar-bg:linear-gradient(180deg, rgba(255,255,255,.7), rgba(200,240,255,.55));
+  --btn-glass:linear-gradient(180deg, #f3fff0, #d7f5c8); --field-bg:linear-gradient(180deg, #eefbe8, #ffffff); }
+:root[data-style="aero"]:not([data-theme="dark"]) .btn-primary { --btn-c:#57b81c !important; }
+
+/* Аква (тёмная) */
+:root[data-style="aero"][data-theme="dark"] { --accent:#28c2ff; --ok:#2ed47a; --ink:#e9fbff; --muted:#92c9dc; --line:rgba(140,225,255,.2); --card:#0c3346;
+  --sky:linear-gradient(180deg, #03324d 0%, #065a78 40%, #0a7a92 75%, #0f8a95 100%);
+  --sky-deco:radial-gradient(9px 9px at 86% 72%, rgba(200,245,255,.45), rgba(200,245,255,.08) 60%, transparent 62%),
+    radial-gradient(6px 6px at 83% 64%, rgba(200,245,255,.4), transparent 62%), radial-gradient(12px 12px at 12% 84%, rgba(200,245,255,.35), rgba(200,245,255,.06) 60%, transparent 62%),
+    radial-gradient(5px 5px at 16% 77%, rgba(200,245,255,.35), transparent 62%),
+    linear-gradient(100deg, transparent 22%, rgba(170,240,255,.07) 27%, transparent 32%), linear-gradient(100deg, transparent 55%, rgba(170,240,255,.05) 59%, transparent 63%),
+    radial-gradient(120% 60% at 50% -10%, rgba(170,240,255,.18), transparent 60%);
+  --glass-card:linear-gradient(180deg, rgba(70,170,210,.30), rgba(8,60,85,.40)); --glass-rim:rgba(150,235,255,.45); --glass-hl:rgba(210,250,255,.45);
+  --glass-shadow:rgba(0,15,25,.75); --bar-bg:linear-gradient(180deg, rgba(90,190,225,.45), rgba(5,60,90,.55));
+  --btn-glass:linear-gradient(180deg, rgba(80,170,210,.5), rgba(10,70,100,.6)); --field-bg:linear-gradient(180deg, rgba(0,30,45,.55), rgba(8,60,85,.45)); }
+:root[data-style="aero"][data-theme="dark"] button:not(:is(.btn-primary,.btn-ok,.btn-warn,.wait-toggle.on,.qty-stepper button,.segmented button,header.bar button,.row,.search-clear,[style*="background:none"],.swipe-action-btn,.carousel-dot,.complication-remove,.edit-btn,.dialog-buttons button,.undo-chip,.compact-add-btn)) {
+  background:linear-gradient(180deg, rgba(255,255,255,.3) 0%, rgba(255,255,255,.06) 48%, rgba(255,255,255,0) 50%), var(--btn-glass) !important; color:var(--ink) !important; }
+:root[data-style="aero"][data-theme="dark"] .control-price { background:linear-gradient(180deg, rgba(255,255,255,.4) 0%, rgba(255,255,255,.06) 50%, rgba(255,255,255,0) 51%), linear-gradient(180deg, rgba(40,194,255,.4), rgba(40,194,255,.18)) !important;
+  color:#c8f3ff !important; border-color:rgba(130,225,255,.65) !important; box-shadow:0 0 16px -2px rgba(40,194,255,.6), inset 0 1px 0 rgba(255,255,255,.4) !important; }
+:root[data-style="aero"][data-theme="dark"] input { color:var(--ink) !important; }
+
+/* экран «окном»: поля и крупные закругления, как у картинок макетов */
+[data-style="aero"] body { padding:6px 6px 0; box-sizing:border-box; }
+[data-style="aero"] #app { border-radius:26px 26px 0 0; overflow:clip; min-height:calc(100dvh - 6px);
+  box-shadow:0 0 0 1px var(--glass-rim), 0 20px 50px -20px var(--glass-shadow); }
+[data-style="aero"] .card, [data-style="aero"] .rows-separate > .row { border-radius:24px !important; }
+[data-style="aero"] header.bar { border-radius:26px 26px 0 0; }
+[data-style="aero"] .login-screen { min-height:calc(100dvh - 6px); }
