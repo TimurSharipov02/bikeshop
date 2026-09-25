@@ -45,7 +45,7 @@ import {
   stockCache, clearStockCache, ensureStock,
   loadDB, syncFromServer,
   editDB, editOrder, deleteOrderApi, deleteClientApi, deleteBikeApi, pushDbNow, flushPending,
-  onUndoRecorded, undoLast, reopenOrderApi, restoreOrder,
+  reopenOrderApi, restoreOrder,
 } from "./store.js";
 
 const RAW = window.CATALOG;
@@ -427,12 +427,10 @@ window.addEventListener("popstate", () => {
 })();
 
 // ---------------------------------------------------------------------------
-// Отмена последнего действия — на случай случайного нажатия. Два способа:
-// маленькая кнопка «↶» в углу на несколько секунд после каждого действия и
-// встряхивание телефона (как «Встряхнуть, чтобы отменить» на iPhone) — тогда
-// сначала вопрос «Да/Нет». Что именно откатывается — web/undo.js.
+// Вернуть случайно удалённое обращение: кнопка «↶» на несколько секунд сразу
+// после удаления или встряхивание телефона в течение минуты (сначала вопрос).
+// Остальные действия отменяются обычным интерфейсом, отдельной отмены у них нет.
 // ---------------------------------------------------------------------------
-const capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
 // Вопрос посреди экрана с двумя кнопками, как системный на iPhone.
 // onYes вызывается прямо в обработчике нажатия — это важно для запроса
@@ -451,45 +449,12 @@ function askDialog({ title, message, yes = "Да", no = "Нет", onYes, onNo })
   document.body.append(backdrop);
 }
 
-async function performUndo() {
-  const entry = undoLast();
-  hideUndoChip();
-  if (!entry) return toast("Нечего отменять");
-  if (entry.kind === "reopen") {
-    // Выдачу откатывает сервер (проверит автора, 15 минут и 1С).
-    const res = await reopenOrderApi(entry.number);
-    if (!res.ok) return toast("Выдачу не отменить: " + res.error);
-    toast("Отменено: выдача клиенту — обращение снова в работе");
-    closeAllSheets();
-    if (subScreenExit) return leaveSubScreen();
-    return router();
-  }
-  toast("Отменено: " + entry.label);
-  // Перерисовать текущий экран с уже откатанными данными. Под-экран
-  // (диагностика, оплата) закрываем — его «назад» и так перерисует
-  // обращение; на новом наряде черновик не в базе, его не трогаем.
-  closeAllSheets();
-  // Отменили создание обращения (или оно пропало иначе), а мы как раз на
-  // его экране — показывать нечего, возвращаемся на главный.
-  const openOrder = location.hash.match(/^#\/orders\/([^/]+)$/)?.[1];
-  if (openOrder && openOrder !== "new" && !loadDB().orders.some((o) => o.number === decodeURIComponent(openOrder))) {
-    subScreenExit = null;
-    setInSubScreen(false);
-    return go("/");
-  }
-  if (subScreenExit) return leaveSubScreen();
-  if (location.hash.startsWith("#/orders/new")) return;
-  const y = window.scrollY;
-  router();
-  window.scrollTo(0, y);
-}
-
 // Кнопка «↶»: маленькая, в углу, сама исчезает через 4 секунды.
 let undoChip = null, undoChipTimer = null;
 function hideUndoChip() { clearTimeout(undoChipTimer); undoChip?.classList.remove("show"); }
 function showUndoChip(onClick) {
   if (!undoChip) {
-    undoChip = el("button", { type: "button", class: "undo-chip", "aria-label": "Отменить последнее действие",
+    undoChip = el("button", { type: "button", class: "undo-chip", "aria-label": "Вернуть удалённое обращение",
       html: ICON_SVG('<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>') });
     document.body.append(undoChip);
   }
@@ -498,7 +463,6 @@ function showUndoChip(onClick) {
   clearTimeout(undoChipTimer);
   undoChipTimer = setTimeout(hideUndoChip, 4000);
 }
-onUndoRecorded(() => showUndoChip(performUndo));
 
 // Встряхивание — только чтобы вернуть только что удалённое обращение (в
 // течение минуты после удаления). Для остальных действий — кнопка «↶».

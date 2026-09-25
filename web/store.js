@@ -10,8 +10,6 @@
 // И кэш серверных справочников (остатки, работы, мастера), которые
 // подтягиваются один раз и обновляются по мере правок.
 
-import { diffDB, applyUndo, undoable, describeUndo, handoverOf } from "./undo.js";
-
 export const DB_KEY = "vella.db.v1";
 export const DB_BASE_KEY = "vella.db.server.v1";
 export const DB_DIRTY_KEY = "vella.db.dirty.v1";
@@ -265,40 +263,7 @@ export async function sendSnapshot(myGen) {
 }
 
 export function saveDB(d) { DB = normalizeDB(d); writeLocal(); pushToServer(); }
-// Каждое действие через editDB запоминается для отмены (web/undo.js):
-// только что изменилось — «до» и «после» по затронутым записям.
-const UNDO_LIMIT = 30;
-const undoStack = [];
-let undoListener = null;
-export const onUndoRecorded = (fn) => { undoListener = fn; };
-export const peekUndo = () => undoStack[undoStack.length - 1] || null;
-export function editDB(fn) {
-  const before = structuredClone(DB);
-  fn(DB);
-  const changes = diffDB(before, DB);
-  const handedOverNumber = handoverOf(changes);
-  if (handedOverNumber || undoable(changes)) {
-    undoStack.push(handedOverNumber
-      ? { kind: "reopen", number: handedOverNumber, label: "выдачу клиенту", at: Date.now() }
-      : { changes, label: describeUndo(changes), at: Date.now() });
-    if (undoStack.length > UNDO_LIMIT) undoStack.shift();
-    undoListener?.(peekUndo());
-  } else if (changes.length) {
-    // Действие, которое нельзя отменить (выдача клиенту), — более ранние
-    // отмены через него уже не проходят, сбрасываем историю.
-    undoStack.length = 0;
-  }
-  writeLocal(); pushToServer();
-}
-// Отменить последнее действие: вернуть только то, что оно поменяло.
-// Выдачу (kind: "reopen") вызывающий отменяет сам — запросом reopenOrderApi.
-export function undoLast() {
-  const entry = undoStack.pop();
-  if (!entry || entry.kind === "reopen") return entry || null;
-  applyUndo(DB, entry.changes);
-  writeLocal(); pushToServer();
-  return entry;
-}
+export function editDB(fn) { fn(DB); writeLocal(); pushToServer(); }
 export function editOrder(number, fn) {
   editDB((d) => { const o = d.orders.find((x) => x.number === number); if (o) fn(o); });
 }
@@ -317,7 +282,7 @@ export async function deleteOrderApi(number) {
     return true;
   } catch { return false; }
 }
-// Вернуть только что удалённое обращение (встряхивание / «↶» после
+// Вернуть только что удалённое обращение (встряхивание / «↶» сразу после
 // удаления): обычным пушем — на сервере его уже нет, слияние его добавит.
 export function restoreOrder(order) {
   if (DB.orders.some((o) => o.number === order.number)) return false;
