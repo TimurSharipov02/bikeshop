@@ -680,3 +680,18 @@ label { display:block; font-size:13px; color:var(--muted); margin:var(--sp-4) 0 
 @media (prefers-reduced-motion: reduce) {
   ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation:none !important; }
 }
+/* Работа, раскрытая прямо в списке обращения (presentWork в app.js):
+   стрелка поворачивается, содержимое идёт под строкой, остальные работы
+   бледнеют; нижние кнопки экрана прячем — у работы своя «Отметить готово». */
+.work-chev { flex:0 0 auto; color:var(--line); font-size:19px; display:inline-block; transition:transform .18s ease, color .18s ease; }
+.work-open .work-chev { transform:rotate(90deg); color:var(--accent); }
+.has-open-work > [data-work-key] { transition:opacity .2s ease; }
+.has-open-work > [data-work-key]:not(.work-open) { opacity:.4; }
+.work-inline { padding:14px 0 18px; border-top:1px dashed var(--line); animation:work-inline-in .22s ease; }
+.work-open .assess, .assess.work-open { border-bottom:0; }
+.work-section { margin-top:14px; }
+.work-section > .sheet-section-title { margin-left:0; }
+.work-section:first-child { margin-top:0; }
+.work-inline-open .actions { display:none; }
+@keyframes work-inline-in { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:none; } }
+@media (prefers-reduced-motion: reduce) { .work-inline { animation:none; } }

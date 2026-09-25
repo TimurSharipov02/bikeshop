@@ -382,7 +382,12 @@ function render(nodes, { keepScroll } = {}) {
   // это время экран уже перерисовали (догрузились данные) — старую
   // заглушку поверх свежего не кладём.
   const seq = ++renderSeq;
-  const swap = () => { if (seq !== renderSeq) return; app.replaceChildren(...list); window.scrollTo(0, keepScroll ? y : 0); };
+  const swap = () => {
+    if (seq !== renderSeq) return;
+    app.replaceChildren(...list);
+    reattachInlineWork();
+    window.scrollTo(0, keepScroll ? y : 0);
+  };
   // Переход на другой экран: надпись, по которой нажали, «перелетает» в
   // заголовок нового экрана, а при возврате — заголовок обратно на своё
   // место в списке (View Transitions браузера; где их нет — обычная смена).
@@ -1658,7 +1663,7 @@ function viewOrder(number) {
         return b;
       };
       const body = stockCache ? buildBody(stockCache) : el("div", {}, skeletonRows(2));
-      if (!stockCache) ensureStock().then((s) => body.replaceChildren(...buildBody(s).childNodes));
+      if (!stockCache) ensureStock().then((s) => { body.replaceChildren(...buildBody(s).childNodes); reattachInlineWork(); });
       main.append(stage("Ремонт", body));
       // «+ доп. работа» — отдельным блоком под «Ремонт», а не последней
       // строкой в той же карточке со списком и итогом: это самостоятельное
@@ -2280,13 +2285,13 @@ function difficultyList(difficulties, onSet, onQty, fact) {
 // то как «+ доп. работа», то как невидимая навсегда, — и тут явный шаг
 // нужен в обоих случаях одинаково.
 function pendingAgreementRow(it, { onAgree, onRemove, onSet, onDiffQty, onParts }, stock) {
-  const box = el("div", { class: "assess" });
+  const box = el("div", { class: "assess", "data-work-key": it.code });
   const nameRow = el("div", {
     style: "display:flex;align-items:center;gap:8px;cursor:pointer",
-    onclick: () => openPendingSheet(it, stock, { onSet, onDiffQty, onParts }),
+    onclick: () => isInlineOpen(it.code) ? closeInlineWork() : openPendingSheet(it, stock, { onSet, onDiffQty, onParts }),
   },
     el("b", { style: "flex:1;min-width:0" }, it.name, usesQuantity(it) && (it.qty || 1) > 1 ? el("span", { class: "small muted" }, ` × ${it.qty}`) : null),
-    el("span", { style: "flex:0 0 auto;color:var(--line);font-size:19px" }, "›"));
+    el("span", { class: "work-chev" }, "›"));
   box.append(nameRow, priceRow(it, "margin-top:6px"));
   // «Согласовано»/«Убрать» — основное действие для этой карточки, оставляем
   // видимым сразу на строке, не прячем за открытием формы деталей.
@@ -2312,13 +2317,66 @@ const carouselNearestIndex = (track, count) => {
   return nearest;
 };
 
+// Работа раскрывается прямо в списке, под своей строкой, а не шторкой
+// снизу: экран подкручивается так, чтобы её заголовок встал первым под
+// шапкой, порядок работ не меняется. Строка помечена data-work-key (см.
+// repairItem/pendingAgreementRow). Экран обращения перерисовывается на
+// каждую правку (refresh) — тот же узел с содержимым просто заново
+// подвешивается под новую строку (render → reattachInlineWork), поэтому
+// состояние внутри (экземпляр в карусели, введённое) не теряется. Где такой
+// строки нет (приёмка, «Добавить работу») — как раньше, шторкой.
+let inlineWork = null; // { key, panel, close }
+const workRowFor = (key) => [...app.querySelectorAll("[data-work-key]")].find((n) => n.dataset.workKey === key) || null;
+function reattachInlineWork() {
+  if (!inlineWork) return;
+  const row = workRowFor(inlineWork.key);
+  if (!row) { inlineWork = null; document.body.classList.remove("work-inline-open"); return; }
+  row.classList.add("work-open");
+  row.parentElement.classList.add("has-open-work");
+  row.after(inlineWork.panel);
+}
+const isInlineOpen = (key) => inlineWork?.key === key;
+function closeInlineWork() { inlineWork?.close(); }
+function presentWork(it, content) {
+  const key = it.code;
+  closeInlineWork();
+  const row = workRowFor(key);
+  if (!row) return openSheet(it.name, content);
+  const panel = el("div", { class: "work-inline" }, content);
+  const handle = {
+    key, panel,
+    close() {
+      if (inlineWork !== handle) return;
+      inlineWork = null;
+      panel.remove();
+      document.body.classList.remove("work-inline-open");
+      const r = workRowFor(key);
+      r?.classList.remove("work-open");
+      r?.parentElement?.classList.remove("has-open-work");
+    },
+  };
+  inlineWork = handle;
+  document.body.classList.add("work-inline-open");
+  reattachInlineWork();
+  requestAnimationFrame(() => {
+    const barH = document.querySelector("header.bar")?.offsetHeight || 0;
+    const top = Math.max(0, row.getBoundingClientRect().top + window.scrollY - barH - 8);
+    const lack = top + window.innerHeight - document.documentElement.scrollHeight;
+    if (lack > 0) panel.style.paddingBottom = `${Math.ceil(lack) + 16}px`;
+    window.scrollTo({ top, behavior: "smooth" });
+  });
+  return handle;
+}
+
+// Усложнения и запчасти — подряд, каждое под своим заголовком (раньше —
+// переключатель-вкладки, и половину всегда было не видно).
+const workSection = (title, ...kids) => el("div", { class: "work-section" }, el("h3", { class: "sheet-section-title" }, title), ...kids);
+
 function openPendingSheet(it, stock, { onSet, onDiffQty, onParts }, siblings = [it]) {
   let items = siblings.length ? siblings : [it];
   let activeIndex = Math.max(0, items.findIndex((x) => x.code === it.code));
   // Вкладка принадлежит экземпляру и едет вместе с ним в карусели. Так при
   // свайпе меняется вся карточка, а не только содержимое под общим тумблером.
-  const tabs = new Map(items.map((instance) => [instance.code,
-    (instance.difficulties || []).length ? "diff" : "parts"]));
   const content = el("div", {});
   let sheet, track;
   let syncingScroll = false;
@@ -2335,18 +2393,11 @@ function openPendingSheet(it, stock, { onSet, onDiffQty, onParts }, siblings = [
   }
   function panelFor(instance) {
     const hasDiffs = (instance.difficulties || []).length > 0;
-    let tab = tabs.get(instance.code) || (hasDiffs ? "diff" : "parts");
-    if (!hasDiffs) tab = "parts";
-    tabs.set(instance.code, tab);
     return el("div", { class: "instance-panel" },
       workDescriptionNode(instance),
-      hasDiffs ? el("div", { class: "segmented", style: "margin-bottom:14px" },
-        el("button", { class: tab === "diff" ? "active" : "", onclick: () => { tabs.set(instance.code, "diff"); draw(); } }, "Усложнения"),
-        el("button", { class: tab === "parts" ? "active" : "", onclick: () => { tabs.set(instance.code, "parts"); draw(); } }, "Запчасти")) : null,
-      tab === "diff"
-        ? (hasDiffs ? difficultyList(instance.difficulties, (di, st) => { onSet(instance.code, di, st); draw(); }, (di, qty) => { onDiffQty(instance.code, di, qty); draw(); })
-          : el("p", { class: "small muted" }, "Трудностей не ожидается."))
-        : el("div", {}, partsEditor(instance.parts, stock, () => { onParts(instance.code, instance.parts); draw(); }, partBlockIdOf(instance))));
+      hasDiffs ? workSection("Усложнения",
+        difficultyList(instance.difficulties, (di, st) => { onSet(instance.code, di, st); draw(); }, (di, qty) => { onDiffQty(instance.code, di, qty); draw(); })) : null,
+      workSection("Запчасти", partsEditor(instance.parts, stock, () => { onParts(instance.code, instance.parts); draw(); }, partBlockIdOf(instance))));
   }
   function draw() {
     let dots = null, label = null;
@@ -2395,7 +2446,7 @@ function openPendingSheet(it, stock, { onSet, onDiffQty, onParts }, siblings = [
     if (items.length > 1 && track.isConnected) scrollToIndex(activeIndex, false);
   }
   draw();
-  sheet = openSheet(it.name, content);
+  sheet = presentWork(it, content);
   if (items.length > 1) scrollToIndex(activeIndex, false);
 }
 
@@ -2419,7 +2470,7 @@ function repairItem(it, stock, { onSave, onQty, onRemove, onAdd, onClaim }) {
   const nameRow = el("div", { style: "display:flex;align-items:center;gap:8px" },
     el("b", { style: "flex:1;min-width:0" }, it.name),
     workStatePill(it),
-    el("span", { style: "flex:0 0 auto;color:var(--line);font-size:19px" }, "›"));
+    el("span", { class: "work-chev" }, "›"));
   const quantityControl = usesQuantity(it) && onQty
     ? qtyStepper(it.qty, onQty, workQuantityLimitOf(it), onRemove ? () => onRemove(it.code) : undefined)
     : null;
@@ -2434,7 +2485,11 @@ function repairItem(it, stock, { onSave, onQty, onRemove, onAdd, onClaim }) {
     // openRepairSheet теперь всегда принимает (code, patch) — тут это одна-
     // единственная позиция без соседей, просто отбрасываем code и зовём
     // прежний, привязанный к конкретной работе onSave(patch).
-    onclick: () => { onClaim?.(); openRepairSheet(it, stock, (code, patch) => onSave(patch), [it], { onAdd, onRemove }); },
+    onclick: () => {
+      if (isInlineOpen(it.code)) return closeInlineWork();
+      onClaim?.();
+      openRepairSheet(it, stock, (code, patch) => onSave(patch), [it], { onAdd, onRemove });
+    },
   },
     nameRow,
     // Та же разбивка по составляющим, что и в списке «выдан» — не нужно
@@ -2443,7 +2498,9 @@ function repairItem(it, stock, { onSave, onQty, onRemove, onAdd, onClaim }) {
     el("div", { style: "margin-top:10px" }, pricedControlGroup(priceControl, quantityControl)));
   box.append(openArea);
   if (it.notes) box.append(el("p", { class: "small muted" }, it.notes));
-  return onRemove ? swipeToDelete(box, () => { onRemove(it.code); return true; }) : box;
+  const row = onRemove ? swipeToDelete(box, () => { onRemove(it.code); return true; }) : box;
+  row.dataset.workKey = it.code;
+  return row;
 }
 
 // Содержимое bottom sheet для repairItem — усложнения/
@@ -2494,7 +2551,6 @@ function openRepairSheet(it, stock, onSave, siblings = [it], { onAdd: onAddInsta
   const stagedFor = (inst) => ({
     diffs: JSON.parse(JSON.stringify(inst.difficulties || [])).map((d) => (d.state === "unknown" ? { ...d, state: "no" } : d)),
     parts: (inst.parts || []).map((p) => ({ ...p })),
-    tab: (inst.difficulties || []).length > 0 ? "diff" : "parts",
   });
   const staged = new Map(items.map((inst) => [inst.code, stagedFor(inst)]));
   let activeIndex = (() => {
@@ -2534,7 +2590,6 @@ function openRepairSheet(it, stock, onSave, siblings = [it], { onAdd: onAddInsta
     const s = staged.get(instance.code);
     const locked = isLocked(instance);
     const hasDiffs = s.diffs.length > 0;
-    if (!hasDiffs && s.tab === "diff") s.tab = "parts";
     const diffBox = el("div", {});
     const drawDiffs = () => diffBox.replaceChildren(hasDiffs
       ? difficultyList(s.diffs, (di, st) => { s.diffs[di].state = st; drawDiffs(); save(instance, {}); }, (di, qty) => { s.diffs[di].qty = qty; drawDiffs(); save(instance, {}); }, true)
@@ -2584,19 +2639,13 @@ function openRepairSheet(it, stock, onSave, siblings = [it], { onAdd: onAddInsta
     const doneBlock = instance.done
       ? canUndoDone ? el("button", { style: "width:100%;margin-top:16px", onclick: unmarkDone }, "Снять отметку «готово»") : null
       : el("button", { class: "btn-ok", style: "width:100%;margin-top:16px", onclick: markDone }, "Отметить готово");
-    const tabs = hasDiffs ? el("div", { class: "segmented", style: "margin-bottom:14px" },
-      el("button", { class: s.tab === "diff" ? "active" : "", onclick: () => { s.tab = "diff"; redrawPanel(instance); } }, "Усложнения"),
-      el("button", { class: s.tab === "parts" ? "active" : "", onclick: () => { s.tab = "parts"; redrawPanel(instance); } }, "Запчасти")) : null;
-    const tabContent = s.tab === "diff"
-      ? diffBox
-      : el("div", {},
-          partsEditor(s.parts, stock, () => save(instance, { parts: s.parts }), partBlockIdOf(instance),
-            instance.waitingForPart ? null : waitBlock),
-          instance.waitingForPart ? waitBlock : null);
     const inner = el("div", {},
       workDescriptionNode(instance),
-      tabs,
-      tabContent,
+      hasDiffs ? workSection("Усложнения", diffBox) : null,
+      workSection("Запчасти",
+        partsEditor(s.parts, stock, () => save(instance, { parts: s.parts }), partBlockIdOf(instance),
+          instance.waitingForPart ? null : waitBlock),
+        instance.waitingForPart ? waitBlock : null),
       doneBlock);
     const body = locked
       ? el("div", {},
@@ -2683,7 +2732,7 @@ function openRepairSheet(it, stock, onSave, siblings = [it], { onAdd: onAddInsta
 
   items.forEach((instance) => { ensurePanelHost(instance); redrawPanel(instance); });
   rebuildTrack();
-  sheet = openSheet(it.name, content);
+  sheet = presentWork(it, content);
   // scrollToIndex — уже после openSheet: до него content не в DOM, и
   // track.clientWidth равен 0, из-за чего scrollLeft всегда сводился к 0
   // независимо от activeIndex (открывался не тот экземпляр, что задуман).
@@ -3014,7 +3063,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
     wrap.append(miscOpen
       ? el("div", { class: "card card-flush" },
           el("label", {}, "Название разовой услуги"),
-          el("input", { placeholder: "напр. Мойка велосипеда", value: miscDraft.label, oninput: (e) => (miscDraft.label = e.target.value) }),
+          el("input", { value: miscDraft.label, oninput: (e) => (miscDraft.label = e.target.value) }),
           el("div", { style: "display:flex;flex-wrap:wrap;gap:8px;margin-top:8px" },
             el("div", { style: "flex:1;min-width:120px" }, el("label", {}, "Цена, ₽"), el("input", { type: "number", value: miscDraft.price || "", oninput: (e) => (miscDraft.price = +e.target.value || 0) })),
             el("div", { style: "flex:1;min-width:120px" }, el("label", {}, "Минуты"), el("input", { type: "number", value: miscDraft.minutes || "", oninput: (e) => (miscDraft.minutes = +e.target.value || 0) }))),
