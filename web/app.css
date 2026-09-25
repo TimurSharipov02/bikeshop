@@ -359,12 +359,14 @@ header.bar .bar-title-lg { font-size:19px; font-weight:700; }
 .swipe-action-btn svg { filter:drop-shadow(0 1px 1px rgba(0,0,0,.35)); }
 
 /* статус обращения — цвет для быстрого сканирования списка */
-.tag.tag-new     { background-color:var(--fill); color:var(--muted); }
-.tag.tag-approve { background-color:var(--purple-weak); color:var(--purple); }
-.tag.tag-progress{ background-color:var(--ok-weak); color:var(--ok); }
-.tag.tag-check   { background-color:var(--accent-weak); color:var(--accent); }
-.tag.tag-done    { background-color:var(--ok-weak); color:var(--ok); }
-.tag.tag-block   { background-color:var(--yellow-weak); color:var(--yellow-ink); }
+/* --tag-c — «свой» цвет метки: из него в Аэро собирается глянцевая капсула. */
+.tag, .pill { --tag-c:var(--accent); }
+.tag.tag-new     { background-color:var(--fill); color:var(--muted); --tag-c:var(--muted); }
+.tag.tag-approve { background-color:var(--purple-weak); color:var(--purple); --tag-c:var(--purple); }
+.tag.tag-progress{ background-color:var(--ok-weak); color:var(--ok); --tag-c:var(--ok); }
+.tag.tag-check   { background-color:var(--accent-weak); color:var(--accent); --tag-c:var(--accent); }
+.tag.tag-done    { background-color:var(--ok-weak); color:var(--ok); --tag-c:var(--ok); }
+.tag.tag-block   { background-color:var(--yellow-weak); color:var(--yellow-ink); --tag-c:var(--yellow); }
 
 /* Без этого быстрые повторные тапы (счётчик количества и т.п.) иногда
    распознаются как двойной тап — браузер ждёт, не жест ли это масштабирования,
@@ -557,7 +559,8 @@ label { display:block; font-size:13px; color:var(--muted); margin:var(--sp-4) 0 
 .pill { display:inline-block; font-size:12px; font-weight:600; padding:2px 9px; border-radius:999px;
   background:var(--accent-weak); border:0; color:var(--accent); margin-left:6px;
   animation:pill-pop .22s cubic-bezier(.34,1.56,.64,1); }
-.pill-muted { background:var(--fill); color:var(--muted); }
+.pill-muted { background:var(--fill); color:var(--muted); --tag-c:var(--muted); }
+.pill-wait { background:var(--yellow-weak); color:var(--yellow-ink); --tag-c:var(--yellow); }
 @keyframes pill-pop { from { transform:scale(.6); opacity:0; } to { transform:scale(1); opacity:1; } }
 
 .opt { display:flex; align-items:center; gap:10px; padding:13px; border:.5px solid var(--line); border-radius:var(--radius-sm);
@@ -744,11 +747,14 @@ label { display:block; font-size:13px; color:var(--muted); margin:var(--sp-4) 0 
 .work-list > * + * { border-top:.5px solid var(--line); }
 .work-list > .work-inline { border-top:1px dashed var(--line); }
 .work-list .assess { border-bottom:0; }
-/* «Жду запчасть» (openRepairSheet): серая — поставить статус, жёлтая —
-   статус стоит (как метка «Ожидает запчасть» в списке), нажать — снять. */
-.wait-toggle { border:1px dashed var(--line); border-radius:var(--radius-sm); background:transparent; color:var(--muted);
-  font-weight:600; box-shadow:none; transition:background .18s ease, color .18s ease, border-color .18s ease; }
-.wait-toggle.on { border:1px solid var(--yellow-ink); background:var(--yellow-weak); color:var(--yellow-ink); }
+/* «Жду запчасть» (openRepairSheet): выключена — обычная кнопка своего
+   стиля; включена — жёлтая в манере стиля (themes.css), как метка
+   «Ожидает запчасть» в списке. */
+.wait-toggle { transition:background .18s ease, color .18s ease, border-color .18s ease, box-shadow .18s ease; }
 .wait-toggle:disabled { opacity:1; cursor:default; }
 .wait-toggle-who { font-weight:400; }
 .parts-action-row > .wait-toggle { white-space:nowrap; font-size:15px; padding:0 10px; overflow:hidden; text-overflow:ellipsis; }
+/* Низ раскрытой работы: «Убрать из обращения» и «Отметить готово» — пополам. */
+.work-actions { margin-top:16px; }
+.work-actions > button { flex:1 1 0; min-width:0; white-space:nowrap; font-size:15px; padding-left:10px; padding-right:10px; }
+.work-actions > .btn-ok { flex-grow:2; }

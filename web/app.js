@@ -1037,7 +1037,7 @@ function viewNewOrder() {
         if (!item) { addDraftItem(fa); item = draft.items.find((it) => (it.sourceCode || it.code) === fa.code); }
         if (item) item.qty = count;
       },
-      onOpen: async (fa, redraw) => {
+      onOpen: async (fa, redraw, opts) => {
         const it = draft.items.find((item) => (item.sourceCode || item.code) === fa.code);
         if (!it) return;
         const stock = await ensureStock();
@@ -1057,7 +1057,7 @@ function viewNewOrder() {
             if (item) item.parts = parts;
             redraw();
           },
-        }, [it]);
+        }, [it], opts?.key);
       },
       getItemRange: (fa) => {
         const items = draft.items.filter((it) => (it.sourceCode || it.code) === fa.code);
@@ -1490,7 +1490,7 @@ function viewOrder(number) {
         }
         item.qty = count;
       },
-      onOpen: async (fa, redraw) => {
+      onOpen: async (fa, redraw, opts) => {
         const it = added.find((item) => (item.sourceCode || item.code) === fa.code);
         if (!it) return;
         const stock = await ensureStock();
@@ -1498,7 +1498,7 @@ function viewOrder(number) {
           onSet: (code, di, state) => { const x = added.find((v) => v.code === code); if (x?.difficulties?.[di]) x.difficulties[di].state = state; redraw(); },
           onDiffQty: (code, di, qty) => { const x = added.find((v) => v.code === code); if (x?.difficulties?.[di]) x.difficulties[di].qty = qty; redraw(); },
           onParts: (code, parts) => { const x = added.find((v) => v.code === code); if (x) x.parts = parts; redraw(); },
-        }, [it]);
+        }, [it], opts?.key);
       },
       getItemRange: (fa) => {
         const items = added.filter((it) => (it.sourceCode || it.code) === fa.code);
@@ -2145,7 +2145,7 @@ function costBreakdown(it) {
 
 function workStatePill(it) {
   if (it.waitingForPart && !it.done) {
-    return el("span", { class: "pill", style: "background:var(--yellow-weak);color:var(--yellow-ink)" }, "ждёт запчасть");
+    return el("span", { class: "pill pill-wait" }, "ждёт запчасть");
   }
   if (it.done) return el("span", { class: "pill" }, it.doneBy?.masterName || completionsSummary(it) || "Готово");
   if (it.claimedBy) return el("span", { class: "pill pill-muted" }, it.claimedBy.masterName || "Занята");
@@ -2384,13 +2384,14 @@ function presentInline(key, title, content) {
   scrollUnderBar(row, row.closest("main") || panel);
   return handle;
 }
-const presentWork = (it, content) => presentInline(workRowFor(it.code) || !it.sourceCode ? it.code : it.sourceCode, it.name, content);
+// key — своя строка, под которой раскрыть (например, в развёрнутом «Итого»).
+const presentWork = (it, content, key) => presentInline(key || (workRowFor(it.code) || !it.sourceCode ? it.code : it.sourceCode), it.name, content);
 
 // Усложнения и запчасти — подряд, каждое под своим заголовком (раньше —
 // переключатель-вкладки, и половину всегда было не видно).
 const workSection = (title, ...kids) => el("div", { class: "work-section" }, el("h3", { class: "sheet-section-title" }, title), ...kids);
 
-function openPendingSheet(it, stock, { onSet, onDiffQty, onParts }, siblings = [it]) {
+function openPendingSheet(it, stock, { onSet, onDiffQty, onParts }, siblings = [it], key) {
   let items = siblings.length ? siblings : [it];
   let activeIndex = Math.max(0, items.findIndex((x) => x.code === it.code));
   // Вкладка принадлежит экземпляру и едет вместе с ним в карусели. Так при
@@ -2464,7 +2465,7 @@ function openPendingSheet(it, stock, { onSet, onDiffQty, onParts }, siblings = [
     if (items.length > 1 && track.isConnected) scrollToIndex(activeIndex, false);
   }
   draw();
-  sheet = presentWork(it, content);
+  sheet = presentWork(it, content, key);
   if (items.length > 1) scrollToIndex(activeIndex, false);
 }
 
@@ -2656,19 +2657,19 @@ function openRepairSheet(it, stock, onSave, siblings = [it], { onAdd: onAddInsta
       waiting && waiting.masterId !== myId ? el("span", { class: "wait-toggle-who" }, ` · ${waiting.masterName || "—"}`) : null);
     const canUndoDone = isAdmin || instance.doneBy?.masterId === myId || (!instance.doneBy && instance.claimedBy?.masterId === myId);
     const doneBlock = instance.done
-      ? canUndoDone ? el("button", { style: "width:100%;margin-top:16px", onclick: unmarkDone }, "Снять отметку «готово»") : null
-      : el("button", { class: "btn-ok", style: "width:100%;margin-top:16px", onclick: markDone }, "Отметить готово");
+      ? canUndoDone ? el("button", { onclick: unmarkDone }, "Снять отметку «готово»") : null
+      : el("button", { class: "btn-ok", onclick: markDone }, "Отметить готово");
+    // «Убрать из обращения» и «Отметить готово» — одной строкой пополам.
     const removeBtn = onRemoveInstance && !instance.done ? el("button", {
-      class: "small parts-text-action", style: "display:block;margin:14px auto 0",
       onclick: () => removeInstance(instance),
-    }, "Убрать из обращения") : null;
+    }, "Убрать") : null;
+    const actions = doneBlock || removeBtn ? el("div", { class: "btn-row work-actions" }, removeBtn, doneBlock) : null;
     const inner = el("div", {},
       workDescriptionNode(instance),
       hasDiffs ? workSection("Усложнения", diffBox) : null,
       workSection("Запчасти",
         partsEditor(s.parts, stock, () => save(instance, { parts: s.parts }), partBlockIdOf(instance), waitBlock)),
-      doneBlock,
-      removeBtn);
+      actions);
     const body = locked
       ? el("div", {},
           el("p", { class: "small", style: "color:var(--muted);margin-bottom:10px" }, `Занято — ${instance.claimedBy?.masterName || "другой мастер"}`),
@@ -3164,11 +3165,18 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
         if (repeatsWholeItem(it)) onInstanceCount?.(fa, n); else onQuantity?.(fa, n);
         draw();
       };
-      const chosenRow = (it) => el("div", { class: "assess" },
-        el("b", {}, it.name),
+      // Тап по названию — усложнения и запчасти этой работы раскрываются
+      // прямо под ней (как в блоках), повторный — свернуть.
+      const chosenRow = (it) => {
+        const key = "chosen:" + it.code;
+        return el("div", { class: "assess", "data-work-key": key },
+        el("b", { class: "work-picker-name", style: "cursor:pointer", onclick: () => isInlineOpen(key)
+          ? closeInlineWork()
+          : onOpen?.({ code: it.sourceCode || it.code }, draw, { key }) }, it.name),
         costBreakdown(it),
         el("div", { class: "price-row", style: "margin-top:12px" }, itemPriceTags(it).filter(Boolean),
           usesQuantity(it) ? qtyStepper(it.qty || 1, (n) => setQty(it, n), workQuantityLimitOf(it)) : null));
+      };
       totalCard = el("div", { class: "card chosen-card" + (chosenJustOpened ? " misc-opening" : "") },
         el("h2", {}, "Выбранные работы"),
         ...total.items.map(chosenRow),
