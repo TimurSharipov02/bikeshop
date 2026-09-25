@@ -191,6 +191,16 @@ function attachPhoneMask(input, onChange) {
   input.type = "text";
   input.inputMode = "tel";
   input.autocomplete = "off";
+  // Пустое поле показывает только подсказку; «+7» появляется само, когда
+  // в поле нажали, и убирается, если так ничего и не набрали.
+  input.addEventListener("focus", () => {
+    if (input.value) return;
+    input.value = "+7 ";
+    requestAnimationFrame(() => input.setSelectionRange(input.value.length, input.value.length));
+  });
+  input.addEventListener("blur", () => {
+    if (input.value && !maskedDigits(input.value)) { input.value = ""; onChange(""); }
+  });
   input.addEventListener("input", () => {
     const before = input.value;
     const caret = input.selectionStart ?? before.length;
@@ -1168,13 +1178,13 @@ function viewNewOrder() {
       bikeFields.replaceChildren();
       if (f.bike === "new")
         bikeFields.append(el("input", {
-          type: "text", value: f.bikeName, placeholder: "Марка, модель",
+          type: "text", value: f.bikeName, placeholder: "не обязательно",
           oninput: (e) => (f.bikeName = e.target.value),
         }));
       bikeSlot.append(bikeFields);
     }
 
-    const phoneInput = el("input", { type: "tel", value: f.phone, placeholder: "+7 — необязательно" });
+    const phoneInput = el("input", { type: "tel", value: f.phone, placeholder: "не обязательно" });
     attachPhoneMask(phoneInput, (v) => { f.phone = v; drawClient(); });
 
     const wrap = el("main", { class: "wrap" },
@@ -1262,7 +1272,7 @@ function viewOrder(number) {
       phone: order.clientPhone ? applyPhoneMask(order.clientPhone) : "",
       bikeName: bikeLabel(bike),
     };
-    const phoneInput = el("input", { type: "tel", value: state.phone, placeholder: "+7 — необязательно" });
+    const phoneInput = el("input", { type: "tel", value: state.phone, placeholder: "не обязательно" });
     attachPhoneMask(phoneInput, (v) => (state.phone = v));
     const error = el("p", { class: "small", style: "color:var(--warn);display:none" });
     let sheet;
@@ -1319,10 +1329,10 @@ function viewOrder(number) {
     };
     sheet = openSheet("Клиент и велосипед", el("div", {},
       el("label", {}, "Имя"),
-      el("input", { value: state.name, placeholder: "необязательно", oninput: (e) => (state.name = e.target.value) }),
+      el("input", { value: state.name, placeholder: "не обязательно", oninput: (e) => (state.name = e.target.value) }),
       el("label", { style: "margin-top:10px" }, "Телефон"), phoneInput,
       el("label", { style: "margin-top:10px" }, "Велосипед"),
-      el("input", { value: state.bikeName, placeholder: "необязательно", oninput: (e) => (state.bikeName = e.target.value) }),
+      el("input", { value: state.bikeName, placeholder: "не обязательно", oninput: (e) => (state.bikeName = e.target.value) }),
       error,
       el("button", { class: "btn-primary", style: "width:100%;margin-top:16px", onclick: save }, "Сохранить"),
       // Удаление обращения — здесь, а не свайпом по списку на главном.
@@ -3796,14 +3806,9 @@ function reportContent(masterId, percentOf, header) {
       tabApi.historySection);
   };
   mountTab();
-  // Пустое поле с подсказкой — не «+7» сразу, а только когда по нему
-  // тапнули (иначе на пустом экране постоянно висит код страны, будто
-  // уже что-то введено). Если ушли с поля, ничего не набрав — подсказка
-  // возвращается.
+  // «+7» появляется только по тапу в поле (см. attachPhoneMask).
   const searchInput = el("input", { type: "tel", placeholder: "Поиск заявки по номеру телефона", style: "flex:1", value: "" });
   attachPhoneMask(searchInput, (v) => { searchPhone = v; tabApi.setSearch(v); });
-  searchInput.addEventListener("focus", () => { if (!searchInput.value) searchInput.value = "+7"; });
-  searchInput.addEventListener("blur", () => { if (!maskedDigits(searchInput.value)) searchInput.value = ""; });
   return { content: box, searchBar: el("div", { class: "actions" }, el("div", { class: "actions-inner" }, searchInput)) };
 }
 
