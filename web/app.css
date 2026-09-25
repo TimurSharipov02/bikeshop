@@ -508,6 +508,22 @@ input:focus,textarea:focus,select:focus { outline:none;
 .request-field { display:block; min-height:56px; resize:none; overflow:hidden; padding:15px 18px 15px 50px;
   font-size:17px; line-height:1.5; }
 .request-box-new { margin:0 0 12px; }
+/* Карточка клиента в обращении (viewOrder): строки одной высоты, иконки
+   в одной колонке слева, текст с одной линии, разделитель между строками.
+   Поле уточнений тут без своей подложки — оно строка карточки, а не
+   коробка в коробке (перебивает стили полей всех тем). */
+.order-head { padding-top:4px; padding-bottom:4px; }
+.order-head > h2 { margin:12px 0 4px; }
+.head-row { display:flex; align-items:center; gap:12px; min-height:56px; padding:8px 0; }
+.head-row + .head-row { border-top:1px solid var(--line); }
+.head-icon { flex:0 0 22px; display:flex; color:var(--muted); }
+.head-icon svg { width:22px; height:22px; }
+.head-note { align-items:flex-start; padding:16px 0; font-size:17px; line-height:1.5; }
+.head-note .head-icon { margin-top:2px; }
+.order-head .request-inline { display:block; padding:0; }
+.order-head .request-inline .request-icon { left:0; top:18px; }
+.order-head .request-inline .request-field, .order-head .request-inline .request-field:focus {
+  background:transparent; border:0; border-radius:0; box-shadow:none; padding:16px 0 16px 34px; min-height:56px; }
 /* Пиктограмма узла в заголовке блока на экране добавления работ. */
 /* Как ценник (.control-price) в этом же стиле: в Аэро — выпуклая глянцевая
    плашка со свечением; остальные стили переопределяют в themes.css. */

@@ -728,6 +728,7 @@ const BLOCK_ICONS = {
 const BLOCK_ICON_DEFAULT = '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-7.9 7.9l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 7.9-7.9l-3.8 3.8z"/>';
 // Поле «Уточнения»: иконка слева, подсказка по центру строки, а не в углу
 // высокой пустой рамки; поле само растёт по мере текста.
+const ICON_NOTE = ICON_SVG('<path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12.5h5"/>');
 function requestField(value, onChange, extraClass = "") {
   const ta = el("textarea", { class: "request-field", rows: 1, value, placeholder: "Уточнения клиента",
     onchange: (e) => onChange(e.target.value.trim()) });
@@ -735,7 +736,7 @@ function requestField(value, onChange, extraClass = "") {
   ta.addEventListener("input", fit);
   requestAnimationFrame(fit);
   return el("label", { class: ("request-box " + extraClass).trim() },
-    el("span", { class: "request-icon", html: ICON_SVG('<path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12.5h5"/>') }), ta);
+    el("span", { class: "request-icon", html: ICON_NOTE }), ta);
 }
 const blockIcon = (id) => el("span", { class: "block-icon", html: ICON_SVG(BLOCK_ICONS[id] || BLOCK_ICON_DEFAULT) });
 // Иконки для кнопок правки/удаления в свайпе (см. swipeActions) — вместо
@@ -1529,24 +1530,29 @@ function viewOrder(number) {
   }
 
   const range = orderRange(order);
-  const head = el("div", { class: "card" },
+  // Карточка клиента — строки как в настройках айфона: слева одна колонка
+  // иконок (человек, облачко уточнений), тексты с одной линии, между
+  // строками тонкий разделитель, трубка справа. Раньше уточнения были
+  // отдельной коробкой внутри карточки, а имя висело над ней само по себе.
+  const clientName = client?.name || order.clientName;
+  const headIcon = (html) => el("span", { class: "head-icon", html });
+  const head = el("div", { class: "card order-head" },
     // Название велосипеда уже крупно в шапке экрана — тут не повторяем,
     // только тип. Номер обращения из вида убрали — мастерам он не нужен.
     bike?.kind ? el("h2", {}, bike.kind) : null,
     // Вся строка — ссылка tel:, а не только номер: на телефоне так проще
     // попасть пальцем, а кнопка-трубка справа сразу подсказывает, что тут
-    // можно позвонить (не теряется мелким значком сразу после текста).
+    // можно позвонить. Номер не показываем — звонок и так по трубке.
     order.clientPhone
-      ? el("a", { href: `tel:${order.clientPhone.replace(/[^\d+]/g, "")}`, class: "client-line" },
-          // Номер телефона не показываем — звонок и так по кнопке-трубке.
+      ? el("a", { href: `tel:${order.clientPhone.replace(/[^\d+]/g, "")}`, class: "client-line head-row" },
+          headIcon(ICONS.profile),
           el("span", { style: "flex:1;min-width:0" },
-            client?.name || order.clientName ? el("b", {}, client?.name || order.clientName) : el("span", { class: "muted" }, "Позвонить клиенту")),
+            clientName ? el("b", {}, clientName) : el("span", { class: "muted" }, "Позвонить клиенту")),
           el("span", { class: "call-btn", html: ICON_PHONE }))
-      : (client?.name || order.clientName ? el("p", { class: "small muted" }, client?.name || order.clientName) : null),
+      : (clientName ? el("div", { class: "client-line head-row" }, headIcon(ICONS.profile), el("b", {}, clientName)) : null),
     order.status === "выдан"
-      ? (order.request ? el("p", { class: "small muted", style: "margin-top:8px" }, order.request) : null)
-      : el("div", { style: "margin-top:8px" },
-          requestField(order.request || "", (v) => { editOrder(number, (o) => (o.request = v)); refresh(); })));
+      ? (order.request ? el("div", { class: "head-row head-note" }, headIcon(ICON_NOTE), el("span", { class: "muted" }, order.request)) : null)
+      : requestField(order.request || "", (v) => { editOrder(number, (o) => (o.request = v)); refresh(); }, "head-row request-inline"));
 
   if ((order.diagnosticNotes || []).length) {
     const ul = el("ul", { style: "margin:4px 0 0;padding-left:18px" });
