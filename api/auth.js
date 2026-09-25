@@ -9,7 +9,7 @@ const loadUsers = async (r) => (await r.get(KEY)) || { users: [] };
 const publicUser = (u) => ({ id: u.id, login: u.login, name: u.name, role: u.role, commissionPercent: u.commissionPercent || 0, look: u.look || null });
 // Оформление (Профиль → Оформление) — за учётной записью, а не за телефоном:
 // мастер видит свой вид на любом устройстве. Список — как STYLE_PRESETS в web/app.js.
-const LOOK_STYLES = ["aero", "calm", "soft", "workshop", "graphite", "paper"];
+const LOOK_STYLES = ["aero", "calm", "soft", "workshop", "graphite", "paper", "terminal"];
 const LOOK_THEMES = ["auto", "light", "dark"];
 
 // r — хранилище; параметром для тестов (tests/auth.test.js), как в других ручках.

@@ -573,6 +573,7 @@ const STYLE_PRESETS = [
   { id: "workshop", name: "Мастерская", note: "Крупно и контрастно", sw: ["#ffcc00", "#ffffff", "#111111"] },
   { id: "graphite", name: "Графит", note: "Матовый, оранжевый акцент", sw: ["#282828", "#ececec", "#ff8a1f"] },
   { id: "paper", name: "Бумага", note: "Тёплый, с засечками", sw: ["#f4ede1", "#fffaf1", "#2e6b4f"] },
+  { id: "terminal", name: "Командная строка", note: "Моноширинный шрифт, как в терминале", sw: ["#040704", "#39ff6a", "#0a7a33"] },
 ];
 const THEME_OPTIONS = [["auto", "Как на телефоне"], ["light", "Светлая"], ["dark", "Тёмная"]];
 const DARK_MQ = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
