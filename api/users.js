@@ -7,7 +7,7 @@ import { redis, readBody, requireUser, requireAdmin, hashPassword } from "./_lib
 
 const KEY = "vella:users";
 const loadUsers = async (r) => (await r.get(KEY)) || { users: [] };
-const publicUser = (u) => ({ id: u.id, login: u.login, name: u.name, role: u.role, active: u.active, createdAt: u.createdAt, commissionPercent: u.commissionPercent || 0 });
+const publicUser = (u) => ({ id: u.id, login: u.login, name: u.name, role: u.role, active: u.active, createdAt: u.createdAt, commissionPercent: u.commissionPercent || 0, serviceBarcode1C: u.serviceBarcode1C || "" });
 const activeAdmins = (users) => users.filter((x) => x.role === "admin" && x.active);
 
 export default async function handler(req, res) {
@@ -51,6 +51,14 @@ export default async function handler(req, res) {
 
     if (body.name) u.name = String(body.name).trim();
     if (body.commissionPercent != null) u.commissionPercent = Math.min(100, Math.max(0, Number(body.commissionPercent) || 0));
+    if (body.serviceBarcode1C != null) {
+      const barcode = String(body.serviceBarcode1C).trim();
+      if (barcode && !/^\d{13}$/.test(barcode)) return res.status(400).json({ error: "штрихкод услуги 1С должен содержать 13 цифр" });
+      if (barcode && store.users.some((other) => other.id !== u.id && other.serviceBarcode1C === barcode)) {
+        return res.status(409).json({ error: "этот штрихкод уже указан у другого мастера" });
+      }
+      u.serviceBarcode1C = barcode;
+    }
 
     if (body.role === "admin" || body.role === "master") {
       if (u.role === "admin" && body.role === "master" && activeAdmins(store.users).length <= 1)

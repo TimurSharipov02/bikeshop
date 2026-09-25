@@ -14,7 +14,15 @@ export function assertWorkAccess(current, merged, user) {
   }
   for (const order of merged.orders || []) {
     const previous = (current.orders || []).find((o) => o.number === order.number);
+    if (process.env.INTEGRATION_1C_CHECKOUT === "1" && !previous &&
+        (order.handedOverAt || order.status === "выдан")) {
+      throw new MergeConflict("выдача подтверждается оплатой в 1С");
+    }
     if (!previous) continue;
+    if (process.env.INTEGRATION_1C_CHECKOUT === "1" &&
+        !previous.handedOverAt && previous.status !== "выдан" && (order.handedOverAt || order.status === "выдан")) {
+      throw new MergeConflict("выдача подтверждается оплатой в 1С");
+    }
     const oldItems = new Map((previous.items || []).map((item) => [item.code, item]));
     const newItems = new Map((order.items || []).map((item) => [item.code, item]));
     for (const old of previous.items || []) {

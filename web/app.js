@@ -1348,23 +1348,40 @@ function viewOrder(number) {
     enterSubScreen(refresh);
   }
 
-  // Экран оплаты — пока заглушка: приём оплаты ещё в разработке, отсюда
-  // только выдача велосипеда клиенту (раньше это была кнопка прямо на
-  // экране ремонта). «Назад» возвращает на ремонт, ничего не меняя.
-  function openPayment() {
+  // Режим интеграции включают только после установки обмена в УНФ.
+  // До этого сохраняется привычная выдача без ожидания кассы.
+  async function openPayment() {
+    if (!(await flushPending())) return toast("Сначала сохраните обращение на сервере");
+    let checkoutMode;
+    try {
+      const response = await fetch("/api/checkout-mode", { cache: "no-store" });
+      if (!response.ok) throw new Error();
+      checkoutMode = (await response.json()).enabled;
+    } catch { return toast("Не удалось проверить режим оплаты, повторите попытку"); }
     const main = el("main", { class: "wrap" },
       el("div", { class: "card" },
         el("h2", {}, "Оплата"),
-        el("p", { class: "muted" }, "Экран оплаты в разработке."),
+        el("p", { class: "muted" }, checkoutMode
+          ? `Откройте обращение ${number} в 1С и оформите оплату. После чека обновите статус здесь.`
+          : "Экран оплаты в разработке."),
         totalRow(orderRange(loadDB().orders.find((o) => o.number === number) || order), 2, "К оплате")));
     const handOver = () => {
       editOrder(number, (o) => { o.status = "выдан"; o.occupiedBy = null; o.occupiedByName = ""; o.handedOverAt = new Date().toISOString(); });
       subScreenExit = () => go("/");
       leaveSubScreen();
     };
+    const checkPayment = async () => {
+      await syncFromServer();
+      const current = loadDB().orders.find((o) => o.number === number);
+      if (current?.handedOverAt && current.fiscalReceipt) {
+        subScreenExit = () => go("/");
+        leaveSubScreen();
+      } else toast("Подтверждение оплаты из 1С ещё не получено");
+    };
     render([subBar(null, "Оплата"), main,
       el("div", { class: "actions" }, el("div", { class: "actions-inner" },
-        el("button", { class: "btn-ok", onclick: handOver }, "Выдать клиенту")))]);
+        el("button", { class: "btn-ok", onclick: checkoutMode ? checkPayment : handOver },
+          checkoutMode ? "Проверить оплату" : "Выдать клиенту")))]);
     enterSubScreen(refresh);
   }
 
@@ -3522,6 +3539,21 @@ function mastersScreen(list, error) {
       el("div", { class: "form-list" },
         formRow("Процент от работы", el("input", { name: "commissionPercent", type: "number", min: 0, max: 100, value: u.commissionPercent || 0, inputmode: "numeric" }), "%")),
       el("button", { type: "submit", style: "width:100%;margin-top:10px" }, "Сохранить процент")));
+
+    controls.append(el("form", {
+      class: "sheet-section", onsubmit: async (ev) => {
+        ev.preventDefault();
+        if (await usersApi("PUT", { id: u.id, serviceBarcode1C: ev.target.serviceBarcode1C.value })) {
+          sheet.close(); loadMasters(); toast("Штрихкод услуги сохранён");
+        }
+      },
+    },
+      el("h3", {}, "Услуга в 1С"),
+      el("div", { class: "form-list" },
+        formRow("Штрихкод услуги мастера", el("input", {
+          name: "serviceBarcode1C", inputmode: "numeric", maxlength: 13, value: u.serviceBarcode1C || "",
+        }))),
+      el("button", { type: "submit", style: "width:100%;margin-top:10px" }, "Сохранить штрихкод")));
 
     controls.append(el("form", {
       class: "sheet-section", onsubmit: async (ev) => {
