@@ -79,6 +79,15 @@ export function applyUndo(db, changes) {
 const handedOver = (o) => !!o && (o.status === "выдан" || !!o.handedOverAt);
 export const undoable = (changes) => changes.length > 0 &&
   !changes.some((c) => c.coll === "orders" && (handedOver(c.before) || handedOver(c.after)));
+// Действие — выдача одного обращения клиенту? Тогда его отменяют не
+// откатом полей, а отдельным запросом «вернуть в работу» (сервер сам
+// проверит, чей это заказ, прошло ли 15 минут и не ушёл ли он в 1С).
+export function handoverOf(changes) {
+  const orders = changes.filter((c) => c.coll === "orders");
+  if (orders.length !== 1) return null;
+  const { before, after } = orders[0];
+  return before && after && !handedOver(before) && handedOver(after) ? after.number : null;
+}
 
 const q = (s) => `«${s}»`;
 function describeItem(b, a) {

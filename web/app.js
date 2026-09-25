@@ -45,7 +45,7 @@ import {
   stockCache, clearStockCache, ensureStock,
   loadDB, syncFromServer,
   editDB, editOrder, deleteOrderApi, deleteClientApi, deleteBikeApi, pushDbNow, flushPending,
-  onUndoRecorded, peekUndo, undoLast,
+  onUndoRecorded, peekUndo, undoLast, reopenOrderApi,
 } from "./store.js";
 
 const RAW = window.CATALOG;
@@ -451,10 +451,19 @@ function askDialog({ title, message, yes = "Да", no = "Нет", onYes, onNo })
   document.body.append(backdrop);
 }
 
-function performUndo() {
+async function performUndo() {
   const entry = undoLast();
   hideUndoChip();
   if (!entry) return toast("Нечего отменять");
+  if (entry.kind === "reopen") {
+    // Выдачу откатывает сервер (проверит автора, 15 минут и 1С).
+    const res = await reopenOrderApi(entry.number);
+    if (!res.ok) return toast("Выдачу не отменить: " + res.error);
+    toast("Отменено: выдача клиенту — обращение снова в работе");
+    closeAllSheets();
+    if (subScreenExit) return leaveSubScreen();
+    return router();
+  }
   toast("Отменено: " + entry.label);
   // Перерисовать текущий экран с уже откатанными данными. Под-экран
   // (диагностика, оплата) закрываем — его «назад» и так перерисует
@@ -1366,7 +1375,11 @@ function viewOrder(number) {
           : "Экран оплаты в разработке."),
         totalRow(orderRange(loadDB().orders.find((o) => o.number === number) || order), 2, "К оплате")));
     const handOver = () => {
-      editOrder(number, (o) => { o.status = "выдан"; o.occupiedBy = null; o.occupiedByName = ""; o.handedOverAt = new Date().toISOString(); });
+      editOrder(number, (o) => {
+        o.status = "выдан"; o.occupiedBy = null; o.occupiedByName = ""; o.handedOverAt = new Date().toISOString();
+        // Кто выдал — мастер может сам отменить свою выдачу в первые 15 минут.
+        o.handedOverBy = { masterId: SESSION?.id || "", masterName: SESSION?.name || "" };
+      });
       subScreenExit = () => go("/");
       leaveSubScreen();
     };
@@ -1488,7 +1501,8 @@ function viewOrder(number) {
     head.append(el("div", { class: "small", style: "margin-top:8px" }, el("span", { class: "muted" }, "Замечания с диагностики:"), ul));
   }
 
-  const main = el("main", { class: "wrap" }, head);
+  // У выданного обращения без клиента и уточнений карточке нечего показать.
+  const main = el("main", { class: "wrap" }, head.childElementCount ? head : null);
   // Закреплённая внизу экрана панель действий — как «Готово» на диагностике:
   // одна кнопка слева, другая справа (одна ведёт вперёд по стадиям, другая —
   // назад/в сторону), обе всегда в зоне досягаемости, даже если список работ
@@ -1633,10 +1647,66 @@ function viewOrder(number) {
       // не занимая места среди самих данных заявки.
       order.status === "взята в работу" ? el("button", {
         class: "edit-btn", "aria-label": "Изменить клиента и велосипед", style: iconBtnStyle, html: ICON_EDIT, onclick: openOrderDetailsEditor,
+      }) : null,
+      order.status === "выдан" && (SESSION?.role === "admin" || canReopenIssued(order)) ? el("button", {
+        class: "edit-btn", "aria-label": "Изменить выданное обращение", style: iconBtnStyle, html: ICON_EDIT,
+        onclick: () => openIssuedOrderSheet(order),
       }) : null),
     main,
     actions,
   ];
+}
+
+// Выданное обращение — учётная запись (выработка мастеров, выгрузка в 1С).
+// Ошибочную выдачу можно откатить, пока обращение не прошло через 1С:
+// администратор — всегда, мастер — свою и в первые 15 минут. Те же правила
+// проверяет сервер (api/_issued-order.js), тут — только что показывать.
+const ISSUED_REOPEN_WINDOW_MS = 15 * 60 * 1000;
+const issuedIn1C = (o) => !!o.fiscalReceipt || !!o.exportedTo1C;
+function canReopenIssued(o) {
+  if (issuedIn1C(o)) return false;
+  if (SESSION?.role === "admin") return true;
+  return o.handedOverBy?.masterId === SESSION?.id &&
+    Date.now() - Date.parse(o.handedOverAt || "") <= ISSUED_REOPEN_WINDOW_MS;
+}
+function openIssuedOrderSheet(order) {
+  let sheet;
+  const reopen = () => askDialog({
+    title: "Вернуть обращение в работу?",
+    message: "Выдача отменится, обращение снова появится на главном — его можно будет изменить и выдать заново.",
+    yes: "Вернуть", no: "Отмена",
+    onYes: async () => {
+      const res = await reopenOrderApi(order.number);
+      if (!res.ok) return toast("Не получилось: " + res.error);
+      sheet?.close();
+      toast("Обращение снова в работе");
+      router();
+    },
+  });
+  const remove = () => askDialog({
+    title: "Удалить обращение насовсем?",
+    message: "Оно пропадёт из выполненных работ и выработки мастеров. Вернуть будет нельзя.",
+    yes: "Удалить", no: "Отмена",
+    onYes: async () => {
+      if (!(await deleteOrderApi(order.number))) return toast("Не получилось удалить — проверьте связь и права");
+      sheet?.close();
+      toast("Обращение удалено");
+      go("/");
+    },
+  });
+  const body = issuedIn1C(order)
+    ? el("p", { class: "muted", style: "margin:0 0 8px" },
+        order.fiscalReceipt
+          ? "Оплата прошла через кассу 1С — это обращение менять нельзя. Если оплата ошибочная, сначала отмените чек в 1С."
+          : "Обращение уже выгружено в 1С — менять его нельзя. Если оно ошибочное, сначала исправьте документ в 1С.")
+    : el("div", {},
+        el("p", { class: "muted", style: "margin:0 0 14px" },
+          "Выдача прошла не через 1С — её можно отменить: вернуть обращение в работу, чтобы исправить, или удалить совсем (например, тестовое)."),
+        el("button", { class: "btn-primary", style: "width:100%", onclick: reopen }, "Вернуть в работу"),
+        SESSION?.role === "admin"
+          ? el("button", { class: "btn-warn", style: "width:100%;margin-top:10px", onclick: remove }, "Удалить обращение")
+          : null);
+  sheet = openSheet("Обращение выдано", body);
 }
 
 function stage(title, ...body) { return el("div", { class: "card" }, el("h2", {}, title), ...body); }

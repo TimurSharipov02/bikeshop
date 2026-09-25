@@ -4,11 +4,12 @@ import { requireUser } from "./_lib.js";
 import { dbRedis, loadDB, updateDB } from "./_atomic-db.js";
 import { mergeDB, MergeConflict } from "./_db-merge.js";
 import { assertWorkAccess } from "./_work-access.js";
+import { reopenIssuedOrder, assertOrderDeletable } from "./_issued-order.js";
 
-export default async function handler(req, res) {
-  const r = dbRedis();
+// r и usersRedis — параметрами для тестов (tests/db-issued.test.js).
+export default async function handler(req, res, r = dbRedis(), usersRedis) {
   if (!r) return res.status(503).json({ error: "storage not configured" });
-  const user = await requireUser(req, res);
+  const user = await requireUser(req, res, usersRedis);
   if (!user) return;
 
   try {
@@ -18,6 +19,18 @@ export default async function handler(req, res) {
     }
     if (req.method === "PUT" || req.method === "POST") {
       const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
+      // Отмена выдачи — отдельным явным действием, мимо обычного слияния:
+      // тот не может трогать выданные обращения (см. _issued-order.js).
+      if (body.action === "reopen") {
+        const number = String(body.number || "").trim();
+        if (!number) return res.status(400).json({ error: "не указано обращение" });
+        const next = await updateDB(r, (current) => {
+          const data = structuredClone(current);
+          reopenIssuedOrder(data, number, user);
+          return data;
+        });
+        return res.status(200).json(next);
+      }
       if (!body.base || !body.next) return res.status(400).json({ error: "Обновите страницу перед сохранением" });
       const merged = await updateDB(r, (current) => {
         const next = mergeDB(body.base, body.next, current);
@@ -35,10 +48,8 @@ export default async function handler(req, res) {
       const next = await updateDB(r, (current) => {
         const data = structuredClone(current);
         if (number) {
-          const order = data.orders.find((o) => o.number === number);
-          if (order && (order.status === "выдан" || order.handedOverAt)) {
-            throw new MergeConflict(`оплаченное обращение ${number} нельзя удалять`);
-          }
+          // Выданное — только администратор и только если не прошло через 1С.
+          assertOrderDeletable(data.orders.find((o) => o.number === number), user);
           data.orders = data.orders.filter((o) => o.number !== number);
         }
         else if (clientPhone) {

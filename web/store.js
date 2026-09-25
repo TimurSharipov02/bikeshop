@@ -10,7 +10,7 @@
 // И кэш серверных справочников (остатки, работы, мастера), которые
 // подтягиваются один раз и обновляются по мере правок.
 
-import { diffDB, applyUndo, undoable, describeUndo } from "./undo.js";
+import { diffDB, applyUndo, undoable, describeUndo, handoverOf } from "./undo.js";
 
 export const DB_KEY = "vella.db.v1";
 export const DB_BASE_KEY = "vella.db.server.v1";
@@ -276,8 +276,11 @@ export function editDB(fn) {
   const before = structuredClone(DB);
   fn(DB);
   const changes = diffDB(before, DB);
-  if (undoable(changes)) {
-    undoStack.push({ changes, label: describeUndo(changes), at: Date.now() });
+  const handedOverNumber = handoverOf(changes);
+  if (handedOverNumber || undoable(changes)) {
+    undoStack.push(handedOverNumber
+      ? { kind: "reopen", number: handedOverNumber, label: "выдачу клиенту", at: Date.now() }
+      : { changes, label: describeUndo(changes), at: Date.now() });
     if (undoStack.length > UNDO_LIMIT) undoStack.shift();
     undoListener?.(peekUndo());
   } else if (changes.length) {
@@ -288,9 +291,10 @@ export function editDB(fn) {
   writeLocal(); pushToServer();
 }
 // Отменить последнее действие: вернуть только то, что оно поменяло.
+// Выдачу (kind: "reopen") вызывающий отменяет сам — запросом reopenOrderApi.
 export function undoLast() {
   const entry = undoStack.pop();
-  if (!entry) return null;
+  if (!entry || entry.kind === "reopen") return entry || null;
   applyUndo(DB, entry.changes);
   writeLocal(); pushToServer();
   return entry;
@@ -312,6 +316,24 @@ export async function deleteOrderApi(number) {
     adopt(await r.json());
     return true;
   } catch { return false; }
+}
+// Вернуть выданное обращение в работу — явным запросом мимо обычного пуша
+// (он выданные менять не может, см. api/_issued-order.js). Возвращает
+// { ok, error } — текст отказа сервера показываем как есть.
+export async function reopenOrderApi(number) {
+  try {
+    if (dirty && !(await flushPending())) return { ok: false, error: "нет связи с сервером" };
+    const r = await fetch("/api/db", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "reopen", number }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      if (j.current) adopt(j.current);
+      return { ok: false, error: j.error || "не удалось" };
+    }
+    serverOK = true;
+    adopt(j);
+    return { ok: true };
+  } catch { return { ok: false, error: "нет связи с сервером" }; }
 }
 // Тот же принцип — клиента/велосипед тоже нельзя просто убрать локально и
 // дождаться обычного пуша: mergeDB на сервере видит объединение и вернёт

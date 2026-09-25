@@ -63,3 +63,12 @@ test('the description names what was tapped: a quantity change that also claims 
   Object.assign(after.orders[0].items[0], { qty: 2, claimedBy: { masterId: 'u' } });
   assert.equal(describeUndo(diffDB(before, after)), 'количество у «Работа a»');
 });
+
+test('a handover is recognised so the undo button can ask the server to reopen the order', async () => {
+  const { handoverOf } = await import('../web/undo.js');
+  const before = { orders: [order([work('a', { done: true })])] };
+  const after = clone(before); after.orders[0].status = 'выдан'; after.orders[0].handedOverAt = '2026-09-25T00:00:00Z';
+  assert.equal(handoverOf(diffDB(before, after)), '1');
+  const edited = clone(before); edited.orders[0].request = 'x';
+  assert.equal(handoverOf(diffDB(before, edited)), null);
+});
