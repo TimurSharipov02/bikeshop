@@ -2024,23 +2024,27 @@ function quantityModeEditor(draft) {
 // позиции наряда. Мутирует list на месте, box перерисовывается сам.
 function complicationsEditor(list) {
   const box = el("div", {});
+  // Каждое усложнение — своей карточкой: название на всю ширину, ниже два
+  // обычных поля (надбавка и время) с подписями, крупная галочка «несколько
+  // раз». Раньше всё было мелкими полями в одну строку и не читалось.
+  const numField = (label, value, suffix, aria, onInput) => el("div", { class: "complication-num" },
+    el("label", {}, label),
+    el("div", { class: "complication-num-box", style: `--sfx:${suffix.length}` },
+      el("input", { type: "number", inputmode: "numeric", value, "aria-label": aria, oninput: (e) => onInput(+e.target.value || 0) }),
+      el("span", { class: "complication-num-suffix" }, suffix)));
   const draw = () => {
     box.replaceChildren(
       ...list.map((c, ci) => el("div", { class: "complication-edit-item" },
-        el("div", { style: "display:flex;gap:6px;align-items:center" },
-          el("input", { placeholder: "усложнение", value: c.label, style: "flex:1;min-width:0", oninput: (e) => (c.label = e.target.value) }),
-          el("button", { class: "complication-remove", "aria-label": "Удалить усложнение", onclick: () => { list.splice(ci, 1); draw(); } }, "✕")),
-        el("div", { class: "complication-edit-meta" },
-          el("span", { class: "muted" }, "+"),
-          el("input", { type: "number", value: c.add, style: "width:58px;text-align:right", "aria-label": "Надбавка в рублях", oninput: (e) => (c.add = +e.target.value || 0) }),
-          el("span", { class: "muted small" }, "₽"),
-          el("span", { class: "muted complication-time-plus" }, "+"),
-          el("input", { type: "number", value: c.addMinutes || 0, style: "width:50px;text-align:right", "aria-label": "Надбавка во времени", oninput: (e) => (c.addMinutes = +e.target.value || 0) }),
-          el("span", { class: "muted small" }, "мин"),
-          el("label", { class: "complication-multiple" },
-            el("input", { class: "chk", type: "checkbox", checked: !!c.multiple, onchange: (e) => (c.multiple = e.target.checked) }),
-            el("span", { class: "small" }, "несколько раз"))))),
-      el("button", { class: "compact-add-btn", onclick: () => { list.push({ label: "", add: 0, addMinutes: 0, multiple: false }); draw(); } }, "+ усложнение"),
+        el("div", { class: "complication-edit-head" },
+          el("input", { placeholder: "Название усложнения", value: c.label, oninput: (e) => (c.label = e.target.value) }),
+          el("button", { class: "complication-remove", "aria-label": "Удалить усложнение", html: ICON_CLOSE, onclick: () => { list.splice(ci, 1); draw(); } })),
+        el("div", { class: "complication-edit-nums" },
+          numField("Надбавка", c.add || "", "₽", "Надбавка в рублях", (v) => (c.add = v)),
+          numField("Время", c.addMinutes || "", "мин", "Надбавка во времени", (v) => (c.addMinutes = v))),
+        el("label", { class: "complication-multiple" },
+          el("input", { class: "chk", type: "checkbox", checked: !!c.multiple, onchange: (e) => (c.multiple = e.target.checked) }),
+          el("span", {}, "Может быть несколько раз")))),
+      el("button", { class: "complication-add", onclick: () => { list.push({ label: "", add: 0, addMinutes: 0, multiple: false }); draw(); } }, "+ Добавить усложнение"),
     );
   };
   draw();
@@ -2764,6 +2768,23 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
   // не привязана ни к одному блоку и не сохраняется в общий каталог.
   let miscOpen = false;
   const miscDraft = { label: "", price: 0, minutes: 0 };
+  // Добавленные тут разовые услуги — видны списком над формой: в узлах
+  // их нет, и раньше после «Добавить» было непонятно, куда она делась.
+  const miscAdded = [];
+  let miscFlash = null; // код только что добавленной — подсветить строку
+  let miscOpening = false; // форма только что открыта — плавно раскрыть
+  const reduceMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  // Свернуть узел по высоте и только потом перерисовать — видно, что
+  // форма закрылась, а не просто исчезла.
+  const collapseThen = (node, done) => {
+    if (!node?.isConnected || !node.animate || reduceMotion()) return done();
+    const h = node.offsetHeight;
+    node.style.overflow = "hidden";
+    node.animate([
+      { height: `${h}px`, opacity: 1 },
+      { height: "0px", opacity: 0, paddingTop: "0px", paddingBottom: "0px", marginTop: "0px", marginBottom: "0px" },
+    ], { duration: 220, easing: "cubic-bezier(.4,0,.2,1)", fill: "forwards" }).onfinish = done;
+  };
 
   const instances = () => {
     const out = [];
@@ -2834,7 +2855,7 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
     };
     const body = el("div", {},
       el("label", { style: "margin-top:0" }, "Название работы"),
-      el("input", { value: draftFa.label, placeholder: f ? "" : "напр. Восьмёрка", oninput: (e) => (draftFa.label = e.target.value) }),
+      el("input", { value: draftFa.label, oninput: (e) => (draftFa.label = e.target.value) }),
       descriptionField(draftFa),
       el("div", { style: "display:flex;flex-wrap:wrap;gap:8px;margin-top:8px" }, numField("Цена, ₽", "price"), numField("Минуты", "minutes")),
       quantityModeEditor(draftFa),
@@ -3060,8 +3081,25 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
     // заводится в общий каталог неисправностей и никак не всплывёт у другого
     // велосипеда в будущем): просто ещё один пункт наряда, добавляется сразу
     // через onCheck, как и обычная отмеченная неисправность.
+    if (miscAdded.length) {
+      wrap.append(el("div", { class: "card misc-added" },
+        el("h2", {}, "Разовые услуги"),
+        rowsList(miscAdded.map((m) => el("div", { class: "row misc-row" + (m.code === miscFlash ? " just-added" : ""), style: "cursor:default;gap:10px" },
+          el("span", { style: "flex:1;min-width:0" }, m.label),
+          controlPriceTag(money(m.price)),
+          el("button", {
+            class: "complication-remove", "aria-label": `Убрать «${m.label}»`, html: ICON_CLOSE,
+            onclick: (e) => collapseThen(e.currentTarget.closest(".row"), () => {
+              miscAdded.splice(miscAdded.indexOf(m), 1);
+              onUncheck({ code: m.code });
+              draw();
+            }),
+          }))), true)));
+      miscFlash = null;
+    }
+    let miscCard = null;
     wrap.append(miscOpen
-      ? el("div", { class: "card card-flush" },
+      ? (miscCard = el("div", { class: "card card-flush" + (miscOpening ? " misc-opening" : "") },
           el("label", {}, "Название разовой услуги"),
           el("input", { value: miscDraft.label, oninput: (e) => (miscDraft.label = e.target.value) }),
           el("div", { style: "display:flex;flex-wrap:wrap;gap:8px;margin-top:8px" },
@@ -3070,19 +3108,26 @@ function mountDiagnostics(host, { onCheck, onUncheck, onOpen, onInstanceCount, g
           el("div", { class: "btn-row", style: "margin-top:10px" },
             el("button", { class: "btn-primary", onclick: () => {
               if (!miscDraft.label.trim()) return alert("Укажите название");
-              onCheck({
+              const m = {
                 code: `MISC-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`,
                 label: miscDraft.label.trim(), custom: true,
                 price: miscDraft.price, minutes: miscDraft.minutes, complications: [], multiple: false,
-              });
-              miscOpen = false;
+              };
+              onCheck(m);
+              miscAdded.push(m);
+              miscFlash = m.code;
               miscDraft.label = ""; miscDraft.price = 0; miscDraft.minutes = 0;
-              draw();
+              toast(`Добавлено: ${m.label}`);
+              collapseThen(miscCard, () => {
+                miscOpen = false;
+                draw();
+                host.querySelector(".misc-added")?.scrollIntoView({ block: "nearest", behavior: reduceMotion() ? "auto" : "smooth" });
+              });
             } }, "Добавить"),
-            el("button", { onclick: () => { miscOpen = false; draw(); } }, "Отмена")))
+            el("button", { onclick: () => collapseThen(miscCard, () => { miscOpen = false; draw(); }) }, "Отмена"))))
       : el("button", {
           class: "small", style: "margin-top:12px;border:0;background:none;color:var(--muted);text-decoration:underline;padding:0",
-          onclick: () => { miscOpen = true; draw(); },
+          onclick: () => { miscOpen = true; miscOpening = true; draw(); miscOpening = false; },
         }, "+ добавить разовую услугу"));
 
     const total = totalText?.();
