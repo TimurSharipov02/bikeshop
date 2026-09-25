@@ -353,9 +353,67 @@ const go = (hash) => { location.hash = hash; };
 // правка поля): не дёргать страницу вверх при каждом клике. Без него — как
 // при обычном переходе на новый экран, скролл сбрасывается в начало.
 function render(nodes, { keepScroll } = {}) {
+  const list = Array.isArray(nodes) ? nodes.filter(Boolean) : [nodes];
   const y = window.scrollY;
-  app.replaceChildren(...(Array.isArray(nodes) ? nodes.filter(Boolean) : [nodes]));
-  window.scrollTo(0, keepScroll ? y : 0);
+  const swap = () => { app.replaceChildren(...list); window.scrollTo(0, keepScroll ? y : 0); };
+  // Переход на другой экран: надпись, по которой нажали, «перелетает» в
+  // заголовок нового экрана, а при возврате — заголовок обратно на своё
+  // место в списке (View Transitions браузера; где их нет — обычная смена).
+  const pair = keepScroll ? null : titleMorphPair(list);
+  if (!pair) return swap();
+  pair.from.style.viewTransitionName = "screen-title";
+  const t = document.startViewTransition(() => { swap(); pair.to.style.viewTransitionName = "screen-title"; });
+  t.finished.finally(() => { pair.from.style.viewTransitionName = ""; pair.to.style.viewTransitionName = ""; });
+}
+
+// Какую надпись с какой связать при смене экрана. Сравниваем по тексту без
+// «+», стрелок и регистра: «Выполненные работы» в профиле ↔ заголовок
+// «Выполненные работы», название велосипеда в строке ↔ заголовок наряда.
+const normTitle = (s) => String(s || "").replace(/^[\s+›‹>#]+/, "").replace(/\s+/g, " ").trim().toLowerCase();
+let lastTap = null; // по чему нажали последним — откуда «вылетает» надпись
+document.addEventListener("click", (e) => {
+  lastTap = { el: e.target.closest?.("a, button, .row"), at: Date.now() };
+}, true);
+// Надпись с ровно этим текстом. Берём сам текст, обёрнутый в строчный span
+// по его ширине, а не растянутый на всю строку контейнер: иначе при
+// перелёте в заголовок буквы сплющиваются. Если текст разбит на части —
+// самый глубокий элемент с ним целиком.
+function findTitleLabel(roots, title) {
+  for (const root of roots) {
+    if (!root?.querySelectorAll) continue;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      if (normTitle(n.nodeValue) !== title) continue;
+      const parent = n.parentNode;
+      if (parent.childNodes.length === 1 && getComputedStyle(parent).display === "inline") return parent;
+      const span = document.createElement("span");
+      parent.insertBefore(span, n);
+      span.append(n);
+      return span;
+    }
+  }
+  for (const root of roots) {
+    if (!root?.querySelectorAll) continue;
+    for (const el of [root, ...root.querySelectorAll("*")]) {
+      if (normTitle(el.textContent) === title && ![...el.children].some((c) => normTitle(c.textContent) === title)) return el;
+    }
+  }
+  return null;
+}
+function titleMorphPair(list) {
+  if (!document.startViewTransition || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return null;
+  const newH1 = list.map((n) => n.matches?.("header.bar") ? n.querySelector("h1") : n.querySelector?.("header.bar h1")).find(Boolean);
+  const oldH1 = app.querySelector("header.bar h1");
+  const newTitle = normTitle(newH1?.textContent), oldTitle = normTitle(oldH1?.textContent);
+  if (!newH1 || !oldH1 || !newTitle || newTitle === oldTitle) return null;
+  // Вперёд: надпись на том, по чему только что нажали, → заголовок.
+  if (lastTap?.el && Date.now() - lastTap.at < 1500 && app.contains(lastTap.el)) {
+    const from = findTitleLabel([lastTap.el], newTitle);
+    if (from) return { from, to: newH1 };
+  }
+  // Назад: заголовок → та же надпись в списке нового экрана.
+  const to = findTitleLabel(list, oldTitle);
+  return to ? { from: oldH1, to } : null;
 }
 window.addEventListener("hashchange", () => { router(); if (SESSION) syncFromServer(); });
 

@@ -660,3 +660,11 @@ label { display:block; font-size:13px; color:var(--muted); margin:var(--sp-4) 0 
   color:var(--accent); font-weight:400; }
 .dialog-buttons button + button { border-left:.5px solid var(--line); }
 .dialog-buttons .dialog-yes { font-weight:700; }
+
+/* Переход между экранами: надпись перелетает в заголовок (см. render в
+   app.js), остальной экран быстро сменяется плавным затуханием. */
+::view-transition-group(screen-title) { animation-duration:.42s; animation-timing-function:cubic-bezier(.2,.8,.2,1); }
+::view-transition-old(root), ::view-transition-new(root) { animation-duration:.24s; }
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation:none !important; }
+}
