@@ -3320,16 +3320,73 @@ function phoneLoginInput(name, { value = "", autocomplete = "off" } = {}) {
 // Как показывать логин: номер — с пробелами, старый текстовый — как есть.
 const loginLabel = (login) => /^\+7\d{10}$/.test(login || "") ? applyPhoneMask(login) : login || "";
 
+// Экран входа — вокруг слова «Veloterra»: буквы появляются по очереди, по
+// ним пробегает блик. После входа — «мощный» переход (playLoginTransition):
+// форма уходит вниз, буквы подпрыгивают волной и светятся, от слова
+// расходится световая волна с искрами, и само слово перелетает в
+// заголовок главного экрана, а список обращений выезжает по очереди.
 function viewLogin() {
-  return authCard("Вход в Veloterra", null,
-    [el("label", {}, "Телефон"), phoneLoginInput("login", { autocomplete: "username" }), ...field("Пароль", "password", "password", "current-password")],
-    async (form) => {
+  const word = el("h1", { class: "login-word", "aria-label": "Veloterra" },
+    [..."Veloterra"].map((ch, i) => el("span", { class: "login-letter", style: `--i:${i}` }, ch)));
+  const error = el("p", { class: "small login-error", style: "display:none" });
+  const button = el("button", { class: "btn-primary", type: "submit", style: "width:100%;margin-top:18px" }, "Войти");
+  const form = el("form", { class: "card login-card", onsubmit: async (ev) => {
+    ev.preventDefault();
+    error.style.display = "none";
+    button.disabled = true;
+    try {
       await authAction({ action: "login", login: form.login.value.trim(), password: form.password.value });
       await loadSession();
       applySessionLook();
-      location.hash = "/";
-      router();
-    }, "Войти");
+      document.activeElement?.blur?.();
+      await playLoginTransition(word, form);
+    } catch (e) {
+      error.textContent = e.message || "ошибка";
+      error.style.display = "";
+      button.disabled = false;
+      form.classList.remove("shake"); void form.offsetWidth; form.classList.add("shake");
+    }
+  } },
+    el("label", {}, "Телефон"), phoneLoginInput("login", { autocomplete: "username" }),
+    ...field("Пароль", "password", "password", "current-password"),
+    error, button);
+  return el("main", { class: "login-screen" }, word, el("p", { class: "login-sub muted" }, "веломастерская"), form);
+}
+
+const LOGIN_MOTION = !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+async function playLoginTransition(word, form) {
+  const goHome = () => { history.replaceState({ idx: navIdx }, "", "#/"); router(); };
+  if (!LOGIN_MOTION) { goHome(); return; }
+  // 1. Форма уходит вниз, буквы — волной вверх со свечением.
+  form.classList.add("login-card-out");
+  word.classList.add("login-word-go");
+  await wait(520);
+  // 2. Световая волна и искры от центра слова.
+  const r = word.getBoundingClientRect();
+  const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  const burst = el("div", { class: "login-burst", style: `--x:${cx}px;--y:${cy}px` },
+    el("span", { class: "login-ring" }), el("span", { class: "login-ring login-ring-2" }),
+    ...Array.from({ length: 18 }, (_, i) => el("span", { class: "login-spark",
+      style: `--a:${(i / 18) * 360 + Math.random() * 14}deg;--d:${120 + Math.random() * 170}px;--t:${0.55 + Math.random() * 0.35}s` })));
+  document.body.append(burst);
+  setTimeout(() => burst.remove(), 1400);
+  await wait(260);
+  // 3. Слово перелетает в заголовок главного экрана.
+  if (!document.startViewTransition) { goHome(); return; }
+  document.documentElement.classList.add("login-vt");
+  word.style.viewTransitionName = "screen-title";
+  const t = document.startViewTransition(() => {
+    goHome();
+    const h1 = app.querySelector("header.bar h1");
+    if (h1) h1.style.viewTransitionName = "screen-title";
+    document.body.classList.add("login-enter");
+  });
+  t.finished.finally(() => {
+    document.documentElement.classList.remove("login-vt");
+    app.querySelector("header.bar h1")?.style.removeProperty("view-transition-name");
+    setTimeout(() => document.body.classList.remove("login-enter"), 1200);
+  });
 }
 
 function viewSetup() {

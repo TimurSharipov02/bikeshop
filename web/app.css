@@ -758,3 +758,56 @@ label { display:block; font-size:13px; color:var(--muted); margin:var(--sp-4) 0 
 .work-actions { margin-top:16px; }
 .work-actions > button { flex:1 1 0; min-width:0; white-space:nowrap; font-size:15px; padding-left:10px; padding-right:10px; }
 .work-actions > .btn-ok { flex-grow:2; }
+/* ---- Экран входа и переход после входа (viewLogin/playLoginTransition) ---- */
+.login-screen { min-height:100dvh; display:flex; flex-direction:column; align-items:center; justify-content:center;
+  padding:40px 16px calc(40px + env(safe-area-inset-bottom)); box-sizing:border-box; }
+.login-word { margin:0; font-size:clamp(40px, 13vw, 58px); font-weight:800; letter-spacing:-.02em; line-height:1.05;
+  color:var(--title-ink, var(--ink)); position:relative; white-space:nowrap; }
+.login-word::after { content:""; position:absolute; inset:-10% -6%; pointer-events:none; mix-blend-mode:overlay;
+  background:linear-gradient(105deg, transparent 35%, rgba(255,255,255,.95) 50%, transparent 65%);
+  background-size:250% 100%; background-position:120% 0; animation:login-shine 1.6s .9s ease-out both; }
+.login-letter { display:inline-block; animation:login-drop .7s cubic-bezier(.2,1.4,.4,1) both; animation-delay:calc(var(--i) * 55ms + .1s); }
+.login-sub { margin:6px 0 26px; letter-spacing:.3em; text-transform:uppercase; font-size:12px; animation:login-fade .6s .7s both; }
+.login-card { width:100%; max-width:360px; animation:login-rise .6s .55s cubic-bezier(.2,.9,.2,1) both; }
+.login-card > label:first-child { margin-top:0; }
+.login-error { color:var(--warn); margin:10px 0 0; }
+.login-card.shake { animation:login-shake .42s ease; }
+@keyframes login-drop { from { opacity:0; transform:translateY(-60px) scale(.6) rotate(-8deg); } to { opacity:1; transform:none; } }
+@keyframes login-shine { to { background-position:-120% 0; } }
+@keyframes login-fade { from { opacity:0; } to { opacity:1; } }
+@keyframes login-rise { from { opacity:0; transform:translateY(40px) scale(.96); } to { opacity:1; transform:none; } }
+@keyframes login-shake { 0%,100% { transform:none; } 20% { transform:translateX(-10px); } 40% { transform:translateX(9px); } 60% { transform:translateX(-6px); } 80% { transform:translateX(4px); } }
+/* После входа: форма вниз, буквы волной вверх со свечением. */
+.login-card-out { animation:login-card-out .45s cubic-bezier(.6,0,.8,.4) forwards !important; }
+@keyframes login-card-out { to { opacity:0; transform:translateY(70px) scale(.94); filter:blur(6px); } }
+.login-word-go .login-letter { animation:login-wave .5s cubic-bezier(.3,1.6,.5,1) both; animation-delay:calc(var(--i) * 40ms);
+  text-shadow:0 0 18px color-mix(in srgb, var(--accent) 80%, transparent), 0 0 42px color-mix(in srgb, var(--accent) 50%, transparent); }
+@keyframes login-wave { 0% { transform:none; } 45% { transform:translateY(-22px) scale(1.25); color:var(--accent); } 100% { transform:none; } }
+.login-sub { transition:opacity .3s ease; }
+.login-word-go + .login-sub { opacity:0; }
+/* Световая волна и искры. */
+.login-burst { position:fixed; inset:0; pointer-events:none; z-index:200; }
+.login-ring { position:absolute; left:var(--x); top:var(--y); width:40px; height:40px; margin:-20px 0 0 -20px; border-radius:50%;
+  border:3px solid var(--accent); box-shadow:0 0 30px var(--accent), inset 0 0 30px color-mix(in srgb, var(--accent) 60%, transparent);
+  animation:login-ring .9s cubic-bezier(.1,.7,.3,1) forwards; }
+.login-ring-2 { animation-delay:.12s; border-width:2px; opacity:.7; }
+@keyframes login-ring { from { transform:scale(.2); opacity:1; } to { transform:scale(28); opacity:0; } }
+.login-spark { position:absolute; left:var(--x); top:var(--y); width:8px; height:8px; margin:-4px 0 0 -4px; border-radius:50%;
+  background:#fff; box-shadow:0 0 10px 3px var(--accent); animation:login-spark var(--t) cubic-bezier(.1,.8,.3,1) forwards; }
+@keyframes login-spark { from { transform:rotate(var(--a)) translateX(0) scale(1.4); opacity:1; }
+  to { transform:rotate(var(--a)) translateX(var(--d)) scale(0); opacity:0; } }
+/* Перелёт слова в заголовок и въезд главного экрана. */
+.login-vt::view-transition-group(screen-title) { animation-duration:.85s; animation-timing-function:cubic-bezier(.2,.9,.1,1); }
+.login-vt::view-transition-old(root) { animation:login-root-out .5s ease both; }
+.login-vt::view-transition-new(root) { animation:login-root-in .6s .15s ease both; }
+@keyframes login-root-out { to { opacity:0; transform:scale(1.06); filter:blur(8px); } }
+@keyframes login-root-in { from { opacity:0; } to { opacity:1; } }
+.login-enter main > :not(.rows), .login-enter .rows > * { animation:login-item-in .6s cubic-bezier(.2,.9,.2,1) both; }
+.login-enter .rows > :nth-child(1) { animation-delay:.35s; } .login-enter .rows > :nth-child(2) { animation-delay:.42s; }
+.login-enter .rows > :nth-child(3) { animation-delay:.49s; } .login-enter .rows > :nth-child(4) { animation-delay:.56s; }
+.login-enter .rows > :nth-child(5) { animation-delay:.63s; } .login-enter .rows > :nth-child(n+6) { animation-delay:.7s; }
+.login-enter .actions { animation:login-item-in .6s .6s cubic-bezier(.2,.9,.2,1) both; }
+@keyframes login-item-in { from { opacity:0; transform:translateY(40px); } to { opacity:1; transform:none; } }
+@media (prefers-reduced-motion: reduce) {
+  .login-letter, .login-card, .login-sub, .login-word::after, .login-enter main > :not(.rows), .login-enter .rows > *, .login-enter .actions { animation:none !important; }
+}
