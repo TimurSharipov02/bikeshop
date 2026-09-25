@@ -2620,23 +2620,21 @@ function openRepairSheet(it, stock, onSave, siblings = [it], { onAdd: onAddInsta
     // «Жду запчасть» — мастер начал работу, но встал из-за отсутствующей
     // детали; занимает эту пометку тот, кто её поставил, снять/продолжить
     // может он же или админ — остальные видят только факт и чьё имя.
-    const canManageWait = instance.waitingForPart && (instance.waitingForPart.masterId === myId || isAdmin);
-    const waitBlock = instance.done ? null : el("div", { class: "part-wait-control" },
-      instance.waitingForPart
-        ? el("div", {},
-            el("p", { class: "small", style: "color:var(--yellow-ink)" }, `Ждёт запчасть — ${instance.waitingForPart.masterName || "—"}`),
-            canManageWait ? el("button", {
-              style: "width:100%;margin-top:6px",
-              onclick: () => { instance.waitingForPart = null; save(instance, { waitingForPart: null }); redrawPanel(instance); },
-            }, "Запчасть пришла — продолжить") : null)
-        : el("button", {
-            class: "small parts-text-action",
-            onclick: () => {
-              instance.waitingForPart = { masterId: myId, masterName: SESSION?.name || "—", at: new Date().toISOString() };
-              save(instance, { waitingForPart: instance.waitingForPart });
-              redrawPanel(instance);
-            },
-          }, "Жду запчасть"));
+    // Одна кнопка-переключатель с двумя состояниями: серая — нажать, чтобы
+    // поставить статус «Ждёт запчасть»; жёлтая — статус стоит, нажать ещё
+    // раз — снять (тот, кто поставил, или админ; остальным видно, чей он).
+    const waiting = instance.waitingForPart;
+    const canToggleWait = !waiting || waiting.masterId === myId || isAdmin;
+    const waitBlock = instance.done ? null : el("button", {
+      type: "button", class: "wait-toggle" + (waiting ? " on" : ""), "aria-pressed": String(!!waiting),
+      disabled: !canToggleWait,
+      onclick: () => {
+        instance.waitingForPart = waiting ? null : { masterId: myId, masterName: SESSION?.name || "—", at: new Date().toISOString() };
+        save(instance, { waitingForPart: instance.waitingForPart });
+        redrawPanel(instance);
+      },
+    }, "Жду запчасть",
+      waiting && waiting.masterId !== myId ? el("span", { class: "wait-toggle-who" }, ` · ${waiting.masterName || "—"}`) : null);
     const canUndoDone = isAdmin || instance.doneBy?.masterId === myId || (!instance.doneBy && instance.claimedBy?.masterId === myId);
     const doneBlock = instance.done
       ? canUndoDone ? el("button", { style: "width:100%;margin-top:16px", onclick: unmarkDone }, "Снять отметку «готово»") : null
@@ -2649,9 +2647,7 @@ function openRepairSheet(it, stock, onSave, siblings = [it], { onAdd: onAddInsta
       workDescriptionNode(instance),
       hasDiffs ? workSection("Усложнения", diffBox) : null,
       workSection("Запчасти",
-        partsEditor(s.parts, stock, () => save(instance, { parts: s.parts }), partBlockIdOf(instance),
-          instance.waitingForPart ? null : waitBlock),
-        instance.waitingForPart ? waitBlock : null),
+        partsEditor(s.parts, stock, () => save(instance, { parts: s.parts }), partBlockIdOf(instance), waitBlock)),
       doneBlock,
       removeBtn);
     const body = locked
