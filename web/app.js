@@ -41,7 +41,7 @@ import {
   dirty, setInSubScreen,
   SESSION, NEEDS_SETUP, authAction, loadSession, logout,
   repairsCache, clearRepairsCache, ensureRepairs,
-  clearUsersCache, ensureUsers,
+  clearUsersCache, ensureUsers, usersCache, primeUsersCache,
   stockCache, clearStockCache, ensureStock,
   loadDB, syncFromServer,
   editDB, editOrder, deleteOrderApi, deleteClientApi, deleteBikeApi, pushDbNow, flushPending,
@@ -333,7 +333,7 @@ const routes = [
   [/^\/admin\/clients\/([^/]+)\/bikes\/([^/]+)$/, adminOnly((m) => viewClientDetails(decodeURIComponent(m[1]), decodeURIComponent(m[2])))],
   [/^\/admin\/clients\/([^/]+)$/, adminOnly((m) => viewClientDetails(decodeURIComponent(m[1])))],
   [/^\/admin\/reports$/, adminOnly(viewAllMastersReport)],
-  [/^\/admin\/reports\/([^/]+)$/, adminOnly((m) => masterReportScreen(m[1], "/admin/reports"))],
+  [/^\/admin\/reports\/([^/]+)$/, adminOnly((m) => masterReportScreen(m[1], "/admin/masters"))],
   [/^\/admin\/stock$/, adminOnly(viewStock)],
   [/^\/admin\/1c$/, adminOnly(view1cSync)],
 ];
@@ -374,10 +374,15 @@ setBackHandler(goBack);
 // keepScroll — для точечных обновлений текущего экрана (галочка, чекбокс,
 // правка поля): не дёргать страницу вверх при каждом клике. Без него — как
 // при обычном переходе на новый экран, скролл сбрасывается в начало.
+let renderSeq = 0;
 function render(nodes, { keepScroll } = {}) {
   const list = Array.isArray(nodes) ? nodes.filter(Boolean) : [nodes];
   const y = window.scrollY;
-  const swap = () => { app.replaceChildren(...list); window.scrollTo(0, keepScroll ? y : 0); };
+  // Смена экрана с анимацией применяется не сразу, а чуть позже; если за
+  // это время экран уже перерисовали (догрузились данные) — старую
+  // заглушку поверх свежего не кладём.
+  const seq = ++renderSeq;
+  const swap = () => { if (seq !== renderSeq) return; app.replaceChildren(...list); window.scrollTo(0, keepScroll ? y : 0); };
   // Переход на другой экран: надпись, по которой нажали, «перелетает» в
   // заголовок нового экрана, а при возврате — заголовок обратно на своё
   // место в списке (View Transitions браузера; где их нет — обычная смена).
@@ -3553,18 +3558,29 @@ function reportContent(masterId, percentOf, header) {
 
 function masterReportScreen(masterId, backHash) {
   const host = el("main", { class: "wrap" }, skeletonRows());
-  const onScreen = () => location.hash === "#" + (backHash === "/profile" ? "/profile/report" : `/admin/reports/${masterId}`);
+  const own = backHash === "/profile";
+  const onScreen = () => location.hash === "#" + (own ? "/profile/report" : `/admin/reports/${masterId}`);
+  // Из админки (список мастеров) — это и есть экран мастера: в заголовке
+  // его имя, справа карандаш с настройками (процент, штрихкод, пароль,
+  // доступ). У себя в профиле — просто «Выполненные работы».
+  let master = usersCache?.find((u) => u.id === masterId) || null;
+  const title = el("h1", {}, own ? "Выполненные работы" : master?.name || "Мастер");
+  const editBtn = own ? null : el("button", {
+    class: "edit-btn", style: iconBtnStyle, "aria-label": "Настройки мастера", title: "Настройки мастера", html: ICON_EDIT,
+    onclick: () => master && openMasterSettings(master, { onChanged: router, onDeleted: () => goBack("/admin/masters") }),
+  });
   ensureUsers().then((users) => {
     if (!onScreen()) return;
-    const master = users.find((u) => u.id === masterId) || { id: masterId, name: "—", commissionPercent: 0 };
+    master = users.find((u) => u.id === masterId) || { id: masterId, name: "—", commissionPercent: 0 };
+    if (!own) title.textContent = master.name;
     const percent = master.commissionPercent || 0;
-    // Сам процент — только там, где его редактируют (карточка мастера в
+    // Сам процент — только там, где его редактируют (настройки мастера в
     // админке), тут лишний, не мастеру решать/сверять свою ставку.
-    const header = el("div", {}, master.name);
+    const header = own ? el("div", {}, master.name) : null;
     const { content, searchBar } = reportContent(masterId, () => percent, header);
     host.replaceChildren(content, searchBar);
   });
-  return [bar("Выполненные работы", backHash), host];
+  return [el("header", { class: "bar" }, backLink(backHash), title, editBtn), host];
 }
 
 // Сводка по всем мастерам сразу — тот же экран, что и у одного мастера
@@ -3611,14 +3627,18 @@ async function loadMasters() {
   try {
     const r = await fetch("/api/users", { cache: "no-store" });
     const j = await r.json();
+    if (r.ok) primeUsersCache(j.users || []);
     if (location.hash !== "#/admin/masters") return;
-    render(mastersScreen(r.ok ? j.users : [], r.ok ? "" : j.error || "ошибка"));
+    render(mastersScreen(r.ok ? j.users : [], r.ok ? "" : j.error || "ошибка"), { keepScroll: true });
   } catch {
     if (location.hash === "#/admin/masters") render(mastersScreen([], "нет соединения"));
   }
 }
 function viewMasters() {
   loadMasters();
+  // Список уже знаем (вернулись с экрана мастера) — рисуем сразу, без
+  // заглушки: так и имя в заголовке плавно возвращается на свою карточку.
+  if (usersCache?.length) return mastersScreen(usersCache, "");
   return [bar("Мастера", "/admin"), el("main", { class: "wrap" }, skeletonRows())];
 }
 
@@ -3628,6 +3648,64 @@ async function usersApi(method, body) {
   if (!r.ok) { alert(j.error || "ошибка"); return null; }
   clearUsersCache(); // список мастеров/процентов изменился — отчётам нужен свежий
   return j;
+}
+
+// Настройки мастера (шторка под карандашом на его экране) — по разделам (оплата, пароль, доступ), каждое
+// действие со своей кнопкой под своим разделом, а не всё в одну кучу.
+function openMasterSettings(u, { onChanged, onDeleted }) {
+  let sheet;
+  const controls = el("div", { class: "admin-person-controls" });
+
+  controls.append(el("form", {
+    class: "sheet-section", onsubmit: async (ev) => {
+      ev.preventDefault();
+      if (await usersApi("PUT", { id: u.id, commissionPercent: ev.target.commissionPercent.value })) { sheet.close(); onChanged(); toast("Процент обновлён"); }
+    },
+  },
+    el("h3", {}, "Оплата"),
+    el("div", { class: "form-list" },
+      formRow("Процент от работы", el("input", { name: "commissionPercent", type: "number", min: 0, max: 100, value: u.commissionPercent || 0, inputmode: "numeric" }), "%")),
+    el("button", { type: "submit", style: "width:100%;margin-top:10px" }, "Сохранить процент")));
+
+  controls.append(el("form", {
+    class: "sheet-section", onsubmit: async (ev) => {
+      ev.preventDefault();
+      if (await usersApi("PUT", { id: u.id, serviceBarcode1C: ev.target.serviceBarcode1C.value })) {
+        sheet.close(); onChanged(); toast("Штрихкод услуги сохранён");
+      }
+    },
+  },
+    el("h3", {}, "Услуга в 1С"),
+    el("div", { class: "form-list" },
+      formRow("Штрихкод услуги мастера", el("input", {
+        name: "serviceBarcode1C", inputmode: "numeric", maxlength: 13, value: u.serviceBarcode1C || "",
+      }))),
+    el("button", { type: "submit", style: "width:100%;margin-top:10px" }, "Сохранить штрихкод")));
+
+  controls.append(el("form", {
+    class: "sheet-section", onsubmit: async (ev) => {
+      ev.preventDefault();
+      const password = ev.target.password.value;
+      if (!password) return;
+      if (await usersApi("PUT", { id: u.id, password })) { sheet.close(); toast("Пароль обновлён"); }
+    },
+  },
+    el("h3", {}, "Пароль"),
+    el("div", { class: "form-list" },
+      formRow("Новый пароль", el("input", { name: "password", type: "password", autocomplete: "new-password" }))),
+    el("button", { type: "submit", style: "width:100%;margin-top:10px" }, "Сменить пароль")));
+
+  controls.append(el("h3", { class: "sheet-section-title" }, "Доступ"));
+  controls.append(el("div", { class: "btn-row" },
+    el("button", { onclick: async () => { if (await usersApi("PUT", { id: u.id, active: !u.active })) { sheet.close(); onChanged(); } } },
+      u.active ? "Отключить" : "Включить"),
+    el("button", {
+      class: "btn-warn", onclick: async () => {
+        if (!confirm(`Удалить мастера «${u.name}»?`)) return;
+        if (await usersApi("DELETE", { id: u.id })) { sheet.close(); onDeleted(); }
+      },
+    }, "Удалить")));
+  sheet = openSheet(u.name, controls);
 }
 
 function mastersScreen(list, error) {
@@ -3650,71 +3728,15 @@ function mastersScreen(list, error) {
       formRow("Процент", el("input", { name: "commissionPercent", type: "number", min: 0, max: 100, value: 0, inputmode: "numeric" }), "%")),
     el("button", { class: "btn-primary", type: "submit", style: "width:100%;margin-top:16px" }, "Добавить"));
 
-  // Настройки мастера — по разделам (оплата, пароль, доступ), каждое
-  // действие со своей кнопкой под своим разделом, а не всё в одну кучу.
-  const openMasterSettings = (u) => {
-    let sheet;
-    const controls = el("div", { class: "admin-person-controls" });
 
-    controls.append(el("form", {
-      class: "sheet-section", onsubmit: async (ev) => {
-        ev.preventDefault();
-        if (await usersApi("PUT", { id: u.id, commissionPercent: ev.target.commissionPercent.value })) { sheet.close(); loadMasters(); toast("Процент обновлён"); }
-      },
-    },
-      el("h3", {}, "Оплата"),
-      el("div", { class: "form-list" },
-        formRow("Процент от работы", el("input", { name: "commissionPercent", type: "number", min: 0, max: 100, value: u.commissionPercent || 0, inputmode: "numeric" }), "%")),
-      el("button", { type: "submit", style: "width:100%;margin-top:10px" }, "Сохранить процент")));
-
-    controls.append(el("form", {
-      class: "sheet-section", onsubmit: async (ev) => {
-        ev.preventDefault();
-        if (await usersApi("PUT", { id: u.id, serviceBarcode1C: ev.target.serviceBarcode1C.value })) {
-          sheet.close(); loadMasters(); toast("Штрихкод услуги сохранён");
-        }
-      },
-    },
-      el("h3", {}, "Услуга в 1С"),
-      el("div", { class: "form-list" },
-        formRow("Штрихкод услуги мастера", el("input", {
-          name: "serviceBarcode1C", inputmode: "numeric", maxlength: 13, value: u.serviceBarcode1C || "",
-        }))),
-      el("button", { type: "submit", style: "width:100%;margin-top:10px" }, "Сохранить штрихкод")));
-
-    controls.append(el("form", {
-      class: "sheet-section", onsubmit: async (ev) => {
-        ev.preventDefault();
-        const password = ev.target.password.value;
-        if (!password) return;
-        if (await usersApi("PUT", { id: u.id, password })) { sheet.close(); toast("Пароль обновлён"); }
-      },
-    },
-      el("h3", {}, "Пароль"),
-      el("div", { class: "form-list" },
-        formRow("Новый пароль", el("input", { name: "password", type: "password", autocomplete: "new-password" }))),
-      el("button", { type: "submit", style: "width:100%;margin-top:10px" }, "Сменить пароль")));
-
-    controls.append(el("h3", { class: "sheet-section-title" }, "Доступ"));
-    controls.append(el("div", { class: "btn-row" },
-      el("button", { onclick: async () => { if (await usersApi("PUT", { id: u.id, active: !u.active })) { sheet.close(); loadMasters(); } } },
-        u.active ? "Отключить" : "Включить"),
-      el("button", {
-        class: "btn-warn", onclick: async () => {
-          if (!confirm(`Удалить мастера «${u.name}»?`)) return;
-          if (await usersApi("DELETE", { id: u.id })) { sheet.close(); loadMasters(); }
-        },
-      }, "Удалить")));
-    sheet = openSheet(u.name, controls);
-  };
-
-  const rows = list.map((u) => el("div", { class: "admin-person-card" },
+  // Карточка целиком ведёт на экран мастера — его выполненные работы,
+  // настройки там под карандашом в шапке.
+  const rows = list.map((u) => el("a", { class: "admin-person-card card-link", href: `#/admin/reports/${u.id}` },
     el("div", { class: "admin-person-head" }, el("b", {}, u.name),
       u.role === "admin" ? el("span", { class: "pill" }, "админ") : null,
-      !u.active ? el("span", { class: "pill" }, "отключён") : null),
-    el("div", { class: "small muted" }, u.login),
-    el("a", { class: "admin-report-link", href: `#/admin/reports/${u.id}` }, "Выполненные работы ›"),
-    el("button", { class: "admin-settings-btn", onclick: () => openMasterSettings(u) }, "Настройки мастера")));
+      !u.active ? el("span", { class: "pill" }, "отключён") : null,
+      el("span", { class: "chev" }, "›")),
+    el("div", { class: "small muted" }, u.login)));
 
   return [
     bar("Мастера", "/admin"),

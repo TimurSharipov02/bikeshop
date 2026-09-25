@@ -178,6 +178,9 @@ export async function ensureRepairs() {
 // мастера (см. usersApi), чтобы отчёт не показывал устаревший процент.
 export let usersCache = null;
 export function clearUsersCache() { usersCache = null; }
+// Экран «Мастера» грузит тот же список сам — кладём его и сюда, чтобы
+// следующий экран (выполненные работы мастера) знал имя сразу.
+export function primeUsersCache(list) { usersCache = list; }
 export async function ensureUsers() {
   if (usersCache) return usersCache;
   try {

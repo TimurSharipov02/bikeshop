@@ -163,13 +163,9 @@ header.bar .bar-title-lg { font-size:19px; font-weight:700; }
 .client-filter-select select { appearance:none; -webkit-appearance:none; background:var(--fill);
   color:var(--ink); border:0; font-weight:600; padding-right:42px; cursor:pointer; }
 .client-order-footer { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:12px; }
-.admin-report-link { display:inline-block; margin-top:10px; font-size:14px; }
 .admin-details { border-top:.5px solid var(--line); margin-top:14px; padding-top:10px; }
 .admin-details summary { color:var(--accent); cursor:pointer; list-style:none; font-size:15px; font-weight:600; }
 .admin-details summary::-webkit-details-marker { display:none; }
-.admin-settings-btn { display:block; width:100%; text-align:left; border:0; border-top:.5px solid var(--line);
-  border-radius:0; background:none; color:var(--accent); font-size:15px; font-weight:600;
-  margin-top:14px; padding:12px 0 0; }
 .report-scroller { scrollbar-width:none; }
 .report-scroller::-webkit-scrollbar { display:none; }
 .admin-add-card { border-top:.5px solid var(--line); margin-top:0; padding-top:var(--sp-4); }
