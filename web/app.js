@@ -3228,6 +3228,67 @@ function authCard(title, hint, fields, onSubmit, submitLabel) {
   return box();
 }
 
+// Свой раскрывающийся список вместо системного <select>: поле раскрывается
+// вниз прямо на месте, варианты выезжают под ним, выбранный — с галочкой.
+// Тап мимо или Esc — свернуть. name — скрытое поле для форм.
+// Кнопки — div role=button, чтобы на них не ложились стили кнопок тем.
+function pickList({ options, value = "", onChange, ariaLabel, name }) {
+  let current = value;
+  const hidden = name ? el("input", { type: "hidden", name, value }) : null;
+  const text = el("span", { class: "pick-text" });
+  const field = el("div", { class: "pick-field", role: "button", tabindex: 0, "aria-haspopup": "listbox", "aria-expanded": "false", "aria-label": ariaLabel },
+    text, el("span", { class: "pick-chev" }, "›"));
+  const list = el("div", { class: "pick-options", role: "listbox" });
+  const box = el("div", { class: "pick" }, field, list, hidden);
+  const onKey = (fn) => (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fn(); } };
+  const outside = (e) => { if (!box.contains(e.target)) setOpen(false); };
+  const onEsc = (e) => { if (e.key === "Escape") setOpen(false); };
+  function drawText() { text.textContent = options.find((o) => o.value === current)?.label ?? ""; }
+  function drawOptions() {
+    list.replaceChildren(...options.map((o, i) => el("div", {
+      class: "pick-option" + (o.value === current ? " selected" : ""), role: "option", tabindex: 0,
+      "aria-selected": String(o.value === current), style: `--i:${i}`,
+      onclick: () => choose(o.value), onkeydown: onKey(() => choose(o.value)),
+    }, el("span", { style: "flex:1;min-width:0" }, o.label),
+      o.value === current ? el("span", { class: "row-check", html: ICON_CHECK }) : null)));
+  }
+  function setOpen(open) {
+    if (open === box.classList.contains("open")) return;
+    box.classList.toggle("open", open);
+    field.setAttribute("aria-expanded", String(open));
+    if (open) {
+      drawOptions();
+      document.addEventListener("click", outside, true);
+      document.addEventListener("keydown", onEsc);
+    } else {
+      document.removeEventListener("click", outside, true);
+      document.removeEventListener("keydown", onEsc);
+    }
+  }
+  function choose(v) {
+    const changed = v !== current;
+    current = v;
+    if (hidden) hidden.value = v;
+    drawText();
+    setOpen(false);
+    if (changed) onChange?.(v);
+  }
+  field.addEventListener("click", () => setOpen(!box.classList.contains("open")));
+  field.addEventListener("keydown", onKey(() => setOpen(!box.classList.contains("open"))));
+  drawText();
+  return box;
+}
+// Выбор из двух-трёх вариантов прямо в строке формы (без списка вообще).
+function segmentedField(name, options, value) {
+  const hidden = el("input", { type: "hidden", name, value });
+  const box = el("div", { class: "segmented segmented-field" });
+  const draw = () => box.replaceChildren(...options.map(([v, label]) => el("button", {
+    type: "button", class: hidden.value === v ? "active" : "", onclick: () => { hidden.value = v; draw(); },
+  }, label)), hidden);
+  draw();
+  return box;
+}
+
 // Строка компактной формы: подпись слева, поле справа, строки — одной
 // группой с тонкими разделителями (как в настройках айфона), а не столбик
 // огромных отдельных полей. suffix — единица измерения справа («%»).
@@ -3870,7 +3931,8 @@ function mastersScreen(list, error) {
       formRow("Имя", el("input", { name: "name", autocomplete: "off" })),
       formRow("Телефон", phoneLoginInput("login")),
       formRow("Пароль", el("input", { name: "password", type: "password", autocomplete: "new-password" })),
-      formRow("Роль", el("select", { name: "role" }, el("option", { value: "master" }, "Мастер"), el("option", { value: "admin" }, "Администратор"))),
+      el("div", { class: "form-row" }, el("span", { class: "form-row-label" }, "Роль"),
+        segmentedField("role", [["master", "Мастер"], ["admin", "Админ"]], "master")),
       formRow("Процент", el("input", { name: "commissionPercent", type: "number", min: 0, max: 100, value: 0, inputmode: "numeric" }), "%")),
     el("button", { class: "btn-primary", type: "submit", style: "width:100%;margin-top:16px" }, "Добавить"));
 
@@ -3981,11 +4043,12 @@ function viewClientDetails(phone, initialBike = "") {
         el("span", { class: "call-btn", html: ICON_PHONE })),
       el("h2", { class: "client-detail-heading" }, "Обращения"),
       el("div", { class: "client-filter" },
-        el("div", { class: "client-filter-select" },
-          el("select", { id: "client-bike-filter", "aria-label": "Велосипед",
-            onchange: (e) => showOrders(e.target.value) },
-            el("option", { value: "", selected: !bikes.some((b) => b.number === initialBike) }, "Все велосипеды"),
-            bikes.map((bike) => el("option", { value: bike.number, selected: bike.number === initialBike }, bikeLabel(bike) || "Велосипед (без названия)"))))),
+        pickList({
+          ariaLabel: "Велосипед", onChange: showOrders,
+          value: bikes.some((b) => b.number === initialBike) ? initialBike : "",
+          options: [{ value: "", label: "Все велосипеды" },
+            ...bikes.map((bike) => ({ value: bike.number, label: bikeLabel(bike) || "Велосипед (без названия)" }))],
+        })),
       orderList)];
 }
 
@@ -4213,9 +4276,10 @@ function stockScreen(data, error) {
         el("button", { style: iconBtnStyle, onclick: () => { items.splice(i, 1); newItemIndex = -1; drawChips(); drawRows(); } }, "✕")),
       el("div", { style: "display:flex;gap:8px;margin-top:8px;flex-wrap:wrap" },
         labeled("Артикул", el("input", { value: it.sku, placeholder: "—", onchange: (ev) => { items[i].sku = ev.target.value; } }), "flex:1;min-width:90px"),
-        labeled("Узел", el("select", { onchange: (ev) => { items[i].group = ev.target.value; } },
-          el("option", { value: "", selected: !it.group }, "без узла"),
-          STOCK_GROUPS.map((g) => el("option", { value: g.id, selected: it.group === g.id }, g.title))), "flex:1;min-width:110px")),
+        labeled("Узел", pickList({
+          ariaLabel: "Узел", value: it.group || "", onChange: (v) => { items[i].group = v; },
+          options: [{ value: "", label: "без узла" }, ...STOCK_GROUPS.map((g) => ({ value: g.id, label: g.title }))],
+        }), "flex:1;min-width:110px")),
       el("div", { style: "display:flex;gap:8px;margin-top:8px;flex-wrap:wrap" },
         // Красим строго то самое поле напрямую, а не через полный drawRows():
         // замена всего списка изнутри onchange/blur этого же инпута иногда

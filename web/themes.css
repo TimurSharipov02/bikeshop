@@ -306,3 +306,5 @@
 [data-style="terminal"] .swipe-action-btn, [data-style="terminal"] .undo-chip, [data-style="terminal"] .toast, [data-style="terminal"] .dialog { border-radius:2px; }
 [data-style="terminal"] .dialog { border:1px solid var(--line); }
 [data-style="terminal"] .report-bar { border-radius:0; box-shadow:var(--term-glow); }
+[data-style="terminal"] .pick { background:var(--bg); border:1px solid var(--line); border-radius:2px; }
+[data-style="workshop"] .pick { border:2px solid var(--ws-edge); border-radius:10px; }

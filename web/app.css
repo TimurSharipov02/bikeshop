@@ -157,11 +157,6 @@ header.bar .bar-title-lg { font-size:19px; font-weight:700; }
 .call-btn svg { width:20px; height:20px; filter:drop-shadow(0 1px 1px rgba(0,0,0,.3)); }
 .client-detail-heading { font-size:17px; margin:20px 0 10px; }
 .client-filter { margin-bottom:12px; }
-.client-filter-select { position:relative; }
-.client-filter-select::after { content:"⌄"; position:absolute; right:15px; top:50%; transform:translateY(-55%);
-  pointer-events:none; color:var(--accent); font-size:22px; line-height:1; }
-.client-filter-select select { appearance:none; -webkit-appearance:none; background:var(--fill);
-  color:var(--ink); border:0; font-weight:600; padding-right:42px; cursor:pointer; }
 .client-order-footer { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:12px; }
 .admin-details { border-top:.5px solid var(--line); margin-top:14px; padding-top:10px; }
 .admin-details summary { color:var(--accent); cursor:pointer; list-style:none; font-size:15px; font-weight:600; }
@@ -719,3 +714,21 @@ label { display:block; font-size:13px; color:var(--muted); margin:var(--sp-4) 0 
 }
 @media (prefers-reduced-motion: reduce) { .misc-opening, .misc-row.just-added { animation:none; } }
 .settings-password label:first-child { margin-top:0; }
+/* Свой раскрывающийся список (pickList в app.js): поле раскрывается вниз
+   на месте, варианты выезжают по одному. */
+.pick { border-radius:var(--radius-sm); background:var(--fill); overflow:hidden; }
+.pick-field { display:flex; align-items:center; gap:10px; min-height:52px; padding:0 16px; cursor:pointer;
+  color:var(--ink); font-weight:600; -webkit-tap-highlight-color:transparent; }
+.pick-text { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pick-chev { flex:0 0 auto; color:var(--accent); font-size:22px; line-height:1; transform:rotate(90deg); transition:transform .22s ease; }
+.pick.open .pick-chev { transform:rotate(-90deg); }
+.pick-options { max-height:0; overflow:hidden; transition:max-height .3s cubic-bezier(.2,.8,.2,1); }
+.pick.open .pick-options { max-height:min(60vh, 440px); overflow-y:auto; border-top:1px solid var(--line); }
+.pick-option { display:flex; align-items:center; gap:10px; min-height:48px; padding:0 16px; cursor:pointer; color:var(--ink); }
+.pick-option + .pick-option { border-top:.5px solid var(--line); }
+.pick-option.selected { color:var(--accent); font-weight:600; }
+.pick-option .row-check { color:var(--accent); }
+.pick.open .pick-option { animation:pick-in .24s cubic-bezier(.2,.8,.2,1) both; animation-delay:calc(var(--i, 0) * 30ms); }
+@keyframes pick-in { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:none; } }
+@media (prefers-reduced-motion: reduce) { .pick-options, .pick-chev { transition:none; } .pick.open .pick-option { animation:none; } }
+.segmented-field { flex:1; min-width:0; }
