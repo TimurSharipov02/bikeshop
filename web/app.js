@@ -543,11 +543,22 @@ window.addEventListener("popstate", () => {
     document.documentElement.style.setProperty("--kb-offset", offset + "px");
     document.documentElement.style.setProperty("--vv-h", vv.height + "px");
   };
+  // Поле с курсором — всегда над клавиатурой и под шапкой: iOS иногда
+  // оставляет его под клавиатурой (фокус из кода, раскрытие на месте).
+  const ensureVisible = () => {
+    const a = document.activeElement;
+    if (!kbOpen || !typing() || !a.getBoundingClientRect) return;
+    const r = a.getBoundingClientRect();
+    const barH = document.querySelector("header.bar")?.offsetHeight || 0;
+    const top = vv.offsetTop + barH + 8, bottom = vv.offsetTop + vv.height - 16;
+    if (r.bottom > bottom) window.scrollBy({ top: Math.min(r.bottom - bottom, r.top - top), behavior: "smooth" });
+    else if (r.top < top) window.scrollBy({ top: r.top - top, behavior: "smooth" });
+  };
   let settleTimers = [];
   const settle = () => {
     settleTimers.forEach(clearTimeout);
     update();
-    settleTimers = [60, 250, 500, 900].map((ms) => setTimeout(update, ms));
+    settleTimers = [60, 250, 500, 900].map((ms) => setTimeout(() => { update(); if (ms >= 250) ensureVisible(); }, ms));
   };
   vv.addEventListener("resize", update);
   vv.addEventListener("scroll", () => { if (kbOpen) update(); });
@@ -1610,7 +1621,15 @@ function viewOrder(number) {
         // Разные экземпляры одной работы всегда остаются отдельными задачами.
         // Они могут иметь разных исполнителей, усложнения и запчасти, поэтому
         // не объединяем их общей карточкой и не прячем в карусель.
-        order.items.filter((i) => i.agreed).sort(waitingLast).forEach((it) => {
+        // Пока работа раскрыта, порядок в списке не меняем: иначе, например,
+        // «Жду запчасть» отправляла её вниз (ждущие — в конце) и список прыгал.
+        // Порядок берём из того, что сейчас на экране; пересортировка — при
+        // следующем открытии обращения.
+        const shown = inlineWork ? [...app.querySelectorAll(".work-list > [data-work-key]")].map((n) => n.dataset.workKey) : [];
+        const pos = (it) => { const i = shown.indexOf(it.code); return i === -1 ? Infinity : i; };
+        const agreedItems = order.items.filter((i) => i.agreed).sort(waitingLast);
+        if (shown.length) agreedItems.sort((a, b) => pos(a) - pos(b));
+        agreedItems.forEach((it) => {
           b.append(repairItem(it, stock, {
             onClaim: () => {
               if (!it.claimedBy && !it.done) {
@@ -1639,7 +1658,7 @@ function viewOrder(number) {
         if (total) b.append(total);
         return b;
       };
-      const body = stockCache ? buildBody(stockCache) : el("div", {}, skeletonRows(2));
+      const body = stockCache ? buildBody(stockCache) : el("div", { class: "work-list" }, skeletonRows(2));
       if (!stockCache) ensureStock().then((s) => { body.replaceChildren(...buildBody(s).childNodes); reattachInlineWork(); });
       main.append(stage("Ремонт", body));
       // «+ доп. работа» — отдельным блоком под «Ремонт», а не последней
@@ -1833,7 +1852,7 @@ function partsEditor(parts, stock, onChange, blockId, sideAction = null) {
           },
         }, "Добавить"),
         el("button", { onclick: () => { manualOpen = false; drawManual(); } }, "Отмена"))));
-    nameInput.focus({ preventScroll: true });
+    nameInput.focus();
   };
   const manualToggle = el("button", {
     class: "small parts-text-action",
