@@ -45,7 +45,7 @@ import {
   stockCache, clearStockCache, ensureStock,
   loadDB, syncFromServer,
   editDB, editOrder, deleteOrderApi, deleteClientApi, deleteBikeApi, pushDbNow, flushPending,
-  onUndoRecorded, peekUndo, undoLast, reopenOrderApi,
+  onUndoRecorded, undoLast, reopenOrderApi, restoreOrder,
 } from "./store.js";
 
 const RAW = window.CATALOG;
@@ -487,28 +487,52 @@ async function performUndo() {
 // Кнопка «↶»: маленькая, в углу, сама исчезает через 4 секунды.
 let undoChip = null, undoChipTimer = null;
 function hideUndoChip() { clearTimeout(undoChipTimer); undoChip?.classList.remove("show"); }
-onUndoRecorded(() => {
+function showUndoChip(onClick) {
   if (!undoChip) {
     undoChip = el("button", { type: "button", class: "undo-chip", "aria-label": "Отменить последнее действие",
-      html: ICON_SVG('<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>'), onclick: performUndo });
+      html: ICON_SVG('<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>') });
     document.body.append(undoChip);
   }
+  undoChip.onclick = onClick;
   undoChip.classList.add("show");
   clearTimeout(undoChipTimer);
   undoChipTimer = setTimeout(hideUndoChip, 4000);
-});
+}
+onUndoRecorded(() => showUndoChip(performUndo));
 
-// Встряхивание. На iPhone сайту нужен разрешённый доступ к датчику движения
-// (спрашивается один раз, и только по нажатию), на Android — нет.
-const SHAKE_KEY = "veloterra-shake"; // "on" | "off", нет — ещё не спрашивали
-const shakeNeedsPermission = typeof window.DeviceMotionEvent?.requestPermission === "function";
-const shakeSetting = () => { try { return localStorage.getItem(SHAKE_KEY); } catch { return null; } };
-const setShakeSetting = (v) => { try { localStorage.setItem(SHAKE_KEY, v); } catch {} };
+// Встряхивание — только чтобы вернуть только что удалённое обращение (в
+// течение минуты после удаления). Для остальных действий — кнопка «↶».
+// Доступ к датчику движения на iPhone спрашиваем в момент удаления: iOS
+// разрешает запрос только по нажатию, а в остальное время приложение датчик
+// не трогает и ничего не спрашивает (раньше вопрос всплывал слишком часто).
+const SHAKE_WINDOW_MS = 60 * 1000;
+let lastDeleted = null; // { order, at } — последнее удалённое обращение
+function armShakeForDelete() { // вызывать прямо в обработчике нажатия «Удалить»
+  const DM = window.DeviceMotionEvent;
+  if (!DM) return;
+  if (typeof DM.requestPermission === "function") {
+    DM.requestPermission().then((res) => { if (res === "granted") listenShake(); }).catch(() => {});
+  } else listenShake();
+}
+function rememberDeleted(order) {
+  if (!order) return;
+  lastDeleted = { order: structuredClone(order), at: Date.now() };
+  showUndoChip(restoreDeleted);
+}
+function restoreDeleted() {
+  const d = lastDeleted;
+  lastDeleted = null;
+  hideUndoChip();
+  if (!d) return;
+  if (!restoreOrder(d.order)) return toast("Обращение уже на месте");
+  toast("Обращение возвращено");
+  closeAllSheets();
+  router();
+}
 function onShake() {
-  if (!SESSION || dialogOpen) return;
-  const entry = peekUndo();
-  if (!entry) return toast("Нечего отменять");
-  askDialog({ title: "Отменить действие?", message: capitalize(entry.label), onYes: performUndo });
+  if (!SESSION || dialogOpen || !lastDeleted || Date.now() - lastDeleted.at > SHAKE_WINDOW_MS) return;
+  askDialog({ title: "Вернуть удалённое обращение?", message: "Вы только что удалили обращение — восстановить его?",
+    yes: "Вернуть", no: "Нет", onYes: restoreDeleted });
 }
 let shakeListening = false;
 function listenShake() {
@@ -521,7 +545,7 @@ function listenShake() {
     if (last) {
       // Резкая смена ускорения три раза за 0.8 с — встряхнули. Ходьба и
       // телефон в кармане до такого порога не доходят, а если и дойдут —
-      // без «Да» ничего не отменится.
+      // без «Вернуть» ничего не произойдёт.
       const jolt = Math.abs(a.x - last.x) + Math.abs(a.y - last.y) + Math.abs(a.z - last.z);
       const now = Date.now();
       if (jolt > 25 && now > quietUntil) {
@@ -532,39 +556,6 @@ function listenShake() {
     }
     last = { x: a.x, y: a.y, z: a.z };
   });
-}
-// Запросить доступ (iOS) — только из обработчика нажатия.
-function enableShake() {
-  if (!shakeNeedsPermission) { setShakeSetting("on"); listenShake(); return Promise.resolve(true); }
-  return window.DeviceMotionEvent.requestPermission().then((res) => {
-    const ok = res === "granted";
-    setShakeSetting(ok ? "on" : "off");
-    if (ok) listenShake();
-    else toast("Доступ к датчику движения не дан — включить можно в профиле");
-    return ok;
-  }).catch(() => false);
-}
-(function setupShake() {
-  if (!window.DeviceMotionEvent) return;
-  const state = shakeSetting();
-  if (!shakeNeedsPermission) { if (state !== "off") listenShake(); return; }
-  // Уже разрешали — iOS может снова требовать запрос после перезагрузки
-  // страницы: делаем его тихо на первом же касании (повторного вопроса,
-  // если доступ уже дан, система не показывает).
-  if (state === "on") {
-    document.addEventListener("touchend", () => enableShake(), { once: true });
-  }
-})();
-// Один раз после входа — предложить включить (только iPhone: там нужен доступ).
-function offerShakeOnce() {
-  if (!shakeNeedsPermission || shakeSetting() !== null || !SESSION) return;
-  setTimeout(() => askDialog({
-    title: "Отмена встряхиванием",
-    message: "Случайно нажали не то — встряхните телефон, и приложение предложит отменить последнее действие. Для этого нужен доступ к датчику движения.",
-    yes: "Разрешить", no: "Не сейчас",
-    onYes: () => enableShake(),
-    onNo: () => setShakeSetting("off"),
-  }), 800);
 }
 
 // Потянуть вниз от самого верха экрана — принудительно подтянуть свежие
@@ -646,7 +637,6 @@ const applySessionLook = () => { if (SESSION) applyLook(SESSION.look || {}); };
   await loadSession();
   applySessionLook();
   router();
-  offerShakeOnce();
   if (SESSION) { if (dirty) await flushPending(); else syncFromServer(); }
 })();
 window.addEventListener("online", () => { if (SESSION && dirty) flushPending(); });
@@ -923,8 +913,10 @@ function orderRow(o, d, onDelete) {
 }
 
 async function deleteOrderWithAlert(o) {
+  armShakeForDelete();
   const ok = await deleteOrderApi(o.number);
   if (!ok) alert("Не удалось удалить — нет соединения. Попробуйте ещё раз, когда будет интернет.");
+  else rememberDeleted(o);
   return ok;
 }
 
@@ -1688,8 +1680,10 @@ function openIssuedOrderSheet(order) {
     message: "Оно пропадёт из выполненных работ и выработки мастеров. Вернуть будет нельзя.",
     yes: "Удалить", no: "Отмена",
     onYes: async () => {
+      armShakeForDelete();
       if (!(await deleteOrderApi(order.number))) return toast("Не получилось удалить — проверьте связь и права");
       sheet?.close();
+      rememberDeleted(order);
       toast("Обращение удалено");
       go("/");
     },
@@ -3103,20 +3097,6 @@ function openLookSheet() {
   openSheet("Оформление", body);
 }
 
-// Профиль → «Отмена встряхиванием»: вкл/выкл на этом телефоне.
-function shakeToggleRow() {
-  if (!window.DeviceMotionEvent) return null;
-  const on = shakeSetting() === "on" || (!shakeNeedsPermission && shakeSetting() !== "off");
-  return el("button", { class: "row profile-menu-action", type: "button", onclick: async () => {
-    if (on) { setShakeSetting("off"); toast("Отмена встряхиванием выключена — работает после перезагрузки"); }
-    else if (await enableShake()) toast("Готово: встряхните телефон, чтобы отменить последнее действие");
-    router();
-  } },
-    el("span", { class: "row-icon", html: ICON_SVG('<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>') }),
-    el("span", { style: "flex:1" }, "Отмена встряхиванием"),
-    el("span", { class: "small muted" }, on ? "Вкл" : "Выкл"));
-}
-
 function viewProfile() {
   const changePassword = () => {
     const error = el("p", { class: "small", style: "color:var(--warn);display:none" });
@@ -3148,7 +3128,6 @@ function viewProfile() {
         el("button", { class: "row profile-menu-action", type: "button", onclick: openLookSheet },
           el("span", { class: "row-icon", html: ICON_SVG('<circle cx="12" cy="12" r="9"/><circle cx="7.8" cy="10.5" r="1.2"/><circle cx="12" cy="7.5" r="1.2"/><circle cx="16.2" cy="10.5" r="1.2"/><path d="M12 21a2.2 2.2 0 0 1 0-4.4h1.6a3.4 3.4 0 0 0 3.4-3.4"/>') }),
           el("span", { style: "flex:1" }, "Оформление"), el("span", { class: "chev" }, "›")),
-        shakeToggleRow(),
         el("button", { class: "row profile-menu-action", type: "button", onclick: changePassword },
           el("span", { class: "row-icon", html: ICON_SVG('<rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>') }),
           el("span", { style: "flex:1" }, "Сменить пароль"), el("span", { class: "chev" }, "›"))),
@@ -3319,7 +3298,8 @@ function buildReportTab(masterId, percentOf, tab) {
 
   const makeCol = (n) => {
     const b = bucketFor(n);
-    const bar = el("div", { title: money(b.earned), style: `width:100%;max-width:26px;height:${barHeightPx(b.earned)}px;background:var(--accent);border-radius:3px 3px 0 0;transition:background .15s ease` });
+    // Вид столбца — от стиля оформления (.report-bar в app.css/themes.css).
+    const bar = el("div", { class: "report-bar", title: money(b.earned), style: `height:${barHeightPx(b.earned)}px` });
     const label = el("span", { class: "small", style: "font-size:10px;white-space:nowrap;color:var(--muted);font-weight:400" }, b.label);
     const col = el("div", {
       style: `flex:0 0 ${colWidthPct}%;min-width:0;scroll-snap-align:start;display:flex;flex-direction:column;align-items:center;gap:4px;height:100%;justify-content:flex-end;cursor:pointer`,
@@ -3338,7 +3318,7 @@ function buildReportTab(masterId, percentOf, tab) {
     for (const [n, { bar, label }] of colNodes) {
       const isSel = selectedN === n;
       const dimmed = selectedN != null && !isSel;
-      bar.style.background = dimmed ? "var(--line)" : "var(--accent)";
+      bar.classList.toggle("dim", dimmed);
       label.style.color = isSel ? "var(--accent)" : "var(--muted)";
       label.style.fontWeight = isSel ? "700" : "400";
     }

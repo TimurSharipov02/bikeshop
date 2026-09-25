@@ -259,8 +259,19 @@ header.bar .bar-title-lg { font-size:19px; font-weight:700; }
   color:var(--muted); border:0; white-space:nowrap;
   box-shadow:inset 0 1px 0 var(--hl), inset 0 0 0 .5px color-mix(in srgb, currentColor 25%, transparent); }
 .row .tag { margin-left:auto; }
-.row-icon { flex:0 0 auto; width:30px; height:30px; border-radius:8px; background:var(--accent);
-  color:var(--on-accent); display:flex; align-items:center; justify-content:center; }
+/* Иконка в строке меню — как основная кнопка в этом стиле: в Аэро глянец
+   и свечение своего цвета; остальные стили — в themes.css. */
+.row-icon { flex:0 0 auto; width:30px; height:30px; border-radius:8px; --btn-c:var(--accent);
+  color:var(--on-accent); display:flex; align-items:center; justify-content:center;
+  border:1px solid color-mix(in srgb, var(--btn-c), black 30%);
+  background:var(--gloss), linear-gradient(180deg, color-mix(in srgb, var(--btn-c), white 30%) 0%, var(--btn-c) 55%, color-mix(in srgb, var(--btn-c), white 18%) 100%);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.7), 0 4px 10px -4px color-mix(in srgb, var(--btn-c) 70%, transparent); }
+.row-icon svg { filter:drop-shadow(0 1px 1px rgba(0,0,0,.3)); }
+/* Столбцы графика выработки: в Аэро — объёмные, со стеклянным бликом. */
+.report-bar { width:100%; max-width:26px; border-radius:6px 6px 0 0; transition:background .15s ease, opacity .15s ease;
+  background:var(--gloss-tint), linear-gradient(90deg, color-mix(in srgb, var(--accent), white 25%), var(--accent) 55%, color-mix(in srgb, var(--accent), black 15%));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.55), 0 4px 12px -6px color-mix(in srgb, var(--accent) 70%, transparent); }
+.report-bar.dim { background:var(--fill); box-shadow:inset 0 1px 0 var(--hl); }
 .row-icon svg { width:17px; height:17px; }
 .profile-menu-action { width:100%; text-align:left; }
 
@@ -502,8 +513,13 @@ input:focus,textarea:focus,select:focus { outline:none;
   font-size:17px; line-height:1.5; }
 .request-box-new { margin:0 0 12px; }
 /* Пиктограмма узла в заголовке блока на экране добавления работ. */
+/* Как ценник (.control-price) в этом же стиле: в Аэро — выпуклая глянцевая
+   плашка со свечением; остальные стили переопределяют в themes.css. */
 .block-icon { flex:0 0 auto; width:40px; height:40px; border-radius:12px; display:flex; align-items:center;
-  justify-content:center; color:var(--accent); background:var(--accent-weak); }
+  justify-content:center; color:var(--accent);
+  border:1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  background:var(--gloss-tint), linear-gradient(180deg, var(--price-top), var(--accent-weak));
+  box-shadow:inset 0 1px 0 var(--hl), 0 6px 14px -6px color-mix(in srgb, var(--accent) 55%, transparent), 0 1px 2px rgba(0,0,0,.12); }
 .block-icon svg { width:24px; height:24px; overflow:visible; }
 /* Рисунок может выходить за свои 24px (ключ у «Каретки» — ручка уходит
    за край): обрезает его сама плашка по своему скруглению. */

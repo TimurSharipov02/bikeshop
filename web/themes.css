@@ -101,7 +101,7 @@
 [data-style="soft"] .call-btn { background:var(--bg); color:var(--ok); border:0; box-shadow:var(--shadow-raise); }
 [data-style="soft"] .segmented button.active:not([class*="sel-"]) { background:var(--bg); box-shadow:var(--shadow-raise); }
 [data-style="soft"] .rows .row { border-bottom-color:transparent; }
-[data-style="soft"] .block-icon { background:var(--bg); box-shadow:var(--shadow-inset); }
+[data-style="soft"] .block-icon { border:0; background:var(--bg); box-shadow:var(--shadow-raise); }
 
 /* ---------- 4. Мастерская: крупно и контрастно ---------- */
 :root[data-style="workshop"] {
@@ -234,3 +234,21 @@
 [data-style]:not([data-style="aero"]) :is(.qty-stepper button, .segmented button, .search-clear, header.bar button,
   button[style*="background:none"], .carousel-dot, .parts-text-action, .compact-add-btn,
   .complication-remove, .admin-settings-btn, .dialog-buttons button) { border:0; box-shadow:none; }
+
+/* Плашки иконок узлов — как ценники своего стиля. */
+[data-style="calm"] .block-icon { border:0; box-shadow:none; background:var(--accent-weak); }
+[data-style="graphite"] .block-icon { border:1px solid color-mix(in srgb, var(--accent) 40%, transparent); background:var(--accent-weak); box-shadow:none; }
+[data-style="paper"] .block-icon { border:1px solid color-mix(in srgb, var(--accent) 25%, transparent); background:var(--accent-weak); box-shadow:0 2px 0 color-mix(in srgb, var(--accent) 25%, transparent); }
+
+/* Иконки в строках меню и столбцы графика — в духе своего стиля. */
+:where([data-style]:not([data-style="aero"])) .row-icon { border:0; background:var(--accent); box-shadow:none; }
+:where([data-style]:not([data-style="aero"])) .row-icon svg { filter:none; }
+:where([data-style]:not([data-style="aero"])) .report-bar { background:var(--accent); box-shadow:none; border-radius:4px 4px 0 0; }
+:where([data-style]:not([data-style="aero"])) .report-bar.dim { background:var(--line); }
+[data-style="soft"] .row-icon { background:var(--bg); color:var(--accent); box-shadow:var(--shadow-raise); }
+[data-style="soft"] .report-bar { box-shadow:3px 3px 6px var(--nd), -3px -3px 6px var(--nl); border-radius:8px 8px 0 0; }
+[data-style="soft"] .report-bar.dim { background:var(--bg); box-shadow:var(--shadow-inset); }
+[data-style="workshop"] .row-icon { background:var(--ws-hi); color:#111; border:2px solid var(--ws-edge); border-radius:6px; }
+[data-style="workshop"] .report-bar { background:var(--ws-hi); border:2px solid var(--ws-edge); border-bottom:0; border-radius:2px 2px 0 0; }
+[data-style="workshop"] .report-bar.dim { background:var(--fill); }
+[data-style="paper"] .row-icon { box-shadow:0 2px 0 color-mix(in srgb, var(--accent), black 30%); }

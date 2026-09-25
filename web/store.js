@@ -317,6 +317,14 @@ export async function deleteOrderApi(number) {
     return true;
   } catch { return false; }
 }
+// Вернуть только что удалённое обращение (встряхивание / «↶» после
+// удаления): обычным пушем — на сервере его уже нет, слияние его добавит.
+export function restoreOrder(order) {
+  if (DB.orders.some((o) => o.number === order.number)) return false;
+  DB.orders.push(structuredClone(order));
+  writeLocal(); pushToServer();
+  return true;
+}
 // Вернуть выданное обращение в работу — явным запросом мимо обычного пуша
 // (он выданные менять не может, см. api/_issued-order.js). Возвращает
 // { ok, error } — текст отказа сервера показываем как есть.
