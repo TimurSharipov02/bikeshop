@@ -510,17 +510,41 @@ window.addEventListener("popstate", () => {
   // "scroll" пересчитывает панель, только пока по высоте видно, что
   // клавиатура правда открыта — во время bounce-скролла без клавиатуры этот
   // пересчёт просто не включается.
+  //
+  // Одной разницы высот мало — она же бывает и без клавиатуры: увеличение
+  // щипком (видимая область меньше окна), поворот экрана и сворачивание
+  // панели Safari (высоты обновляются не одновременно). Поэтому клавиатура
+  // «открыта», только если курсор правда стоит в поле ввода И экран сжат;
+  // увеличение учитываем через vv.scale. И пересчитываем ещё несколько раз
+  // после фокуса/ухода из поля/поворота: iOS шлёт resize ещё до того, как
+  // клавиатура доехала, и панель оставалась висеть посреди экрана.
+  const TEXT_INPUT = /^(text|search|tel|url|email|password|number|date|datetime-local|month|time|week)$/i;
+  const typing = () => {
+    const a = document.activeElement;
+    return !!a && (a.isContentEditable || a.tagName === "TEXTAREA" || (a.tagName === "INPUT" && TEXT_INPUT.test(a.type || "text")));
+  };
   let kbOpen = false;
   const update = () => {
-    const heightDiff = Math.max(0, window.innerHeight - vv.height);
-    kbOpen = heightDiff > 50;
+    const scale = vv.scale || 1;
+    const heightDiff = Math.max(0, window.innerHeight - vv.height * scale);
+    kbOpen = typing() && heightDiff > 80;
     document.documentElement.classList.toggle("kb-open", kbOpen);
-    const offset = kbOpen ? Math.max(0, heightDiff - vv.offsetTop) : 0;
+    const offset = kbOpen ? Math.max(0, heightDiff - vv.offsetTop * scale) : 0;
     document.documentElement.style.setProperty("--kb-offset", offset + "px");
     document.documentElement.style.setProperty("--vv-h", vv.height + "px");
   };
+  let settleTimers = [];
+  const settle = () => {
+    settleTimers.forEach(clearTimeout);
+    update();
+    settleTimers = [60, 250, 500, 900].map((ms) => setTimeout(update, ms));
+  };
   vv.addEventListener("resize", update);
   vv.addEventListener("scroll", () => { if (kbOpen) update(); });
+  document.addEventListener("focusin", settle);
+  document.addEventListener("focusout", settle);
+  window.addEventListener("orientationchange", settle);
+  window.addEventListener("resize", settle);
   update();
 })();
 
